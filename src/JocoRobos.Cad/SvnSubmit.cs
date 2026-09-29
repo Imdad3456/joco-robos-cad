@@ -1,0 +1,294 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using SharpSvn;
+
+namespace JocoRobos.Cad
+{
+    internal enum SubmitKind { Modified, New, ReleaseOnly }
+
+    internal sealed class SubmitItem
+    {
+        internal SubmitKind Kind;
+        internal string Path;
+        internal string Relative { get { return Path.Substring(SvnWorkspace.Root.Length + 1); } }
+        public override string ToString()
+        {
+            string label = Kind == SubmitKind.Modified ? "Modified" : Kind == SubmitKind.New ? "New" : "Unchanged — release lock";
+            return label + ":  " + Relative;
+        }
+    }
+
+    internal sealed class SubmitPlan
+    {
+        internal readonly List<SubmitItem> Items = new List<SubmitItem>();
+        internal readonly List<string> Blocked = new List<string>();
+        internal string Notice;
+    }
+
+    internal sealed class SubmitResult
+    {
+        internal long Revision;
+        internal readonly List<string> Warnings = new List<string>();
+    }
+
+    internal sealed partial class SvnWorkspace
+    {
+        private static string JournalPath
+        {
+            get { return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pending-submit.txt"); }
+        }
+
+        private static Uri UrlFor(string path)
+        {
+            string relative = path.Substring(Root.Length + 1).Replace('\\', '/');
+            return new Uri(Repository, String.Join("/", relative.Split('/').Select(Uri.EscapeDataString)));
+        }
+
+        internal SubmitPlan PrepareSubmit()
+        {
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                var plan = new SubmitPlan { Notice = ReconcilePendingSubmit(client) };
+                Scan(client, plan);
+                return plan;
+            }
+        }
+
+        private void Scan(SvnClient client, SubmitPlan plan)
+        {
+            // Remote status is required: lock ownership is decided by the server, not the local token alone.
+            foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+            {
+                string path = System.IO.Path.GetFullPath(item.FullPath).TrimEnd('\\');
+                if (path.Equals(Root, StringComparison.OrdinalIgnoreCase)) continue;
+                WorkspacePolicy.RequireInside(Root, path);
+                string relative = path.Substring(Root.Length + 1);
+                SvnStatus local = item.LocalNodeStatus;
+                bool owned = WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner);
+
+                if (local == SvnStatus.NotVersioned || local == SvnStatus.Ignored)
+                {
+                    if (Directory.Exists(path)) AddNewFiles(path, plan);
+                    else if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = path });
+                    continue;
+                }
+                if (item.Conflicted || item.Wedged || item.Switched || item.IsFileExternal)
+                {
+                    plan.Blocked.Add(relative + " — needs mentor repair");
+                    continue;
+                }
+                if (item.NodeKind == SvnNodeKind.Directory)
+                {
+                    if (local != SvnStatus.Normal && local != SvnStatus.Added)
+                        plan.Blocked.Add(relative + " — folder is " + local.ToString().ToLowerInvariant() + "; ask a mentor");
+                    continue;
+                }
+                switch (local)
+                {
+                    case SvnStatus.None:
+                        break; // Only on the server; Update downloads it.
+                    case SvnStatus.Normal:
+                        bool propsChanged = item.LocalPropertyStatus == SvnStatus.Modified;
+                        if (propsChanged) plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
+                        else if (owned) plan.Items.Add(new SubmitItem { Kind = SubmitKind.ReleaseOnly, Path = path });
+                        break;
+                    case SvnStatus.Added:
+                        // Left behind by a Submit that did not reach the server.
+                        if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = path });
+                        else plan.Blocked.Add(relative + " — not a SOLIDWORKS file");
+                        break;
+                    case SvnStatus.Modified:
+                        if (item.LocalPropertyStatus == SvnStatus.Modified)
+                            plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
+                        else if (!WorkspacePolicy.IsCad(path) || owned)
+                            plan.Items.Add(new SubmitItem { Kind = SubmitKind.Modified, Path = path });
+                        else if (item.RemoteLock != null)
+                            plan.Blocked.Add(relative + " — changed, but locked by " + item.RemoteLock.Owner + ". Keep your copy and ask a mentor");
+                        else
+                            plan.Blocked.Add(relative + " — changed without Edit. Keep your copy and ask a mentor");
+                        break;
+                    case SvnStatus.Missing:
+                    case SvnStatus.Deleted:
+                        plan.Blocked.Add(relative + " — missing or renamed. Deleting/renaming CAD is not supported yet; ask a mentor");
+                        break;
+                    default:
+                        plan.Blocked.Add(relative + " — " + local.ToString().ToLowerInvariant() + "; ask a mentor");
+                        break;
+                }
+            }
+        }
+
+        private static void AddNewFiles(string directory, SubmitPlan plan)
+        {
+            // SVN reports an unversioned folder as one entry; look inside for new CAD without following links.
+            WorkspacePolicy.RequireInside(Root, directory);
+            foreach (string entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) continue;
+                if (Directory.Exists(entry)) AddNewFiles(entry, plan);
+                else if (WorkspacePolicy.IsSubmittableCad(entry)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = entry });
+            }
+        }
+
+        internal SubmitResult Submit(IList<SubmitItem> selected, string comment)
+        {
+            comment = WorkspacePolicy.RequireComment(comment);
+            if (selected.Count == 0) throw new InvalidOperationException("Select at least one file.");
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                // Recheck everything at submission time; the review dialog may have been open for a while.
+                var current = new SubmitPlan();
+                if (ReconcilePendingSubmit(client) != null)
+                    throw new InvalidOperationException("An earlier Submit was just confirmed on the server. Review your changes and Submit again.");
+                Scan(client, current);
+                foreach (var item in selected)
+                    if (!current.Items.Any(x => x.Kind == item.Kind && x.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase)))
+                        throw new InvalidOperationException("Your files changed while reviewing:\n" + item.Relative + "\nNothing was submitted. Click Submit again.");
+
+                var commit = selected.Where(x => x.Kind != SubmitKind.ReleaseOnly).ToList();
+                var release = selected.Where(x => x.Kind == SubmitKind.ReleaseOnly).Select(x => x.Path).ToList();
+                var result = new SubmitResult();
+                if (commit.Count > 0)
+                {
+                    var targets = new List<string>();
+                    foreach (var item in commit.Where(x => x.Kind == SubmitKind.New))
+                        targets.AddRange(ScheduleAdd(client, item.Path));
+                    targets.AddRange(commit.Select(x => x.Path));
+                    targets = targets.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+                    File.WriteAllLines(JournalPath, targets.Select(x => x.Substring(Root.Length + 1)));
+                    SvnCommitResult committed;
+                    try
+                    {
+                        // Explicit targets with empty depth: only these files' lock tokens are sent and released.
+                        client.Commit(targets, new SvnCommitArgs { LogMessage = comment, Depth = SvnDepth.Empty, KeepLocks = false }, out committed);
+                    }
+                    catch (Exception failure)
+                    {
+                        string outcome;
+                        try { outcome = ReconcilePendingSubmit(client); }
+                        catch { outcome = null; }
+                        if (outcome == null)
+                            throw new InvalidOperationException("Submit did not complete. Your edits and locks are kept; try Submit again when connected.\n\n" + failure.Message, failure);
+                        result.Warnings.Add(outcome);
+                        committed = null;
+                    }
+                    if (committed != null)
+                    {
+                        result.Revision = committed.Revision;
+                        if (!String.IsNullOrEmpty(committed.PostCommitError)) result.Warnings.Add("Server note: " + committed.PostCommitError);
+                        File.Delete(JournalPath);
+                    }
+                    else if (result.Warnings.Count == 0)
+                    {
+                        File.Delete(JournalPath);
+                        throw new InvalidOperationException("The server reported nothing to submit.");
+                    }
+                }
+                if (release.Count > 0)
+                {
+                    try { client.Unlock(release, new SvnUnlockArgs { BreakLock = false }); }
+                    catch (Exception failure) { result.Warnings.Add("Unchanged files are still locked; use Release Edit later. " + failure.Message); }
+                }
+                try { ReconcileReadOnly(client); }
+                catch (Exception failure) { result.Warnings.Add("Could not refresh read-only files; click Update later. " + failure.Message); }
+                return result;
+            }
+        }
+
+        private List<string> ScheduleAdd(SvnClient client, string file)
+        {
+            var parents = WorkspacePolicy.UnversionedParents(Root, file, dir => IsVersioned(client, dir));
+            foreach (string dir in parents)
+                if (!IsVersioned(client, dir)) client.Add(dir, new SvnAddArgs { Depth = SvnDepth.Empty });
+            if (!IsVersioned(client, file)) client.Add(file, new SvnAddArgs { Depth = SvnDepth.Empty });
+            // Required by the server hook and makes the file read-only for everyone who has not clicked Edit.
+            client.SetProperty(file, "svn:needs-lock", "*");
+            client.SetProperty(file, "svn:mime-type", "application/octet-stream");
+            return parents;
+        }
+
+        private static bool IsVersioned(SvnClient client, string path)
+        {
+            // Unversioned paths (including those under unversioned folders) report an error instead of info.
+            System.Collections.ObjectModel.Collection<SvnInfoEventArgs> infos;
+            return client.GetInfo(new SvnPathTarget(path), new SvnInfoArgs { ThrowOnError = false }, out infos) &&
+                infos != null && infos.Count > 0;
+        }
+
+        // A dropped connection can hide a successful commit. Compare the server with the journaled files
+        // before retrying: returns a message when the earlier Submit landed, null when nothing was pending
+        // or it never reached the server (edits and locks are then untouched).
+        private string ReconcilePendingSubmit(SvnClient client)
+        {
+            if (!File.Exists(JournalPath)) return null;
+            client.CleanUp(Root);
+            var paths = File.ReadAllLines(JournalPath).Where(x => x.Length > 0)
+                .Select(x => WorkspacePolicy.RequireInside(Root, System.IO.Path.Combine(Root, x))).ToList();
+            var landed = new List<SvnStatusEventArgs>();
+            var pending = new List<string>();
+            long revision = 0;
+            foreach (string path in paths.Where(File.Exists))
+            {
+                var status = Status(client, path, false, SvnDepth.Empty).SingleOrDefault();
+                if (status == null || (status.LocalNodeStatus != SvnStatus.Modified && status.LocalNodeStatus != SvnStatus.Added)) continue;
+                var args = new SvnInfoArgs();
+                args.AddExpectedError(SvnErrorCode.SVN_ERR_RA_ILLEGAL_URL, SvnErrorCode.SVN_ERR_FS_NOT_FOUND);
+                System.Collections.ObjectModel.Collection<SvnInfoEventArgs> infos;
+                client.GetInfo(new SvnUriTarget(UrlFor(path), SvnRevision.Head), args, out infos);
+                var remote = infos == null ? null : infos.FirstOrDefault();
+                if (remote != null && remote.LastChangeAuthor == login.UserName &&
+                    remote.LastChangeRevision > Math.Max(0, status.Revision) && SameContent(client, path, remote.Uri))
+                {
+                    landed.Add(status);
+                    revision = Math.Max(revision, remote.LastChangeRevision);
+                }
+                else pending.Add(path);
+            }
+            if (landed.Count > 0 && pending.Count > 0)
+                throw new InvalidOperationException("An interrupted Submit left mixed results. Do not delete anything; ask a mentor.\n" + String.Join("\n", pending));
+            if (landed.Count > 0)
+            {
+                // The server already has these exact bytes, so reverting loses nothing; Update then downloads them.
+                foreach (var status in landed)
+                {
+                    client.Revert(status.FullPath, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                    if (status.LocalNodeStatus == SvnStatus.Added) File.Delete(status.FullPath);
+                }
+                foreach (string dir in paths.Where(Directory.Exists).OrderByDescending(x => x.Length))
+                {
+                    var status = Status(client, dir, false, SvnDepth.Empty).SingleOrDefault();
+                    if (status != null && status.LocalNodeStatus == SvnStatus.Added && !Directory.EnumerateFileSystemEntries(dir).Any())
+                    {
+                        client.Revert(dir, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                        Directory.Delete(dir);
+                    }
+                }
+            }
+            File.Delete(JournalPath);
+            return landed.Count > 0
+                ? "Your previous Submit reached the server as revision " + revision + ". Close your documents and click Update to finish."
+                : null;
+        }
+
+        private static bool SameContent(SvnClient client, string path, Uri url)
+        {
+            byte[] local, remote;
+            using (var sha = SHA1.Create())
+            using (var stream = File.OpenRead(path)) local = sha.ComputeHash(stream);
+            using (var sha = SHA1.Create())
+            using (var hashing = new CryptoStream(Stream.Null, sha, CryptoStreamMode.Write))
+            {
+                client.Write(new SvnUriTarget(url, SvnRevision.Head), hashing);
+                hashing.FlushFinalBlock();
+                remote = sha.Hash;
+            }
+            return local.SequenceEqual(remote);
+        }
+    }
+}

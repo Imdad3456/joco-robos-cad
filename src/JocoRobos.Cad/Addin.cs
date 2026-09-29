@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -24,6 +26,7 @@ namespace JocoRobos.Cad
         [DispId(5)] void Edit();
         [DispId(6)] void SignIn();
         [DispId(7)] void ReleaseEdit();
+        [DispId(8)] void Submit();
     }
 
     [ComVisible(true)]
@@ -36,6 +39,8 @@ namespace JocoRobos.Cad
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
+        // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
+        private const int LayoutVersion = 591903;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -63,7 +68,7 @@ namespace JocoRobos.Cad
         {
             using (RegistryKey settings = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
             {
-                bool migrate = Convert.ToInt32(settings.GetValue("CommandLayout", 0)) != GroupId;
+                bool migrate = Convert.ToInt32(settings.GetValue("CommandLayout", 0)) != LayoutVersion;
                 if (migrate) commands.RemoveCommandGroup2(591901, false);
                 int error = 0;
                 CommandGroup group = commands.CreateCommandGroup2(GroupId, Title,
@@ -74,6 +79,7 @@ namespace JocoRobos.Cad
                 int open = Add(group, "Open Robot", "Update the workspace and open the robot", nameof(OpenRobot), 1, both);
                 int update = Add(group, "Update", "Download the latest robot files", nameof(UpdateRobot), 2, both);
                 int edit = Add(group, "Edit", "Lock the active CAD document for editing", nameof(Edit), 3, both);
+                int submit = Add(group, "Submit", "Upload your changed and new CAD files", nameof(Submit), 7, both);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu);
                 Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
                 Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
@@ -89,13 +95,14 @@ namespace JocoRobos.Cad
                     if (tab == null) throw new InvalidOperationException("Could not create CommandManager tab.");
                     CommandTabBox box = tab.AddCommandTabBox();
                     int text = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextHorizontal;
-                    if (box == null || !box.AddCommands(new[] { group.get_CommandID(open), group.get_CommandID(update), group.get_CommandID(edit) }, new[] { text, text, text }))
+                    int[] ids = { group.get_CommandID(open), group.get_CommandID(update), group.get_CommandID(edit), group.get_CommandID(submit) };
+                    if (box == null || !box.AddCommands(ids, ids.Select(x => text).ToArray()))
                     {
                         commands.RemoveCommandTab(tab);
                         throw new InvalidOperationException("Could not add CommandManager buttons.");
                     }
                 }
-                settings.SetValue("CommandLayout", GroupId, RegistryValueKind.DWord);
+                settings.SetValue("CommandLayout", LayoutVersion, RegistryValueKind.DWord);
             }
         }
 
@@ -174,7 +181,7 @@ namespace JocoRobos.Cad
                 if (login == null) return;
                 long revision = UpdateWorkspace(login);
                 Message("Workspace updated to revision " + revision + "." +
-                    (File.Exists(SvnWorkspace.RobotPath) ? "" : "\n\nThe server folder structure is ready. A mentor still needs to upload the initial robot CAD."));
+                    (FindMaster() != null ? "" : "\n\nThe server folder structure is ready. A mentor still needs to upload the initial robot CAD."));
             });
         }
 
@@ -185,13 +192,15 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 UpdateWorkspace(login);
-                if (!File.Exists(SvnWorkspace.RobotPath))
+                string master = FindMaster();
+                if (master == null)
                 {
-                    Message("Connected and downloaded the robot folder structure.\n\nThe master assembly has not been uploaded yet:\n" + SvnWorkspace.RobotPath);
+                    Message("Workspace updated, but no single master assembly was found in:\n" + SvnWorkspace.MasterFolder +
+                        "\n\nAsk a mentor to name the top-level assembly Robot.SLDASM. You can still use File → Open.");
                     return;
                 }
                 int errors = 0, warnings = 0;
-                ModelDoc2 robot = application.OpenDoc6(SvnWorkspace.RobotPath,
+                ModelDoc2 robot = application.OpenDoc6(master,
                     (int)swDocumentTypes_e.swDocASSEMBLY, (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly,
                     "", ref errors, ref warnings);
                 if (robot == null) throw new InvalidOperationException("Robot could not open. SOLIDWORKS errors: " + errors + "; warnings: " + warnings);
@@ -231,7 +240,7 @@ namespace JocoRobos.Cad
                     if (!doc.SetReadOnlyState(false) || doc.IsOpenedReadOnly())
                         throw new InvalidOperationException("Your SVN lock is held, but SOLIDWORKS could not make the document writable. Close and reopen it, then retry Edit.");
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
-                        ".\n\nSubmit is coming next. Use a disposable test file for this milestone.");
+                        ".\n\nSave normally, then click Submit when you are done.");
                 }
                 catch
                 {
@@ -257,6 +266,105 @@ namespace JocoRobos.Cad
                 File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
                 Message("Edit lock released. The file is read-only.");
             });
+        }
+
+        // Robot.SLDASM when present; otherwise the only 00_Master assembly that no other assembly there references.
+        private string FindMaster()
+        {
+            if (File.Exists(SvnWorkspace.RobotPath)) return SvnWorkspace.RobotPath;
+            if (!Directory.Exists(SvnWorkspace.MasterFolder)) return null;
+            string[] assemblies = Directory.GetFiles(SvnWorkspace.MasterFolder, "*.sldasm")
+                .Where(WorkspacePolicy.IsSubmittableCad).ToArray();
+            var referenced = new HashSet<string>(assemblies.SelectMany(Dependencies), StringComparer.OrdinalIgnoreCase);
+            string[] top = assemblies.Where(x => !referenced.Contains(Path.GetFullPath(x))).ToArray();
+            return top.Length == 1 ? top[0] : null;
+        }
+
+        // Stored reference paths of a saved document, all levels deep, read without opening it.
+        private IEnumerable<string> Dependencies(string path)
+        {
+            var raw = application.GetDocumentDependencies2(path, true, false, false) as object[];
+            if (raw == null) return Enumerable.Empty<string>();
+            var result = new List<string>();
+            for (int i = 1; i < raw.Length; i += 2)
+            {
+                string reference = raw[i] as string;
+                if (String.IsNullOrEmpty(reference)) continue;
+                try { result.Add(Path.GetFullPath(reference)); } catch (ArgumentException) { result.Add(reference); }
+            }
+            return result;
+        }
+
+        private IEnumerable<ModelDoc2> OpenDocuments()
+        {
+            for (var doc = application.GetFirstDocument() as ModelDoc2; doc != null; doc = doc.GetNext() as ModelDoc2)
+                yield return doc;
+        }
+
+        public void Submit()
+        {
+            Execute(() =>
+            {
+                // SOLIDWORKS keeps edits in memory; only saved bytes can be submitted.
+                var unsaved = OpenDocuments().Where(d => d.GetSaveFlag()).Select(d =>
+                    String.IsNullOrEmpty(d.GetPathName()) ? d.GetTitle() + " (never saved)" : d.GetPathName()).ToList();
+                if (unsaved.Count > 0)
+                    throw new InvalidOperationException("Save these documents first (Save As into " + SvnWorkspace.Root + " for new files):\n\n" +
+                        String.Join("\n", unsaved) + "\n\nNothing was submitted.");
+                var login = GetLogin(false);
+                if (login == null) return;
+                var workspace = new SvnWorkspace(login);
+                SubmitPlan plan = OperationDialog.Run("Checking your changes…", () => workspace.Exclusive(workspace.PrepareSubmit));
+                if (plan.Notice != null) Message(plan.Notice);
+                if (plan.Items.Count == 0)
+                {
+                    Message(plan.Blocked.Count == 0 ? "Nothing to submit. Your workspace matches the server." :
+                        "Nothing can be submitted:\n\n" + String.Join("\n", plan.Blocked), plan.Blocked.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                    return;
+                }
+                List<SubmitItem> selected;
+                string comment;
+                using (var dialog = new SubmitDialog(plan))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    selected = dialog.Selected;
+                    comment = dialog.Comment;
+                }
+                RequireReferencesIncluded(selected, plan);
+                SubmitResult result = OperationDialog.Run("Submitting " + selected.Count + " file(s)…",
+                    () => workspace.Exclusive(() => workspace.Submit(selected, comment)));
+                // Submitted files are no longer locked; stop SOLIDWORKS from saving over them.
+                var done = new HashSet<string>(selected.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
+                foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "")))
+                    doc.SetReadOnlyState(true);
+                string summary = result.Revision > 0 ? "Submitted as revision " + result.Revision + "." : "Locks released.";
+                Message(summary + (result.Warnings.Count > 0 ? "\n\n" + String.Join("\n\n", result.Warnings) : ""),
+                    result.Warnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+            });
+        }
+
+        // Teammates must be able to open what is submitted: no references outside the workspace
+        // and no new parts left behind on this computer.
+        private void RequireReferencesIncluded(List<SubmitItem> selected, SubmitPlan plan)
+        {
+            var chosen = new HashSet<string>(selected.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
+            var newFiles = new HashSet<string>(plan.Items.Where(x => x.Kind == SubmitKind.New).Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
+            var problems = new List<string>();
+            foreach (var item in selected.Where(x => x.Kind != SubmitKind.ReleaseOnly && WorkspacePolicy.IsCad(x.Path)))
+                foreach (string reference in Dependencies(item.Path))
+                {
+                    bool inside;
+                    try { WorkspacePolicy.RequireInside(SvnWorkspace.Root, reference); inside = true; }
+                    catch (Exception) { inside = false; }
+                    if (!inside)
+                        problems.Add(Path.GetFileName(item.Path) + " uses a file outside the robot folder:\n    " + reference);
+                    else if (newFiles.Contains(reference) && !chosen.Contains(reference))
+                        problems.Add(Path.GetFileName(item.Path) + " uses the new file " + Path.GetFileName(reference) + ", which is unchecked");
+                }
+            if (problems.Count > 0)
+                throw new InvalidOperationException("Teammates would not be able to open this submission:\n\n" +
+                    String.Join("\n", problems.Distinct()) + "\n\nCopy outside parts into the robot folder (Pack and Go or Save As), " +
+                    "replace the component, save, and Submit again. Nothing was submitted.");
         }
 
         public bool DisconnectFromSW()

@@ -43,6 +43,18 @@ static class Program
             Check(!WorkspacePolicy.OwnsLock("sarah", "token-1", "token-2", "sarah"), "Stale token accepted");
             Check(!WorkspacePolicy.OwnsLock("sarah", "token-1", null, null), "Missing server lock accepted");
             Check(!WorkspacePolicy.OwnsLock("imdad", "token-1", "token-1", "sarah"), "Other user's lock accepted");
+            Check(WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "CameraMount.SLDPRT")), "New part not submittable");
+            Check(!WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "~$CameraMount.SLDPRT")), "SOLIDWORKS owner file submittable");
+            Check(!WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "notes.txt")), "Non-CAD submittable");
+            string shooter = Path.Combine(root, "30_Shooter");
+            string nested = Path.Combine(shooter, "Camera", "Mounts", "Bracket.SLDPRT");
+            var versioned = new System.Collections.Generic.HashSet<string> { root, shooter };
+            var parents = WorkspacePolicy.UnversionedParents(root, nested, versioned.Contains);
+            Check(parents.Count == 2 && parents[0] == Path.Combine(shooter, "Camera") && parents[1] == Path.Combine(shooter, "Camera", "Mounts"), "New parent folders wrong or unordered");
+            Check(WorkspacePolicy.UnversionedParents(root, Path.Combine(shooter, "Plate.SLDPRT"), versioned.Contains).Count == 0, "Versioned folder scheduled for add");
+            Denied(() => WorkspacePolicy.UnversionedParents(root, Path.Combine(temp, "Plate.SLDPRT"), _ => false), "Parents escaped workspace");
+            Check(WorkspacePolicy.RequireComment("  Added camera mount \n") == "Added camera mount", "Comment not trimmed");
+            Denied(() => WorkspacePolicy.RequireComment("  "), "Blank comment accepted");
             Console.WriteLine("PASS: " + assertions + " workspace and lock-ownership checks");
         }
         finally { Directory.Delete(temp, true); }

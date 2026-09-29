@@ -1,6 +1,6 @@
-# Windows VM setup — v0.2
+# Windows VM setup — v0.3
 
-This milestone adds **sign-in, Update, and Edit**. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer. Submit and initial CAD import are still pending.
+This milestone adds **Submit** on top of the verified v0.2 Sign In, Update, and Edit. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer.
 
 ## Upgrade your existing prototype
 
@@ -24,9 +24,9 @@ This milestone adds **sign-in, Update, and Edit**. It is source for Windows SOLI
    .\scripts\Register-Dev.ps1
    ```
 
-6. Start SOLIDWORKS normally. Enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins if necessary. The toolbar should show **Open Robot**, **Update**, and **Edit**. With no document open, use **Tools → JOCO ROBOS CAD**.
+6. Start SOLIDWORKS normally. Enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins if necessary. The toolbar should show **Open Robot**, **Update**, **Edit**, and **Submit**. The layout is rebuilt once after this upgrade. With no document open, use **Tools → JOCO ROBOS CAD**.
 7. Choose **Sign In**, enter username `imdad` and the CAD password you created. Use **Test Connection** to verify. The password is stored only in Windows Credential Manager after successful server authentication.
-8. Save and close all CAD documents, then click **Update**. The server currently contains only subsystem folders, so Open Robot will report that the master assembly has not been uploaded yet. That is expected.
+8. Save and close all CAD documents, then click **Update**. **Open Robot** should now open the hexapod's `full assembly.SLDASM` read-only.
 
 **If the prototype already put test CAD in `C:\JOCO-ROBOS\2027-Robot`:** move that whole folder to a safe backup location such as `C:\JOCO-ROBOS\2027-Robot-local-backup` before the first checkout. Do not delete it. Update deliberately refuses to overwrite a nonempty folder without SVN metadata. This version does not upload those files automatically.
 
@@ -46,11 +46,15 @@ For a non-default SOLIDWORKS installation, provide its API DLL directory:
 
 The directory must contain `SolidWorks.Interop.sldworks.dll`, `SolidWorks.Interop.swconst.dll`, and `SolidWorks.Interop.swpublished.dll`.
 
-## Testing Edit later
+## Testing Submit with the hexapod
 
-Once a mentor uploads a disposable CAD file with the required SVN properties, Update to download it, open it in its own window, and click Edit. It should become writable only after ownership is verified. An assembly lock does not lock the parts inside it.
+1. Click **Open Robot**. Open `coxa.SLDPRT` in its own window and click **Edit**. Change a dimension and **save**.
+2. Open `leg.SLDASM` in its own window and click **Edit**. Create a new part, save it as `C:\JOCO-ROBOS\2027-Robot\00_Master\TestSpacer.SLDPRT`, insert it into `leg.SLDASM`, and save the assembly.
+3. Click **Submit**. Expect **Modified:** `coxa.SLDPRT`, `leg.SLDASM` and **New:** `TestSpacer.SLDPRT`. Enter a comment and submit. Expect "Submitted as revision 3" and all three documents to become read-only.
+4. Negative checks, each of which must commit nothing: submit with an unsaved change; uncheck `TestSpacer.SLDPRT` while `leg.SLDASM` is checked; insert a part saved on the Desktop into a locked assembly.
+5. Retry Edit on `coxa.SLDPRT`. It should lock again because Submit released it.
 
-**Release Edit** is in the Tools menu and only works for an unchanged file. It exists to test acquiring and releasing a lock before Submit is implemented. If you change a file, keep your work and lock; do not manually delete or revert it to make the test pass.
+**Release Edit** in the Tools menu still unlocks an unchanged file without submitting. If a file is changed, keep your work and lock; do not manually delete or revert it.
 
 ## Troubleshooting
 
@@ -62,4 +66,4 @@ Once a mentor uploads a disposable CAD file with the required SVN properties, Up
 
 For removing the developer add-in, close SOLIDWORKS and run `.\scripts\Unregister-Dev.ps1` as administrator before deleting the build folder. Unregistering does not delete CAD or saved credentials. Saved credentials can be removed under Windows Credential Manager → Windows Credentials → Generic Credentials → JOCO ROBOS CAD.
 
-Follow the [full acceptance checklist](README.md#windows-acceptance-checks). The new native runtime and SOLIDWORKS mode changes have not yet been run on the Windows VM.
+Follow the [full acceptance checklist](README.md#windows-acceptance-checks). Submit has not yet been run on the Windows VM; record exact error text if a step fails.

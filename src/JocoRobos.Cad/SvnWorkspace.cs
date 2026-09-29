@@ -8,10 +8,11 @@ using SharpSvn.Security;
 
 namespace JocoRobos.Cad
 {
-    internal sealed class SvnWorkspace
+    internal sealed partial class SvnWorkspace
     {
         internal const string Root = @"C:\JOCO-ROBOS\2027-Robot";
-        internal static readonly string RobotPath = Path.Combine(Root, @"00_Master\Robot.SLDASM");
+        internal static readonly string MasterFolder = Path.Combine(Root, "00_Master");
+        internal static readonly string RobotPath = Path.Combine(MasterFolder, "Robot.SLDASM");
         internal static readonly Uri Repository = new Uri("https://cad.imdad.stream/svn/2027-Robot/");
         private static readonly Guid RepositoryId = new Guid("b8f359f6-f382-4c21-998e-c00f2827aa38");
         private readonly NetworkCredential login;
@@ -94,7 +95,7 @@ namespace JocoRobos.Cad
                 item.LocalNodeStatus != SvnStatus.Normal ||
                 (item.LocalPropertyStatus != SvnStatus.None && item.LocalPropertyStatus != SvnStatus.Normal))
                 throw new InvalidOperationException("Update stopped to preserve local work or an unsupported workspace item:\n" + item.FullPath +
-                    "\nSubmit is not available in this milestone. Keep the files and ask a mentor; do not delete or revert them.");
+                    "\nSubmit your changes first. If this file should not change, keep it and ask a mentor; do not delete or revert it.");
         }
 
         private void ReconcileReadOnly(SvnClient client)
@@ -127,6 +128,7 @@ namespace JocoRobos.Cad
                 else
                 {
                     RequireWorkspace(client);
+                    ReconcilePendingSubmit(client);
                     foreach (var item in Status(client, Root, false, SvnDepth.Infinity)) RequireClean(item);
                     client.Update(Root, new SvnUpdateArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
                 }
@@ -148,8 +150,7 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("This CAD file is not a normal version-controlled file in this workspace.");
                 var local = Info(client, new SvnPathTarget(path));
                 RequireIdentity(local);
-                string relative = path.Substring(Root.Length + 1).Replace('\\', '/');
-                Uri expected = new Uri(Repository, String.Join("/", relative.Split('/').Select(Uri.EscapeDataString)));
+                Uri expected = UrlFor(path);
                 if (!SameUri(local.Uri, expected)) throw new InvalidOperationException("This file was switched to another repository location.");
                 var remote = Info(client, new SvnUriTarget(expected));
                 if (WorkspacePolicy.OwnsLock(login.UserName, local.Lock?.Token, remote.Lock?.Token, remote.Lock?.Owner))
