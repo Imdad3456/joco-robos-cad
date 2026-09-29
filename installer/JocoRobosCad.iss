@@ -2,7 +2,8 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
-#define AddinGuid "{E219FE9C-5919-4BE5-98B7-A518C11AD901}"
+; "{{" is Inno Setup's escape for a literal "{" in registry paths.
+#define AddinGuid "{{E219FE9C-5919-4BE5-98B7-A518C11AD901}"
 #define BuildDir "..\src\JocoRobos.Cad\bin\Release\net48"
 
 [Setup]
