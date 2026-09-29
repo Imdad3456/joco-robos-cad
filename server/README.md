@@ -43,11 +43,19 @@ journalctl --user -u joco-svn-backup.service -n 30
 
 For disaster recovery, stop the SVN service, preserve the damaged data separately, copy a verified backup repository into `data/2027-Robot`, restore configuration if needed, and restart. Do not overlay repository database files while the service is running. Locks and existing working copies require review after recovery; do not silently break locks to repair them.
 
-## Cloudflare step still pending
+## Cloudflare Tunnel
 
-The planned public route is `cad.imdad.stream` → a Cloudflare Tunnel connector on this Deck → `http://127.0.0.1:8091`, retaining the `/svn/2027-Robot` path. Run the connector with host networking if containerized so its loopback reaches this bound service. Keep its token in a restricted file, not in the repository or command logs.
+The public repository URL is **https://cad.imdad.stream/svn/2027-Robot**. The `joco-cad` tunnel routes `cad.imdad.stream` to `http://127.0.0.1:8091` on the Deck, retaining the request path. `joco-cad-tunnel.service` runs the official cloudflared 2026.9.3 container, pinned by image digest, with host networking to reach the loopback-only origin. The token is at `~/server/joco-cad/tunnel/token` (mode 600), mounted read-only. It is not committed to GitHub. Connector metrics are loopback-only at port 2091.
 
-Before declaring the public endpoint ready, test real SVN checkout, lock, commit, and update through HTTPS, including representative assembly sizes. Avoid a browser-only login challenge in the SVN path; SVN has its own per-user authentication. Cloudflare request limits and timeouts may affect large commits. The public route and connector are not configured by these files. See [Cloudflare's tunnel setup documentation](https://developers.cloudflare.com/tunnel/get-started/).
+SVN uses its own per-user authentication; no browser-only Cloudflare Access login is placed in front of it. Anonymous requests receive HTTP 401. To repeat the integration suite over the actual public HTTPS route:
+
+```sh
+podman exec -i -e JOCO_TEST_BASE_URL=https://cad.imdad.stream/svn joco-svn python3 - < ~/server/joco-cad/source/tests/integration.py
+```
+
+Cloudflare may reject generic Python HTTP user agents; the anonymous probe identifies itself as an SVN integration test, and actual operations use the real SVN client. No firewall or bot protections were disabled. Representative assembly sizes and the Windows SharpSvn client still need testing; Cloudflare request limits and timeouts may affect large commits. See [Cloudflare's tunnel setup documentation](https://developers.cloudflare.com/tunnel/get-started/).
+
+The token is not included in the daily repository backup. If rebuilding the Deck, obtain a fresh connector token from the tunnel dashboard, store it with restrictive permissions, install this service file in the user systemd directory, and enable it. Rotating the token requires updating this file and restarting the connector.
 
 ## Operations
 

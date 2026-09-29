@@ -1,0 +1,16 @@
+[Unit]
+Description=Cloudflare Tunnel for JOCO ROBOS CAD
+After=network-online.target joco-svn.service
+Wants=network-online.target joco-svn.service
+
+[Service]
+# Root inside a rootless container maps to deck; permits reading the mode-600 token.
+ExecStart=/usr/bin/podman run --rm --name joco-cad-tunnel --network host --user 0:0 --read-only --cap-drop ALL --security-opt no-new-privileges --volume %h/server/joco-cad/tunnel/token:/run/secrets/tunnel-token:ro docker.io/cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c tunnel --no-autoupdate --metrics 127.0.0.1:2091 run --token-file /run/secrets/tunnel-token
+ExecStop=/usr/bin/podman stop --time 20 joco-cad-tunnel
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=45
+
+[Install]
+WantedBy=default.target

@@ -23,7 +23,8 @@ def main():
     suffix = secrets.token_hex(5)
     name = 'validation-' + suffix
     repository = Path('/var/lib/svn') / name
-    url = 'http://127.0.0.1/svn/' + name
+    base_url = os.environ.get('JOCO_TEST_BASE_URL', 'http://127.0.0.1/svn').rstrip('/')
+    url = base_url + '/' + name
     users = Path('/etc/joco/users')
     saved_users = users.read_bytes()
     password = secrets.token_urlsafe(30)
@@ -41,7 +42,8 @@ def main():
             shutil.copy('/opt/joco/' + hook, repository / 'hooks' / hook)
         run('chown', '-R', 'www-data:www-data', str(repository))
         try:
-            urllib.request.urlopen(url)
+            request = urllib.request.Request(url, headers={'User-Agent': 'SVN/1.14.2 (JOCO integration test)'})
+            urllib.request.urlopen(request, timeout=20)
             raise AssertionError('Anonymous repository access succeeded')
         except urllib.error.HTTPError as exc:
             assert exc.code == 401, exc.code
