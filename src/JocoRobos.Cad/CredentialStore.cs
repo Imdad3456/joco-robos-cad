@@ -8,6 +8,8 @@ namespace JocoRobos.Cad
 {
     internal static class CredentialStore
     {
+        // One login covers every season and the library. The name predates multiple seasons;
+        // it is kept so existing sign-ins keep working.
         private const string Target = "JOCO ROBOS CAD:https://cad.imdad.stream/svn/2027-Robot";
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]

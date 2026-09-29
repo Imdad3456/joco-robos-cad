@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace JocoRobos.Cad
 {
@@ -12,6 +13,22 @@ namespace JocoRobos.Cad
             return ext.Equals(".sldprt", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".sldasm", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".slddrw", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Matches the server's names: a season like 2028-Robot, or the shared Library.
+        internal static bool IsRepositoryName(string name)
+        {
+            return name != null && (name == "Library" || Regex.IsMatch(name, @"^(19|20)\d{2}-Robot$"));
+        }
+
+        // Library parts are copied into the robot under 90_COTS, mirroring the library's folders.
+        // One fixed location per library file means a part used twice is copied once, and SOLIDWORKS
+        // never sees two different files with the same name.
+        internal static string LibraryCopyPath(string libraryRoot, string robotRoot, string libraryFile)
+        {
+            string file = RequireInside(libraryRoot, libraryFile);
+            string relative = file.Substring(Path.GetFullPath(libraryRoot).TrimEnd(Path.DirectorySeparatorChar).Length + 1);
+            return Path.Combine(Path.GetFullPath(robotRoot), "90_COTS", relative);
         }
 
         // SOLIDWORKS owner/lock files ("~$Part.SLDPRT") share CAD extensions but are never submitted.

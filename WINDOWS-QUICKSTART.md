@@ -1,6 +1,6 @@
-# Windows VM setup — v0.3
+# Windows VM setup — v0.4
 
-This milestone adds **Submit** on top of the verified v0.2 Sign In, Update, and Edit. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer.
+This milestone adds **Submit**, automatic **seasons**, and the **parts library** on top of the verified v0.2 Sign In, Update, and Edit. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer.
 
 ## Upgrade your existing prototype
 
@@ -24,9 +24,9 @@ This milestone adds **Submit** on top of the verified v0.2 Sign In, Update, and 
    .\scripts\Register-Dev.ps1
    ```
 
-6. Start SOLIDWORKS normally. Enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins if necessary. The toolbar should show **Open Robot**, **Update**, **Edit**, and **Submit**. The layout is rebuilt once after this upgrade. With no document open, use **Tools → JOCO ROBOS CAD**.
+6. Start SOLIDWORKS normally. Enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins if necessary. The toolbar should show **Open Robot**, **Update**, **Edit**, **Submit**, and **Insert from Library**. The layout is rebuilt once after this upgrade. With no document open, use **Tools → JOCO ROBOS CAD**.
 7. Choose **Sign In**, enter username `imdad` and the CAD password you created. Use **Test Connection** to verify. The password is stored only in Windows Credential Manager after successful server authentication.
-8. Save and close all CAD documents, then click **Update**. **Open Robot** should now open the hexapod's `full assembly.SLDASM` read-only.
+8. Save and close all CAD documents, then click **Update**. It updates `C:\JOCO-ROBOS\2027-Robot` and downloads the new `C:\JOCO-ROBOS\Library`. **Open Robot** should open the hexapod's `full assembly.SLDASM` read-only.
 
 **If the prototype already put test CAD in `C:\JOCO-ROBOS\2027-Robot`:** move that whole folder to a safe backup location such as `C:\JOCO-ROBOS\2027-Robot-local-backup` before the first checkout. Do not delete it. Update deliberately refuses to overwrite a nonempty folder without SVN metadata. This version does not upload those files automatically.
 
@@ -53,6 +53,16 @@ The directory must contain `SolidWorks.Interop.sldworks.dll`, `SolidWorks.Intero
 3. Click **Submit**. Expect **Modified:** `coxa.SLDPRT`, `leg.SLDASM` and **New:** `TestSpacer.SLDPRT`. Enter a comment and submit. Expect "Submitted as revision 3" and all three documents to become read-only.
 4. Negative checks, each of which must commit nothing: submit with an unsaved change; uncheck `TestSpacer.SLDPRT` while `leg.SLDASM` is checked; insert a part saved on the Desktop into a locked assembly.
 5. Retry Edit on `coxa.SLDPRT`. It should lock again because Submit released it.
+
+## Testing the library
+
+1. In a browser, open **https://cad.imdad.stream/admin** and sign in with your CAD account. On **Library**, upload a small test part (for example a bolt) into `Hardware`.
+2. In SOLIDWORKS, open `leg.SLDASM`, click **Edit**, then **Insert from Library** and choose the bolt. It should be copied to `2027-Robot\90_COTS\Hardware\` and inserted at the origin.
+3. Save and **Submit**. The bolt should be listed as New with the modified leg.
+
+## Testing seasons
+
+On the admin page, **Seasons → Start a new season** creates `2028-Robot`. Leave "Make it active" unchecked until you want to try it. When it's active, Open Robot switches to `C:\JOCO-ROBOS\2028-Robot` by itself; **Tools → JOCO ROBOS CAD → Choose Robot** can go back to 2027. Make 2027 active again afterward. An unused test season can't be deleted from the page yet; ask me to remove it.
 
 **Release Edit** in the Tools menu still unlocks an unchanged file without submitting. If a file is changed, keep your work and lock; do not manually delete or revert it.
 

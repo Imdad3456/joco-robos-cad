@@ -10,14 +10,18 @@ namespace JocoRobos.Cad
 {
     internal sealed partial class SvnWorkspace
     {
-        internal const string Root = @"C:\JOCO-ROBOS\2027-Robot";
-        internal static readonly string MasterFolder = Path.Combine(Root, "00_Master");
-        internal static readonly string RobotPath = Path.Combine(MasterFolder, "Robot.SLDASM");
-        internal static readonly Uri Repository = new Uri("https://cad.imdad.stream/svn/2027-Robot/");
-        private static readonly Guid RepositoryId = new Guid("b8f359f6-f382-4c21-998e-c00f2827aa38");
         private readonly NetworkCredential login;
+        internal readonly WorkspaceInfo Info;
+        private string Root { get { return Info.Root; } }
+        private Uri Repository { get { return Info.Repository; } }
 
-        internal SvnWorkspace(NetworkCredential login) { this.login = login; }
+        internal SvnWorkspace(NetworkCredential login, WorkspaceInfo info)
+        {
+            this.login = login;
+            Info = info;
+        }
+
+        internal bool IsCheckedOut { get { return Directory.Exists(Path.Combine(Root, ".svn")); } }
 
         private SvnClient Client()
         {
@@ -31,7 +35,7 @@ namespace JocoRobos.Cad
             return client;
         }
 
-        internal T Exclusive<T>(Func<T> action)
+        internal static T Exclusive<T>(Func<T> action)
         {
             string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad");
             Directory.CreateDirectory(folder);
@@ -43,13 +47,10 @@ namespace JocoRobos.Cad
         internal void TestConnection()
         {
             using (var client = Client())
-            {
-                var info = Info(client, new SvnUriTarget(Repository));
-                RequireIdentity(info);
-            }
+                RequireIdentity(GetInfo(client, new SvnUriTarget(Repository)));
         }
 
-        private static SvnInfoEventArgs Info(SvnClient client, SvnTarget target)
+        private static SvnInfoEventArgs GetInfo(SvnClient client, SvnTarget target)
         {
             SvnInfoEventArgs info;
             if (!client.GetInfo(target, out info) || info == null)
@@ -57,27 +58,33 @@ namespace JocoRobos.Cad
             return info;
         }
 
-        private static void RequireIdentity(SvnInfoEventArgs info)
+        private void RequireIdentity(SvnInfoEventArgs info)
         {
-            if (info.RepositoryId != RepositoryId)
-                throw new InvalidOperationException("This is not the configured JOCO ROBOS repository. Ask a mentor to check the server.");
+            if (info.RepositoryId != Info.Id)
+                throw new InvalidOperationException(Info.Label + " on the server does not match the expected repository. Ask a mentor to check the server.");
         }
 
-        private static void RequireWorkspace(SvnClient client)
+        private void RequireWorkspace(SvnClient client)
         {
             WorkspacePolicy.RequireInside(Root, Root);
-            if (!Directory.Exists(Path.Combine(Root, ".svn")))
-                throw new InvalidOperationException("Click Update first to create the robot workspace.");
-            var info = Info(client, new SvnPathTarget(Root));
+            if (!IsCheckedOut)
+                throw new InvalidOperationException("Click Update first to download " + Info.Label + ".");
+            var info = GetInfo(client, new SvnPathTarget(Root));
             RequireIdentity(info);
             if (!SameUri(info.Uri, Repository) ||
                 !String.Equals(Path.GetFullPath(client.GetWorkingCopyRoot(Root)).TrimEnd('\\'), Root, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The local folder belongs to a different SVN working copy.");
+                throw new InvalidOperationException("The local folder belongs to a different SVN working copy:\n" + Root);
         }
 
         private static bool SameUri(Uri a, Uri b)
         {
             return a != null && b != null && String.Equals(a.AbsoluteUri.TrimEnd('/'), b.AbsoluteUri.TrimEnd('/'), StringComparison.Ordinal);
+        }
+
+        private Uri UrlFor(string path)
+        {
+            string relative = path.Substring(Root.Length + 1).Replace('\\', '/');
+            return new Uri(Repository, String.Join("/", relative.Split('/').Select(Uri.EscapeDataString)));
         }
 
         private static Collection<SvnStatusEventArgs> Status(SvnClient client, string path, bool remote, SvnDepth depth)
@@ -105,7 +112,7 @@ namespace JocoRobos.Cad
             foreach (var item in entries.Where(x => x.Versioned && WorkspacePolicy.IsCad(x.FullPath) && File.Exists(x.FullPath)))
             {
                 WorkspacePolicy.RequireInside(Root, item.FullPath);
-                bool owned = WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner);
+                bool owned = !Info.Archived && WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner);
                 FileAttributes attributes = File.GetAttributes(item.FullPath);
                 File.SetAttributes(item.FullPath, owned ? attributes & ~FileAttributes.ReadOnly : attributes | FileAttributes.ReadOnly);
             }
@@ -115,13 +122,13 @@ namespace JocoRobos.Cad
         {
             using (var client = Client())
             {
-                RequireIdentity(Info(client, new SvnUriTarget(Repository)));
+                RequireIdentity(GetInfo(client, new SvnUriTarget(Repository)));
                 WorkspacePolicy.RequireInside(Root, Root);
-                if (!Directory.Exists(Path.Combine(Root, ".svn")))
+                if (!IsCheckedOut)
                 {
                     if (File.Exists(Root) || (Directory.Exists(Root) && Directory.EnumerateFileSystemEntries(Root).Any()))
-                        throw new InvalidOperationException("The robot folder already contains files but is not an SVN workspace.\n" +
-                            "Move your prototype/test folder to a safe backup location first. It will not be overwritten.\n" + Root);
+                        throw new InvalidOperationException("This folder already contains files but is not an SVN workspace.\n" +
+                            "Move it to a safe backup location first. It will not be overwritten.\n" + Root);
                     Directory.CreateDirectory(Path.GetDirectoryName(Root));
                     client.CheckOut(Repository, Root, new SvnCheckOutArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
                 }
@@ -134,7 +141,7 @@ namespace JocoRobos.Cad
                 }
                 RequireWorkspace(client);
                 ReconcileReadOnly(client);
-                return Info(client, new SvnPathTarget(Root)).Revision;
+                return GetInfo(client, new SvnPathTarget(Root)).Revision;
             }
         }
 
@@ -142,17 +149,18 @@ namespace JocoRobos.Cad
         {
             path = WorkspacePolicy.RequireInside(Root, path);
             if (!WorkspacePolicy.IsCad(path)) throw new InvalidOperationException("Open a saved SOLIDWORKS part, assembly, or drawing first.");
+            if (Info.Archived) throw new InvalidOperationException(Info.Name + " is archived and read-only. Insert parts from the Library, or ask a mentor.");
             using (var client = Client())
             {
                 RequireWorkspace(client);
                 var status = Status(client, path, false, SvnDepth.Empty).SingleOrDefault();
                 if (status == null || !status.Versioned || status.Switched || status.IsFileExternal || status.Conflicted || status.Wedged)
-                    throw new InvalidOperationException("This CAD file is not a normal version-controlled file in this workspace.");
-                var local = Info(client, new SvnPathTarget(path));
+                    throw new InvalidOperationException("This CAD file is not a normal version-controlled file in this workspace.\nNew files do not need Edit; just Submit them.");
+                var local = GetInfo(client, new SvnPathTarget(path));
                 RequireIdentity(local);
                 Uri expected = UrlFor(path);
                 if (!SameUri(local.Uri, expected)) throw new InvalidOperationException("This file was switched to another repository location.");
-                var remote = Info(client, new SvnUriTarget(expected));
+                var remote = GetInfo(client, new SvnUriTarget(expected));
                 if (WorkspacePolicy.OwnsLock(login.UserName, local.Lock?.Token, remote.Lock?.Token, remote.Lock?.Owner))
                     return login.UserName;
                 if (remote.Lock != null)
@@ -165,8 +173,8 @@ namespace JocoRobos.Cad
                 if (needsLock == null) throw new InvalidOperationException("This file is missing its lock policy. Ask a mentor to repair it.");
                 client.Lock(path, new SvnLockArgs { StealLock = false, Comment = "Editing in JOCO ROBOS CAD" });
                 // Never infer success from the lock call alone; confirm server owner and local token.
-                local = Info(client, new SvnPathTarget(path));
-                remote = Info(client, new SvnUriTarget(expected));
+                local = GetInfo(client, new SvnPathTarget(path));
+                remote = GetInfo(client, new SvnUriTarget(expected));
                 if (!WorkspacePolicy.OwnsLock(login.UserName, local.Lock?.Token, remote.Lock?.Token, remote.Lock?.Owner))
                     throw new InvalidOperationException("Lock ownership could not be confirmed. Keep the file read-only and retry Edit when connected.");
                 if (local.LastChangeRevision != remote.LastChangeRevision)

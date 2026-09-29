@@ -2,17 +2,22 @@
 
 A small C# add-in for SOLIDWORKS 2026 that puts SVN behind familiar CAD commands. The intended workflow is **Open Robot → Edit → CAD normally → Submit**.
 
-**Current milestone: v0.3 — Submit.** v0.2 (Sign In, Update, Edit, Release Edit) was verified in SOLIDWORKS 2026 with the imported hexapod test assembly. Submit compiles and passes policy tests but has not yet run on Windows. Keep using disposable CAD.
+**Current milestone: v0.4 — seasons and the parts library.** v0.2 (Sign In, Update, Edit, Release Edit) was verified in SOLIDWORKS 2026 with the imported hexapod. Submit (v0.3), season switching, and Insert from Library compile and pass policy tests, but have not yet run on Windows. Keep using disposable CAD.
+
+Mentors manage seasons, the library, locks, and accounts at **https://cad.imdad.stream/admin** (see [server/README.md](server/README.md)). Students only use SOLIDWORKS.
 
 Start with **[Windows setup and upgrade instructions](WINDOWS-QUICKSTART.md)**. Server administration is documented in [server/README.md](server/README.md).
 
 ## What works in this source version
 
-The toolbar contains **Open Robot**, **Update**, **Edit**, and **Submit**. The Tools → JOCO ROBOS CAD menu also provides **Sign In**, **Test Connection**, and **Release Edit**.
+The toolbar contains **Open Robot**, **Update**, **Edit**, **Submit**, and **Insert from Library**. The Tools → JOCO ROBOS CAD menu also provides **Sign In**, **Test Connection**, **Release Edit**, and **Choose Robot**.
 
-- Sign In validates your account against `https://cad.imdad.stream/svn/2027-Robot/`, then saves the login in Windows Credential Manager. SVN password caching and interactive SVN prompts are disabled. Invalid TLS certificates are not accepted.
-- Update checks out the complete robot on first use and subsequently uses SVN update. The workspace is `C:\JOCO-ROBOS\2027-Robot`. The repository URL and UUID are checked before use. Existing non-SVN folders are never overwritten.
-- Update requires all SOLIDWORKS documents to be closed. It stops on local changes, unknown files, conflicts, switched files, or unsupported workspace items. It does not merge binary CAD or silently revert files.
+- **Seasons are automatic.** The add-in reads `https://cad.imdad.stream/catalog.json` and follows the season mentors make active. Each season has its own folder (`C:\JOCO-ROBOS\2028-Robot`); the previous one stays on disk. Choose Robot can pin an older season; archived seasons are read-only.
+- **Library.** Update also downloads `C:\JOCO-ROBOS\Library`. With a robot assembly open and locked by Edit, **Insert from Library** copies the chosen part into `90_COTS\<library folder>`. For assemblies, it copies their library parts too and repoints references to the copies. It then inserts the part at the origin. Parts already copied into that robot are reused, never overwritten. Copies are new files, so the next Submit includes them. Library files can be improved with Edit/Submit like robot files; changes reach a robot only when someone inserts the part again. Submit refuses robot files that link directly into the Library.
+
+- Sign In validates your account against the server's catalog and the current season's repository, then saves the login in Windows Credential Manager. SVN password caching and interactive SVN prompts are disabled. Invalid TLS certificates are not accepted.
+- Update checks out the complete robot on first use and subsequently uses SVN update. Workspaces are `C:\JOCO-ROBOS\<season>` and `C:\JOCO-ROBOS\Library`. Repository UUIDs from the catalog are checked before use. Existing non-SVN folders are never overwritten.
+- Update requires the documents from that folder to be closed. It stops on local changes, unknown files, conflicts, switched files, or unsupported workspace items. It does not merge binary CAD or silently revert files.
 - Open Robot updates first, then opens `00_Master\Robot.SLDASM` read-only. If that file does not exist, it opens the only assembly in `00_Master` that no other assembly there references (currently the hexapod's `full assembly.SLDASM`).
 - Edit acts on the **active document** in its own window. Open a component separately before locking it. It checks the server revision, requests a non-stealing exclusive lock, and confirms both server ownership and the local lock token. Then it changes SOLIDWORKS to writable using `SetReadOnlyState(false)` without reloading the model.
 - Release Edit only unlocks a file with no unsaved or on-disk changes. Modified files and their locks are retained.
@@ -24,11 +29,12 @@ Network work runs off the SOLIDWORKS UI thread in an owned modal progress window
 ## Validation and limits
 
 - The original local toolbar and callbacks were reported working by the user in SOLIDWORKS 2026.
-- v0.3 compiles with zero warnings/errors using .NET SDK 8.0.425, .NET Framework 4.8 reference assemblies, SharpSvn 1.14005.390, and SOLIDWORKS 2024 interop 32.1.0 reference DLLs for the Linux compilation check. Those downloaded reference DLLs are not committed or distributed. The Windows build uses your installed SOLIDWORKS 2026 API DLLs.
-- 20 policy tests cover path boundaries, traversal, metadata paths, symlinks, extension handling, missing/stale/wrong-user lock tokens, submittable-file filtering, new-folder scheduling, and comment validation. Run `dotnet run --project tests\WorkspacePolicy.Tests -c Release`.
+- v0.4 compiles with zero warnings/errors using .NET SDK 8.0.425, .NET Framework 4.8 reference assemblies, SharpSvn 1.14005.390, and SOLIDWORKS 2024 interop 32.1.0 reference DLLs for the Linux compilation check. Those downloaded reference DLLs are not committed or distributed. The Windows build uses your installed SOLIDWORKS 2026 API DLLs.
+- 29 policy tests cover repository names, library copy locations, catalog parsing, path boundaries, traversal, metadata paths, symlinks, extension handling, missing/stale/wrong-user lock tokens, submittable-file filtering, new-folder scheduling, and comment validation. Run `dotnet run --project tests\WorkspacePolicy.Tests -c Release`.
 - The server passed actual HTTPS checkout, commit, update, competing lock, lock stealing/breaking denial, and backup restoration tests using the native SVN client.
 - Verified on Windows by the user: Sign In, Update, opening the imported hexapod, Edit, and Release Edit.
-- **Not yet run on Windows:** Submit, interrupted-Submit recovery, `GetDocumentDependencies2` reference checks, and Open Robot's master-assembly fallback.
+- **Not yet run on Windows:** Submit, interrupted-Submit recovery, `GetDocumentDependencies2` reference checks, Open Robot's master-assembly fallback, catalog download, Library checkout, and Insert from Library (`ReplaceReferencedDocument`, `AddComponent5`).
+- Server side verified: 52 disposable-container checks of the admin page, archive permissions, library upload/promote, and accounts, plus the original integration suite on the Deck.
 - Read-only attributes reduce mistakes; server hooks enforce commit ownership. An assembly lock does not lock its referenced parts. Offline editing and live notification of mentor-broken locks are not supported in this milestone.
 - Deleting/renaming CAD, an installer, selected-component locking, and off-device backups remain to be implemented. Do not use this release for irreplaceable team edits yet.
 
@@ -43,7 +49,8 @@ Network work runs off the SOLIDWORKS UI thread in an owned modal progress window
 7. Releasing a modified file must fail without deleting changes. A network failure must never report successful lock acquisition or unlock.
 8. Submit: Edit a part, change and save it, create a new part in the same folder and insert it into a locked assembly. Submit must list both, commit one revision, and leave both read-only and unlocked. A second working copy must receive them on Update.
 9. Submit must refuse with unsaved documents, with a new referenced part unchecked, and with a component referenced from outside `C:\JOCO-ROBOS\2027-Robot`. Nothing may be committed in those cases.
-10. Disconnect the network during Submit. Retry after reconnecting: the result must be either one committed revision or preserved edits and locks, never both or neither.
+10. Library: with the hexapod's leg assembly locked, Insert from Library a library part. It must appear under `90_COTS`, be inserted, and Submit must list it as New. Inserting it again must reuse the copy.
+11. Disconnect the network during Submit. Retry after reconnecting: the result must be either one committed revision or preserved edits and locks, never both or neither.
 
 ## Dependencies
 

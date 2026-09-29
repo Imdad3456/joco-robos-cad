@@ -133,4 +133,39 @@ namespace JocoRobos.Cad
             Shown += (s, e) => comment.Focus();
         }
     }
+
+    internal sealed class ChooseRobotDialog : Form
+    {
+        private readonly ListBox robots = new ListBox();
+        private readonly List<string> names = new List<string>();
+        /// <summary>Empty string: follow the season mentors make active.</summary>
+        internal string Choice { get { return names[robots.SelectedIndex]; } }
+
+        internal ChooseRobotDialog(Catalog catalog, string current)
+        {
+            Text = "JOCO ROBOS CAD — Choose Robot";
+            ClientSize = new Size(420, 300);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Controls.Add(new Label { Text = "Which robot should Open Robot and Update use?", Location = new Point(20, 15), AutoSize = true });
+            robots.SetBounds(20, 40, 380, 190);
+            names.Add("");
+            robots.Items.Add("Current season (recommended) — " + (catalog.Active ?? "none yet"));
+            foreach (var robot in catalog.Robots.AsEnumerable().Reverse())
+            {
+                names.Add(robot.Name);
+                robots.Items.Add(robot.Name + (robot.Name == catalog.Active ? "  (current)" : "") + (robot.Archived ? "  (archived, read-only)" : ""));
+            }
+            robots.SelectedIndex = Math.Max(0, names.IndexOf(current ?? ""));
+            Controls.Add(robots);
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(200, 250), Size = new Size(95, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(305, 250), Size = new Size(95, 30) };
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            AcceptButton = ok;
+            CancelButton = cancel;
+        }
+    }
 }

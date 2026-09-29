@@ -13,11 +13,12 @@ namespace JocoRobos.Cad
     {
         internal SubmitKind Kind;
         internal string Path;
-        internal string Relative { get { return Path.Substring(SvnWorkspace.Root.Length + 1); } }
+        internal WorkspaceInfo Workspace;
+        internal string Relative { get { return Path.Substring(Workspace.Root.Length + 1); } }
         public override string ToString()
         {
             string label = Kind == SubmitKind.Modified ? "Modified" : Kind == SubmitKind.New ? "New" : "Unchanged — release lock";
-            return label + ":  " + Relative;
+            return label + ":  " + (Workspace.IsLibrary ? "Library\\" : "") + Relative;
         }
     }
 
@@ -36,15 +37,14 @@ namespace JocoRobos.Cad
 
     internal sealed partial class SvnWorkspace
     {
-        private static string JournalPath
+        private string JournalPath
         {
-            get { return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pending-submit.txt"); }
+            get { return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pending-submit-" + Info.Name + ".txt"); }
         }
 
-        private static Uri UrlFor(string path)
+        private SubmitItem Item(SubmitKind kind, string path)
         {
-            string relative = path.Substring(Root.Length + 1).Replace('\\', '/');
-            return new Uri(Repository, String.Join("/", relative.Split('/').Select(Uri.EscapeDataString)));
+            return new SubmitItem { Kind = kind, Path = path, Workspace = Info };
         }
 
         internal SubmitPlan PrepareSubmit()
@@ -66,14 +66,14 @@ namespace JocoRobos.Cad
                 string path = System.IO.Path.GetFullPath(item.FullPath).TrimEnd('\\');
                 if (path.Equals(Root, StringComparison.OrdinalIgnoreCase)) continue;
                 WorkspacePolicy.RequireInside(Root, path);
-                string relative = path.Substring(Root.Length + 1);
+                string relative = (Info.IsLibrary ? "Library\\" : "") + path.Substring(Root.Length + 1);
                 SvnStatus local = item.LocalNodeStatus;
                 bool owned = WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner);
 
                 if (local == SvnStatus.NotVersioned || local == SvnStatus.Ignored)
                 {
                     if (Directory.Exists(path)) AddNewFiles(path, plan);
-                    else if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = path });
+                    else if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(Item(SubmitKind.New, path));
                     continue;
                 }
                 if (item.Conflicted || item.Wedged || item.Switched || item.IsFileExternal)
@@ -94,18 +94,18 @@ namespace JocoRobos.Cad
                     case SvnStatus.Normal:
                         bool propsChanged = item.LocalPropertyStatus == SvnStatus.Modified;
                         if (propsChanged) plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
-                        else if (owned) plan.Items.Add(new SubmitItem { Kind = SubmitKind.ReleaseOnly, Path = path });
+                        else if (owned) plan.Items.Add(Item(SubmitKind.ReleaseOnly, path));
                         break;
                     case SvnStatus.Added:
                         // Left behind by a Submit that did not reach the server.
-                        if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = path });
+                        if (WorkspacePolicy.IsSubmittableCad(path)) plan.Items.Add(Item(SubmitKind.New, path));
                         else plan.Blocked.Add(relative + " — not a SOLIDWORKS file");
                         break;
                     case SvnStatus.Modified:
                         if (item.LocalPropertyStatus == SvnStatus.Modified)
                             plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
                         else if (!WorkspacePolicy.IsCad(path) || owned)
-                            plan.Items.Add(new SubmitItem { Kind = SubmitKind.Modified, Path = path });
+                            plan.Items.Add(Item(SubmitKind.Modified, path));
                         else if (item.RemoteLock != null)
                             plan.Blocked.Add(relative + " — changed, but locked by " + item.RemoteLock.Owner + ". Keep your copy and ask a mentor");
                         else
@@ -122,7 +122,7 @@ namespace JocoRobos.Cad
             }
         }
 
-        private static void AddNewFiles(string directory, SubmitPlan plan)
+        private void AddNewFiles(string directory, SubmitPlan plan)
         {
             // SVN reports an unversioned folder as one entry; look inside for new CAD without following links.
             WorkspacePolicy.RequireInside(Root, directory);
@@ -130,13 +130,14 @@ namespace JocoRobos.Cad
             {
                 if ((File.GetAttributes(entry) & FileAttributes.ReparsePoint) != 0) continue;
                 if (Directory.Exists(entry)) AddNewFiles(entry, plan);
-                else if (WorkspacePolicy.IsSubmittableCad(entry)) plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = entry });
+                else if (WorkspacePolicy.IsSubmittableCad(entry)) plan.Items.Add(Item(SubmitKind.New, entry));
             }
         }
 
         internal SubmitResult Submit(IList<SubmitItem> selected, string comment)
         {
             comment = WorkspacePolicy.RequireComment(comment);
+            selected = selected.Where(x => x.Workspace.Name == Info.Name).ToList();
             if (selected.Count == 0) throw new InvalidOperationException("Select at least one file.");
             using (var client = Client())
             {
