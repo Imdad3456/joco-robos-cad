@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- Shared add-in files target Windows/.NET Framework 4.8; these .NET 8 hints do not apply there. -->
+    <NoWarn>$(NoWarn);CA1416;SYSLIB0014</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/JocoRobos.Cad/WorkspacePolicy.cs" Link="WorkspacePolicy.cs" />
