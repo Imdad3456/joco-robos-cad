@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import xml.etree.ElementTree as ElementTree
 from email.parser import BytesParser
 from email.policy import HTTP
@@ -79,7 +80,8 @@ def write_atomic(path, text, mode=0o640):
 # ---------- state ----------
 
 def repositories():
-    return sorted(n for n in os.listdir(REPOS) if os.path.isfile(os.path.join(REPOS, n, 'format')))
+    # Dot-folders hold deleted seasons; they are not served or backed up.
+    return sorted(n for n in os.listdir(REPOS) if not n.startswith('.') and os.path.isfile(os.path.join(REPOS, n, 'format')))
 
 
 def load_state():
@@ -237,6 +239,20 @@ def act(user, form):
             state['active'] = name
         save_state(state)
         return 'Created ' + name + '.'
+    if action == 'delete-season':
+        name = form.get('name', '')
+        if name not in repositories() or not SEASON.match(name):
+            raise Refused('Unknown season.')
+        if name == state['active']:
+            raise Refused('Make another season active before deleting ' + name + '.')
+        # Only a season nobody has submitted to: revision 1 is the folder creation.
+        if youngest(name) > 1 or locks(name):
+            raise Refused(name + ' has CAD history, so it cannot be deleted. Archive it instead.')
+        stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+        os.rename(os.path.join(REPOS, name), os.path.join(REPOS, '.deleted-%s-%s' % (name, stamp)))
+        state['archived'] = [n for n in state['archived'] if n != name]
+        save_state(state)
+        return 'Deleted empty season ' + name + '.'
     if action in ('activate', 'archive', 'unarchive'):
         name = form.get('name', '')
         if name not in repositories() or not SEASON.match(name):
@@ -476,6 +492,8 @@ class Admin(BaseHTTPRequestHandler):
             else:
                 status = '<span class="warn">Editable, not active</span>'
                 actions = self.form('activate', {'name': name}, 'Make active') + ' ' + self.form('archive', {'name': name}, 'Archive')
+                if youngest(name) <= 1 and not held:
+                    actions += ' ' + self.form('delete-season', {'name': name}, 'Delete (empty)')
             rows += '<tr><td><b>%s</b></td><td>r%d</td><td>%d</td><td>%s</td><td>%s</td></tr>' % (esc(name), youngest(name), len(held), status, actions)
         next_year = (int(seasons[-1][:4]) + 1) if seasons else 2027
         create = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="create-season">'

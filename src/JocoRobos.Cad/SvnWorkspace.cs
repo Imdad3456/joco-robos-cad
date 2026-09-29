@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -183,6 +184,37 @@ namespace JocoRobos.Cad
             }
         }
 
+        // Read-only view for the status pane: never changes files, never takes the operation lock.
+        internal WorkspaceSnapshot Snapshot()
+        {
+            if (!IsCheckedOut) return new WorkspaceSnapshot { Info = Info };
+            using (var client = Client())
+            {
+                var local = GetInfo(client, new SvnPathTarget(Root));
+                RequireIdentity(local);
+                var snapshot = new WorkspaceSnapshot { Info = Info, Local = local.Revision,
+                    Head = GetInfo(client, new SvnUriTarget(Repository)).Revision };
+                if (snapshot.Head > snapshot.Local)
+                    client.Log(Repository, new SvnLogArgs { Range = new SvnRevisionRange(snapshot.Local + 1, snapshot.Head) }, (s, e) =>
+                    {
+                        // Your own submits already are on this computer.
+                        if (e.Author != login.UserName)
+                            snapshot.Incoming.Add("r" + e.Revision + " " + e.Author + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
+                    });
+                foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+                {
+                    string path = Path.GetFullPath(item.FullPath);
+                    if (item.RemoteLock != null) snapshot.Locks[path] = item.RemoteLock.Owner;
+                    if (WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner))
+                        snapshot.Mine.Add(path);
+                    if (item.LocalNodeStatus == SvnStatus.Modified) snapshot.Changed.Add(path);
+                    else if ((item.LocalNodeStatus == SvnStatus.Added || item.LocalNodeStatus == SvnStatus.NotVersioned) && WorkspacePolicy.IsSubmittableCad(path))
+                        snapshot.New.Add(path);
+                }
+                return snapshot;
+            }
+        }
+
         internal void ReleaseEdit(string path)
         {
             path = WorkspacePolicy.RequireInside(Root, path);
@@ -199,5 +231,16 @@ namespace JocoRobos.Cad
                 // A failed request keeps the caller in read-only mode until ownership is rechecked.
             }
         }
+    }
+
+    internal sealed class WorkspaceSnapshot
+    {
+        internal WorkspaceInfo Info;
+        internal long Local, Head;
+        internal readonly List<string> Incoming = new List<string>();
+        internal readonly Dictionary<string, string> Locks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        internal readonly HashSet<string> Mine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal readonly HashSet<string> Changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal readonly HashSet<string> New = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 }

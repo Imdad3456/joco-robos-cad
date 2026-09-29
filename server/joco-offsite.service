@@ -1,0 +1,8 @@
+[Unit]
+Description=Copy JOCO ROBOS CAD backups off the Steam Deck
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh %h/.local/share/joco-cad/offsite-pull.sh

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily off-device copy of JOCO ROBOS CAD backups
+
+[Timer]
+OnCalendar=*-*-* 04:30
+RandomizedDelaySec=30m
+# Runs at next boot/wake if the PC was off at the scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -6,7 +6,7 @@ The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`
 
 Sign in with your CAD account; only accounts marked as mentor get past the first page. Apache checks the password and forwards `/admin` to `joco.py serve`. That service listens only inside the container and trusts only the username Apache sets. Forms require same-origin requests plus a per-user token.
 
-- **Seasons:** create `YYYY-Robot` with the standard folders, lock hooks and backups; choose the active season students open; archive old seasons as read-only (SVN authz), or unarchive them. A season can't be archived while it's active or has locks.
+- **Seasons:** create `YYYY-Robot` with the standard folders, lock hooks and backups; choose the active season students open; archive old seasons as read-only (SVN authz), or unarchive them. A season can't be archived while it's active or has locks. An inactive season nobody has submitted to can be deleted; it's moved to a hidden `.deleted-…` folder on the Deck, not erased.
 - **Locks:** list every lock and release abandoned ones (`svnadmin rmlocks`). The previous owner can no longer submit their copy of that file.
 - **Library:** browse, upload new parts (up to 100 MB per request, the Cloudflare limit), or copy a CAD file from any season into the library. Changes to existing library parts go through Edit/Submit like robot files; students can also add parts that way.
 - **Accounts:** add students, reset passwords (at least 10 characters), make or remove mentors, delete accounts that hold no locks.
@@ -52,6 +52,8 @@ systemctl --user start joco-svn-backup.service
 journalctl --user -u joco-svn-backup.service -n 30
 ```
 
+**Off-device copy.** A second computer pulls each completed backup over SSH with `offsite-pull.sh` (`joco-offsite.service`/`.timer`, daily at 04:30 and at next boot if missed). It keeps 90 days and never deletes the newest copy. The Deck can't delete those copies. It currently runs on Imdad's Linux PC into `~/Backups/joco-cad`. To set it up on another machine with SSH access to the Deck: copy the script to `~/.local/share/joco-cad/`, copy the unit files to `~/.config/systemd/user/`, then run `systemctl --user enable --now joco-offsite.timer`.
+
 For disaster recovery, stop the SVN service, preserve the damaged data separately, copy verified backup repositories into `data/<name>`, restore configuration if needed (`podman unshare cp -a backup/config/. config/`), and restart; startup fixes file ownership. Do not overlay repository database files while the service is running. Locks and existing working copies require review after recovery; do not silently break locks to repair them.
 
 ## Cloudflare Tunnel
@@ -76,4 +78,4 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v3`; `initial` is the rollback image.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v4`; `v3` and `initial` are rollback images.

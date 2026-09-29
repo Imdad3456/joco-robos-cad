@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using SolidWorks.Interop.sldworks;
@@ -46,6 +47,15 @@ namespace JocoRobos.Cad
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
+        // Status pane: refreshed in the background, rendered on the SOLIDWORKS UI thread.
+        private TaskpaneView taskpane;
+        private StatusPane pane;
+        private Timer statusTimer;
+        private bool refreshing;
+        private Catalog paneCatalog;
+        private DateTime paneCatalogAt, checkedAt;
+        private WorkspaceSnapshot robotSnapshot, librarySnapshot;
+        private string paneUser, paneError;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -56,6 +66,9 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("SOLIDWORKS could not register the callbacks.");
                 commands = application.GetCommandManager(Cookie);
                 CreateCommands();
+                // The pane is a convenience; the toolbar must still work if it cannot be created.
+                try { CreatePane(); }
+                catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
                 return true;
             }
             catch (Exception exception)
@@ -128,7 +141,106 @@ namespace JocoRobos.Cad
             {
                 Message(exception.Message + "\n\nIf your password changed, use Tools → JOCO ROBOS CAD → Sign In.", MessageBoxIcon.Error);
             }
-            finally { busy = false; }
+            finally
+            {
+                busy = false;
+                RefreshStatus();
+            }
+        }
+
+        // ---------- status pane ----------
+
+        private void CreatePane()
+        {
+            string icon = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pane.bmp");
+            Directory.CreateDirectory(Path.GetDirectoryName(icon));
+            using (var bitmap = new System.Drawing.Bitmap(16, 18))
+            using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+            using (var font = new System.Drawing.Font("Segoe UI", 8f, System.Drawing.FontStyle.Bold))
+            {
+                graphics.Clear(System.Drawing.Color.FromArgb(31, 95, 191));
+                graphics.DrawString("J", font, System.Drawing.Brushes.White, 2, 1);
+                bitmap.Save(icon, System.Drawing.Imaging.ImageFormat.Bmp);
+            }
+            taskpane = application.CreateTaskpaneView2(icon, Title);
+            if (taskpane == null) throw new InvalidOperationException("SOLIDWORKS did not create the task pane.");
+            pane = new StatusPane(new[]
+            {
+                new KeyValuePair<string, Action>("Open Robot", OpenRobot),
+                new KeyValuePair<string, Action>("Update", UpdateRobot),
+                new KeyValuePair<string, Action>("Edit", Edit),
+                new KeyValuePair<string, Action>("Submit", Submit),
+                new KeyValuePair<string, Action>("Insert from Library", InsertFromLibrary),
+            }, RefreshStatus);
+            pane.CreateControl();
+            if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
+                throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
+            application.ActiveModelDocChangeNotify += OnActiveDocumentChanged;
+            statusTimer = new Timer { Interval = 3 * 60 * 1000 };
+            statusTimer.Tick += (s, e) => RefreshStatus();
+            statusTimer.Start();
+            RefreshStatus();
+        }
+
+        private int OnActiveDocumentChanged()
+        {
+            RenderStatus();
+            return 0;
+        }
+
+        private void RenderStatus()
+        {
+            if (pane == null || pane.IsDisposed) return;
+            try
+            {
+                var doc = application.ActiveDoc as ModelDoc2;
+                string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
+                pane.Show(StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt));
+            }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
+        }
+
+        // Read-only server check: never prompts, never changes files, skipped while a command runs.
+        private void RefreshStatus()
+        {
+            if (pane == null || pane.IsDisposed) return;
+            if (busy || refreshing) { RenderStatus(); return; }
+            NetworkCredential login;
+            try { login = CredentialStore.Read(); }
+            catch (Exception) { login = null; }
+            paneUser = login?.UserName;
+            if (login == null) { RenderStatus(); return; }
+            refreshing = true;
+            var cached = DateTime.UtcNow - paneCatalogAt < TimeSpan.FromMinutes(10) ? paneCatalog : null;
+            Task.Run(() =>
+            {
+                var catalog = cached ?? Catalog.Fetch(login);
+                var robot = new SvnWorkspace(login, catalog.Robot).Snapshot();
+                var library = catalog.Library == null ? null : new SvnWorkspace(login, catalog.Library).Snapshot();
+                return Tuple.Create(catalog, robot, library);
+            }).ContinueWith(task =>
+            {
+                if (pane == null || pane.IsDisposed) return;
+                pane.BeginInvoke((Action)(() =>
+                {
+                    refreshing = false;
+                    if (task.Status == TaskStatus.RanToCompletion)
+                    {
+                        if (task.Result.Item1 != paneCatalog) { paneCatalog = task.Result.Item1; paneCatalogAt = DateTime.UtcNow; }
+                        robotSnapshot = task.Result.Item2;
+                        librarySnapshot = task.Result.Item3;
+                        paneError = null;
+                        checkedAt = DateTime.Now;
+                    }
+                    else
+                    {
+                        paneCatalog = null;
+                        paneError = task.Exception?.GetBaseException().Message ?? "unknown error";
+                        if (paneError.Length > 120) paneError = paneError.Substring(0, 120) + "…";
+                    }
+                    RenderStatus();
+                }));
+            });
         }
 
         // ---------- sign-in and seasons ----------
@@ -274,11 +386,33 @@ namespace JocoRobos.Cad
 
         // ---------- edit ----------
 
+        // The active document, or the one component selected in the active assembly's tree or graphics.
         private ModelDoc2 ActiveCad(Catalog catalog, out WorkspaceInfo workspace)
         {
             var doc = application.ActiveDoc as ModelDoc2;
             if (doc == null || String.IsNullOrEmpty(doc.GetPathName()))
-                throw new InvalidOperationException("Open a saved CAD document in its own window first.");
+                throw new InvalidOperationException("Open a saved CAD document first.");
+            if (doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY)
+            {
+                var selection = (SelectionMgr)doc.SelectionManager;
+                var components = new List<Component2>();
+                for (int i = 1; i <= selection.GetSelectedObjectCount2(-1); i++)
+                {
+                    var component = selection.GetSelectedObjectsComponent4(i, -1) as Component2;
+                    if (component != null && !components.Any(c => String.Equals(c.GetPathName(), component.GetPathName(), StringComparison.OrdinalIgnoreCase)))
+                        components.Add(component);
+                }
+                if (components.Count > 1)
+                    throw new InvalidOperationException("Select just one component, or clear the selection to use the whole assembly.");
+                if (components.Count == 1)
+                {
+                    var part = components[0].GetModelDoc2() as ModelDoc2;
+                    if (part == null)
+                        throw new InvalidOperationException(Path.GetFileName(components[0].GetPathName()) +
+                            " is lightweight or suppressed. Right-click it → Set to Resolved, then try again.");
+                    doc = part;
+                }
+            }
             if (!WorkspacePolicy.IsCad(doc.GetPathName())) throw new InvalidOperationException("Select a SOLIDWORKS CAD document first.");
             workspace = catalog.Owning(doc.GetPathName());
             if (workspace == null)
@@ -308,8 +442,10 @@ namespace JocoRobos.Cad
                     File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
                     if (!doc.SetReadOnlyState(false) || doc.IsOpenedReadOnly())
                         throw new InvalidOperationException("Your SVN lock is held, but SOLIDWORKS could not make the document writable. Close and reopen it, then retry Edit.");
+                    bool component = !ReferenceEquals(doc, application.ActiveDoc);
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
                         (workspace.IsLibrary ? " in the Library. Changes reach robots only when someone inserts the part again." : ".") +
+                        (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
                         "\n\nSave normally, then click Submit when you are done.");
                 }
                 catch
@@ -347,7 +483,8 @@ namespace JocoRobos.Cad
             Execute(() =>
             {
                 // SOLIDWORKS keeps edits in memory; only saved bytes can be submitted.
-                var unsaved = OpenDocuments().Where(d => d.GetSaveFlag()).Select(d =>
+                // Read-only documents can look modified after a rebuild, but their changes can never be saved or submitted.
+                var unsaved = OpenDocuments().Where(d => d.GetSaveFlag() && !d.IsOpenedReadOnly()).Select(d =>
                     String.IsNullOrEmpty(d.GetPathName()) ? d.GetTitle() + " (never saved)" : d.GetPathName()).ToList();
                 if (unsaved.Count > 0)
                     throw new InvalidOperationException("Save these documents first (Save As into your robot folder for new files):\n\n" +
@@ -577,6 +714,18 @@ namespace JocoRobos.Cad
         public bool DisconnectFromSW()
         {
             if (busy) return false;
+            try
+            {
+                statusTimer?.Stop();
+                statusTimer?.Dispose();
+                if (application != null && pane != null) application.ActiveModelDocChangeNotify -= OnActiveDocumentChanged;
+                taskpane?.DeleteView();
+                pane?.Dispose();
+            }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
+            statusTimer = null;
+            taskpane = null;
+            pane = null;
             try { if (commands != null) commands.RemoveCommandGroup2(GroupId, true); }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
             commands = null;

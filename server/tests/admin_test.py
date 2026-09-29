@@ -108,4 +108,12 @@ s, loc = post('/admin/users', {'action': 'delete-user', 'username': 'alex'}); ch
 check(req('/catalog.json', 'alex', 'alexpassword2')[0] == 401, 'deleted user rejected')
 s, _, b = req('/admin', *M); check('Add bolt' in b and 'sarah' in b, 'activity shows submits')
 check('<script' not in b, 'no scripts in page')
+# Delete only empty, inactive seasons
+s, loc = post('/admin', {'action': 'create-season', 'name': '2029-Robot'}); check('ok=Created' in loc, 'create 2029')
+s, loc = post('/admin', {'action': 'delete-season', 'name': '2028-Robot'}); check('Make another season active' in loc or 'history' in loc, 'active/used season not deleted ' + loc)
+s, loc = post('/admin', {'action': 'delete-season', 'name': '2029-Robot'}); check('ok=Deleted empty season' in loc, 'delete empty ' + loc)
+s, _, b = req('/catalog.json', *U); check('2029-Robot' not in b, 'deleted season gone from catalog')
+out = svn('svn ls http://localhost/svn/2029-Robot'); check(out.returncode != 0, 'deleted season not reachable')
+s, loc = post('/admin', {'action': 'activate', 'name': '2027-Robot'}); check('ok=' in loc, 'reactivate 2027')
+s, loc = post('/admin', {'action': 'delete-season', 'name': '2028-Robot'}); check('history' in loc, 'season with commits not deleted ' + loc)
 print(f'PASS: {n} server/admin checks')

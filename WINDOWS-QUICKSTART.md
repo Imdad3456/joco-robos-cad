@@ -1,4 +1,4 @@
-# Windows VM setup — v0.4
+# Windows VM setup — v0.5
 
 This milestone adds **Submit**, automatic **seasons**, and the **parts library** on top of the verified v0.2 Sign In, Update, and Edit. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer.
 

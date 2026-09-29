@@ -2,13 +2,21 @@
 
 A small C# add-in for SOLIDWORKS 2026 that puts SVN behind familiar CAD commands. The intended workflow is **Open Robot → Edit → CAD normally → Submit**.
 
-**Current milestone: v0.4 — seasons and the parts library.** v0.2 (Sign In, Update, Edit, Release Edit) was verified in SOLIDWORKS 2026 with the imported hexapod. Submit (v0.3), season switching, and Insert from Library compile and pass policy tests, but have not yet run on Windows. Keep using disposable CAD.
+**Current milestone: v0.5 — installer, status pane, component Edit.** Everything below v0.2 in this list is compiled and unit-tested but not yet run on Windows; follow **[TESTING.md](TESTING.md)**.
+
+**v0.4 — seasons and the parts library.** v0.2 (Sign In, Update, Edit, Release Edit) was verified in SOLIDWORKS 2026 with the imported hexapod. Submit (v0.3), season switching, and Insert from Library compile and pass policy tests, but have not yet run on Windows. Keep using disposable CAD.
 
 Mentors manage seasons, the library, locks, and accounts at **https://cad.imdad.stream/admin** (see [server/README.md](server/README.md)). Students only use SOLIDWORKS.
 
 Start with **[Windows setup and upgrade instructions](WINDOWS-QUICKSTART.md)**. Server administration is documented in [server/README.md](server/README.md).
 
 ## What works in this source version
+
+Students install with **one setup file** (`scripts\Build-Installer.ps1` builds `JOCO-ROBOS-CAD-Setup-<version>.exe`). It installs the add-in and bundled SharpSvn, adds the Visual C++ runtime if needed, registers with SOLIDWORKS, and turns on load-at-startup. Uninstalling never touches `C:\JOCO-ROBOS`. It is not code-signed, so Windows shows "More info → Run anyway" once.
+
+A **JOCO ROBOS CAD task pane** (right side of SOLIDWORKS) shows the robot, ✓ up to date or "N updates available" with who submitted what, the active file's state (🔒 locked by someone, ✎ you are editing, read-only, new), your locked files, and the main buttons. It checks the server every 3 minutes, after each command, and on "Check now". It never changes files.
+
+**Edit and Release Edit** act on the one component selected in an open assembly (tree or graphics), otherwise on the active document.
 
 The toolbar contains **Open Robot**, **Update**, **Edit**, **Submit**, and **Insert from Library**. The Tools → JOCO ROBOS CAD menu also provides **Sign In**, **Test Connection**, **Release Edit**, and **Choose Robot**.
 
