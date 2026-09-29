@@ -1,0 +1,11 @@
+FROM docker.io/library/debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends apache2 libapache2-mod-svn subversion python3 python3-subversion apache2-utils ca-certificates && rm -rf /var/lib/apt/lists/* \
+    && a2enmod dav dav_svn authz_svn && a2dissite 000-default
+COPY svn.conf /etc/apache2/sites-enabled/joco-svn.conf
+COPY pre-commit.py /opt/joco/pre-commit
+COPY pre-lock.py /opt/joco/pre-lock
+COPY pre-unlock.py /opt/joco/pre-unlock
+COPY entrypoint.sh /opt/joco/entrypoint.sh
+RUN chmod 755 /opt/joco/pre-* /opt/joco/entrypoint.sh
+EXPOSE 80
+ENTRYPOINT ["/opt/joco/entrypoint.sh"]

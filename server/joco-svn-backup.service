@@ -1,0 +1,8 @@
+[Unit]
+Description=Verified local backup of JOCO ROBOS SVN
+Requires=joco-svn.service
+After=joco-svn.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh %h/server/joco-cad/source/backup.sh

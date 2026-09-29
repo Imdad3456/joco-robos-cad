@@ -6,3 +6,11 @@ obj/
 *.SLDPRT
 *.SLDASM
 *.SLDDRW
+__pycache__/
+*.pyc
+# Runtime repositories, backups, and credentials belong on the server only.
+server/data/
+server/config/
+server/backups/
+*.env
+*.token

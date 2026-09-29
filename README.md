@@ -2,6 +2,8 @@
 
 **Setting up the Windows VM? Start with [WINDOWS-QUICKSTART.md](WINDOWS-QUICKSTART.md)** for downloads and copy/paste commands. No Git installation is needed to download the source.
 
+The Steam Deck backend now has its own [server setup and operations guide](server/README.md). The Windows add-in is not connected to it yet.
+
 Milestones 1–4 starter: a C# SOLIDWORKS add-in with a JOCO ROBOS CAD CommandManager tab, **Test Callback**, and **Open Robot**. Targets 64-bit desktop SOLIDWORKS and .NET Framework 4.8. The intended SOLIDWORKS release still needs to be verified on the team's Windows PC.
 
 **Status:** source prepared; not compiled or run in SOLIDWORKS. The authoring environment is Linux without SOLIDWORKS, its API assemblies, or a .NET compiler. This is a developer prototype, not a student installer or a working collaboration system.
