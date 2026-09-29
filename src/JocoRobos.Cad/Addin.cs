@@ -57,9 +57,9 @@ namespace JocoRobos.Cad
 
         private void CreateCommands()
         {
-            int error;
+            int error = 0;
             CommandGroup group = commands.CreateCommandGroup2(
-                GroupId, Title, "Local prototype — SVN not connected", Title, -1, false, out error);
+                GroupId, Title, "Local prototype — SVN not connected", Title, -1, false, ref error);
             if (group == null)
                 throw new InvalidOperationException("Could not create the command group. API code: " + error);
 
