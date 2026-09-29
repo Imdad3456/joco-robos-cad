@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>JocoRobos.Cad</AssemblyName>
+    <RootNamespace>JocoRobos.Cad</RootNamespace>
+    <Version>0.1.0</Version>
+    <RegisterForComInterop>false</RegisterForComInterop>
+    <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == ''">$(ProgramW6432)\SOLIDWORKS Corp\SOLIDWORKS\api\redist</SolidWorksInteropDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="SolidWorks.Interop.sldworks">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.sldworks.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swconst">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.swconst.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SolidWorks.Interop.swpublished">
+      <HintPath>$(SolidWorksInteropDir)\SolidWorks.Interop.swpublished.dll</HintPath>
+      <EmbedInteropTypes>false</EmbedInteropTypes>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="CheckSolidWorksReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(SolidWorksInteropDir)\SolidWorks.Interop.sldworks.dll') Or !Exists('$(SolidWorksInteropDir)\SolidWorks.Interop.swconst.dll') Or !Exists('$(SolidWorksInteropDir)\SolidWorks.Interop.swpublished.dll')"
+           Text="SOLIDWORKS API assemblies not found. Set SolidWorksInteropDir to the installed SOLIDWORKS api\redist directory." />
+  </Target>
+</Project>
