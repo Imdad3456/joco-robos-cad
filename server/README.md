@@ -1,6 +1,17 @@
 # Steam Deck SVN service
 
-The v0.2 Windows add-in now has sign-in, Update, and Edit source, pending Windows runtime acceptance. No real robot files have been uploaded. Initial CAD import and Submit are the next milestones.
+The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`, …) plus a shared `Library` of reusable parts. Mentors manage it from **https://cad.imdad.stream/admin**. Students never use the web page; the add-in reads `/catalog.json` to find the active season and the library.
+
+## Mentor web page
+
+Sign in with your CAD account; only accounts marked as mentor get past the first page. Apache checks the password and forwards `/admin` to `joco.py serve`. That service listens only inside the container and trusts only the username Apache sets. Forms require same-origin requests plus a per-user token.
+
+- **Seasons:** create `YYYY-Robot` with the standard folders, lock hooks and backups; choose the active season students open; archive old seasons as read-only (SVN authz), or unarchive them. A season can't be archived while it's active or has locks.
+- **Locks:** list every lock and release abandoned ones (`svnadmin rmlocks`). The previous owner can no longer submit their copy of that file.
+- **Library:** browse, upload new parts (up to 100 MB per request, the Cloudflare limit), or copy a CAD file from any season into the library. Changes to existing library parts go through Edit/Submit like robot files; students can also add parts that way.
+- **Accounts:** add students, reset passwords (at least 10 characters), make or remove mentors, delete accounts that hold no locks.
+
+`state.json` in the config directory is the source of truth for the active season, archived seasons, and mentors. `authz` and `public/catalog.json` are generated from it. From SSH: `podman exec joco-svn runuser -u www-data -- python3 /opt/joco/joco.py mentor add USER`.
 
 ## Deployment
 
@@ -8,13 +19,13 @@ The Deck runs SteamOS with rootless Podman as `deck`. Files are under `~/server/
 
 The container uses Debian Bookworm packages and persistent bind mounts for repositories and authentication. Its startup creates the canonical subsystem folders only if the repository is absent. It installs hooks on restart. There is no default account/password, anonymous access is denied, and temporary integration-test accounts are removed after testing.
 
-To create your first account securely, run from a terminal with SSH access to the Deck:
+Accounts are normally managed from the web page. For the very first mentor, or if the page is unavailable, run from a terminal with SSH access to the Deck:
 
 ```sh
 ssh -t deck@100.97.7.84 'podman exec -it joco-svn htpasswd -B /etc/joco/users imdad'
 ```
 
-Enter the new CAD password at the prompt; do not put it in a command, GitHub, or chat. Use unique usernames for each student. All authenticated users currently have read/write access to this one robot repository. Passwords are bcrypt hashes; configuration stays on the Deck, not in Git. Changing an account password uses the same command. Account administration and lock recovery are mentor-only SSH tasks.
+Enter the new CAD password at the prompt; do not put it in a command, GitHub, or chat. Use unique usernames for each student. All authenticated users can read every repository and write to non-archived ones. Passwords are bcrypt hashes; configuration stays on the Deck, not in Git.
 
 ## Lock enforcement
 
@@ -34,14 +45,14 @@ The tests exercise real Apache HTTP checkout, property requirements, read-only w
 
 ## Backups
 
-`joco-svn-backup.timer` creates a verified repository hotcopy plus authentication/configuration and deployment source each day, retaining completed backups for 14 days under `~/server/joco-cad/backups`. Failed backups stay for inspection. The initial backup is run during deployment. These copies are on the same SSD: an off-device destination must be configured before storing irreplaceable CAD.
+`joco-svn-backup.timer` creates a verified hotcopy of every repository (all seasons and the Library) plus configuration and deployment source each day, retaining completed backups for 14 days under `~/server/joco-cad/backups`. Failed backups stay for inspection. The initial backup is run during deployment. These copies are on the same SSD: an off-device destination must be configured before storing irreplaceable CAD.
 
 ```sh
 systemctl --user start joco-svn-backup.service
 journalctl --user -u joco-svn-backup.service -n 30
 ```
 
-For disaster recovery, stop the SVN service, preserve the damaged data separately, copy a verified backup repository into `data/2027-Robot`, restore configuration if needed, and restart. Do not overlay repository database files while the service is running. Locks and existing working copies require review after recovery; do not silently break locks to repair them.
+For disaster recovery, stop the SVN service, preserve the damaged data separately, copy verified backup repositories into `data/<name>`, restore configuration if needed (`podman unshare cp -a backup/config/. config/`), and restart; startup fixes file ownership. Do not overlay repository database files while the service is running. Locks and existing working copies require review after recovery; do not silently break locks to repair them.
 
 ## Cloudflare Tunnel
 
@@ -65,4 +76,4 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To rebuild, copy this directory to `~/server/joco-cad/source`, build `podman build -t localhost/joco-svn:initial ~/server/joco-cad/source`, then restart the service during maintenance. Take a backup first. This initial image tag is local; use immutable release tags for future production upgrades. Do not restart during a commit.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v3`; `initial` is the rollback image.

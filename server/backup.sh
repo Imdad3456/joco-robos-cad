@@ -8,12 +8,16 @@ flock -n 9 || exit 0
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 destination="$backup_root/$stamp"
 mkdir "$destination"
-# svnadmin hotcopy takes a repository-consistent snapshot while the server runs.
-podman exec joco-svn svnadmin hotcopy /var/lib/svn/2027-Robot "/tmp/joco-backup-$stamp"
-podman exec joco-svn svnadmin verify "/tmp/joco-backup-$stamp"
-podman cp "joco-svn:/tmp/joco-backup-$stamp" "$destination/2027-Robot"
-podman exec joco-svn rm -rf "/tmp/joco-backup-$stamp"
-cp -a "$HOME/server/joco-cad/config" "$destination/config"
+# Every repository: all seasons plus the Library. hotcopy is consistent while the server runs.
+for repo in $(podman exec joco-svn sh -c 'for d in /var/lib/svn/*/format; do basename "$(dirname "$d")"; done'); do
+    podman exec joco-svn svnadmin hotcopy "/var/lib/svn/$repo" "/tmp/joco-backup-$stamp-$repo"
+    podman exec joco-svn svnadmin verify -q "/tmp/joco-backup-$stamp-$repo"
+    podman cp "joco-svn:/tmp/joco-backup-$stamp-$repo" "$destination/$repo"
+    podman exec joco-svn rm -rf "/tmp/joco-backup-$stamp-$repo"
+done
+# Config files belong to the container's web user; read them from inside. Restore: copy back, restart (startup fixes ownership).
+mkdir -m 700 "$destination/config"
+podman exec joco-svn tar -C /etc/joco -cf - . | tar -xf - -C "$destination/config"
 cp -a "$HOME/server/joco-cad/source" "$destination/source"
 touch "$destination/COMPLETE"
 printf 'Verified backup: %s\n' "$destination"

@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/podman run --rm --name joco-svn --publish 127.0.0.1:8091:80 --volume %h/server/joco-cad/data:/var/lib/svn --volume %h/server/joco-cad/config:/etc/joco localhost/joco-svn:initial
+ExecStart=/usr/bin/podman run --rm --name joco-svn --publish 127.0.0.1:8091:80 --volume %h/server/joco-cad/data:/var/lib/svn --volume %h/server/joco-cad/config:/etc/joco localhost/joco-svn:v3
 ExecStop=/usr/bin/podman stop --time 20 joco-svn
 Restart=on-failure
 RestartSec=5
