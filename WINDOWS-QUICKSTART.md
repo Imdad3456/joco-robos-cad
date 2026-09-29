@@ -1,74 +1,65 @@
-# Set up the Windows VM
+# Windows VM setup — v0.2
 
-This is the first developer prototype, not the final student installer. It must be compiled and tested on Windows with SOLIDWORKS. SVN collaboration is not implemented yet.
+This milestone adds **sign-in, Update, and Edit**. It is source for Windows SOLIDWORKS 2026 testing, not the final student installer. Submit and initial CAD import are still pending.
 
-## 1. Install prerequisites
+## Upgrade your existing prototype
 
-- Install your licensed **64-bit desktop SOLIDWORKS** in the VM and confirm it starts.
-- Install the **Windows x64 SDK** from Microsoft's [.NET 8 download page](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) (choose SDK, not just Runtime).
-- Install the **Developer Pack** from Microsoft's [.NET Framework 4.8 download page](https://dotnet.microsoft.com/en-us/download/dotnet-framework/net48).
+1. **Close SOLIDWORKS.** Download the latest source using **Code → Download ZIP** from [the private repository](https://github.com/Imdad3456/joco-robos-cad) while signed in to GitHub.
+2. Right-click the ZIP → Properties → Unblock if shown, then extract it. Copy the updated source into your existing `C:\Dev\joco-robos-cad` folder. Keep the registered build path stable. If you cloned with Git, use `git pull` instead.
+3. Install the [Microsoft Visual C++ v14 x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe) if it is not already installed. SharpSvn is a native x64 dependency. See [Microsoft's download documentation](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+4. Open regular **64-bit Windows PowerShell** and build:
 
-You do not need Visual Studio for these build commands. Open a fresh PowerShell window after installing the SDK.
+   ```powershell
+   cd C:\Dev\joco-robos-cad
+   Get-ChildItem .\scripts\*.ps1 | Unblock-File
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+   .\scripts\Build.ps1
+   ```
 
-## 2. Download this project
+5. In **Windows PowerShell as administrator**, register the new build:
 
-Sign in to GitHub with access to the private repository, open [Imdad3456/joco-robos-cad](https://github.com/Imdad3456/joco-robos-cad), and select **Code → Download ZIP**.
+   ```powershell
+   cd C:\Dev\joco-robos-cad
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+   .\scripts\Register-Dev.ps1
+   ```
 
-Right-click the downloaded ZIP → **Properties** → **Unblock** if shown → Apply, then extract it. Move the folder containing this file to `C:\Dev\joco-robos-cad`. Keep that path stable after registration.
+6. Start SOLIDWORKS normally. Enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins if necessary. The toolbar should show **Open Robot**, **Update**, and **Edit**. With no document open, use **Tools → JOCO ROBOS CAD**.
+7. Choose **Sign In**, enter username `imdad` and the CAD password you created. Use **Test Connection** to verify. The password is stored only in Windows Credential Manager after successful server authentication.
+8. Save and close all CAD documents, then click **Update**. The server currently contains only subsystem folders, so Open Robot will report that the master assembly has not been uploaded yet. That is expected.
 
-## 3. Build
+**If the prototype already put test CAD in `C:\JOCO-ROBOS\2027-Robot`:** move that whole folder to a safe backup location such as `C:\JOCO-ROBOS\2027-Robot-local-backup` before the first checkout. Do not delete it. Update deliberately refuses to overwrite a nonempty folder without SVN metadata. This version does not upload those files automatically.
 
-Open regular **Windows PowerShell** and run:
+## First-time developer prerequisites
 
-```powershell
-cd C:\Dev\joco-robos-cad
-dotnet --info
-.\scripts\Build.ps1
-```
+- A working installation of **64-bit desktop SOLIDWORKS 2026**.
+- The **Windows x64 SDK** from Microsoft's [.NET 8 download page](https://dotnet.microsoft.com/en-us/download/dotnet/8.0). Choose SDK, not just Runtime.
+- The **Visual C++ x64 Redistributable** linked above.
 
-If PowerShell blocks local scripts, allow local scripts for this window only, then rerun the build:
+NuGet restores SharpSvn and .NET Framework 4.8 compilation references during the build. A separately installed .NET Framework Developer Pack is no longer necessary for compilation. Windows/SOLIDWORKS must still have the .NET Framework 4.8 runtime. You do not need Visual Studio, Git, TortoiseSVN, or a separate SVN install for these steps.
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-```
-
-If SOLIDWORKS is installed somewhere else, provide the directory containing its three `SolidWorks.Interop.*.dll` API assemblies:
+For a non-default SOLIDWORKS installation, provide its API DLL directory:
 
 ```powershell
 .\scripts\Build.ps1 -SolidWorksInteropDir 'D:\SOLIDWORKS\api\redist'
 ```
 
-## 4. Register and load
+The directory must contain `SolidWorks.Interop.sldworks.dll`, `SolidWorks.Interop.swconst.dll`, and `SolidWorks.Interop.swpublished.dll`.
 
-Close SOLIDWORKS. Open **Windows PowerShell as administrator** (64-bit, not the x86 shortcut):
+## Testing Edit later
 
-```powershell
-cd C:\Dev\joco-robos-cad
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-.\scripts\Register-Dev.ps1
-```
+Once a mentor uploads a disposable CAD file with the required SVN properties, Update to download it, open it in its own window, and click Edit. It should become writable only after ownership is verified. An assembly lock does not lock the parts inside it.
 
-Start SOLIDWORKS normally. In **Tools → Add-Ins**, check **JOCO ROBOS CAD** and **Start Up**. Open a document, select the JOCO ROBOS CAD tab, and click **Test Callback**.
+**Release Edit** is in the Tools menu and only works for an unchanged file. It exists to test acquiring and releasing a lock before Submit is implemented. If you change a file, keep your work and lock; do not manually delete or revert it to make the test pass.
 
-## 5. Try Open Robot
+## Troubleshooting
 
-Put a disposable assembly copy and its referenced components in the local workspace, with the master at:
+- **Missing SharpSvn or wrong architecture:** rebuild with the provided project and retain all output files, especially `SharpSvn.dll`, beside `JocoRobos.Cad.dll`. Do not copy only the add-in DLL. Install the x64 Visual C++ Redistributable if a native dependency is missing.
+- **Authentication failed:** use Sign In again. Your CAD password is separate from GitHub, Windows, and Tailscale.
+- **Update refused:** save/close documents, then read the reported local-file issue. The add-in does not discard changes.
+- **Locked by someone else:** inspect the file read-only or contact its owner. Do not remove read-only attributes manually.
+- **Lock acquired but document stayed read-only:** your lock is retained. Close/reopen the document and retry Edit; record the exact error if it persists.
 
-```text
-C:\JOCO-ROBOS\2027-Robot\00_Master\Robot.SLDASM
-```
+For removing the developer add-in, close SOLIDWORKS and run `.\scripts\Unregister-Dev.ps1` as administrator before deleting the build folder. Unregistering does not delete CAD or saved credentials. Saved credentials can be removed under Windows Credential Manager → Windows Credentials → Generic Credentials → JOCO ROBOS CAD.
 
-Click **Open Robot**. The top-level assembly should open read-only. The prototype does not enforce locks on referenced parts and does not download or upload CAD. Follow the full [acceptance checklist](README.md#windows-acceptance-checklist) before proceeding to SVN development.
-
-## Updating or removing the prototype
-
-Close SOLIDWORKS before replacing the source and rebuilding. Keep the same folder so COM registration continues to find the DLL. If moving the project, unregister from the old location first, then build and register at the new location.
-
-To remove it, close SOLIDWORKS and run this in elevated Windows PowerShell **before deleting the project folder**:
-
-```powershell
-cd C:\Dev\joco-robos-cad
-.\scripts\Unregister-Dev.ps1
-```
-
-If a step fails, retain the exact error text and note the SOLIDWORKS year/service pack. The Linux authoring environment could not compile or run this Windows add-in.
+Follow the [full acceptance checklist](README.md#windows-acceptance-checks). The new native runtime and SOLIDWORKS mode changes have not yet been run on the Windows VM.

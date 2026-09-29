@@ -1,79 +1,46 @@
 # JOCO ROBOS CAD — FRC 5919
 
-**Setting up the Windows VM? Start with [WINDOWS-QUICKSTART.md](WINDOWS-QUICKSTART.md)** for downloads and copy/paste commands. No Git installation is needed to download the source.
+A small C# add-in for SOLIDWORKS 2026 that puts SVN behind familiar CAD commands. The intended workflow is **Open Robot → Edit → CAD normally → Submit**.
 
-The Steam Deck backend now has its own [server setup and operations guide](server/README.md). The Windows add-in is not connected to it yet.
+**Current milestone: v0.2 — sign-in, checkout/update, and exclusive Edit.** Submit and initial CAD import are not implemented yet. Use disposable CAD for the first locking test.
 
-Milestones 1–4 starter: a C# SOLIDWORKS add-in with a JOCO ROBOS CAD CommandManager tab, **Test Callback**, and **Open Robot**. Targets 64-bit desktop SOLIDWORKS and .NET Framework 4.8. The intended SOLIDWORKS release still needs to be verified on the team's Windows PC.
+Start with **[Windows setup and upgrade instructions](WINDOWS-QUICKSTART.md)**. Server administration is documented in [server/README.md](server/README.md).
 
-**Status:** source prepared; not compiled or run in SOLIDWORKS. The authoring environment is Linux without SOLIDWORKS, its API assemblies, or a .NET compiler. This is a developer prototype, not a student installer or a working collaboration system.
+## What works in this source version
 
-## What this version does
+The toolbar contains **Open Robot**, **Update**, and **Edit**. The Tools → JOCO ROBOS CAD menu also provides **Sign In**, **Test Connection**, and **Release Edit**.
 
-- Implements `ISwAddin`, registers COM callbacks, and creates a menu/toolbar and document tabs.
-- Provides **Test Callback** to confirm that a button reaches the C# code.
-- Opens `C:\JOCO-ROBOS\2027-Robot\00_Master\Robot.SLDASM` using SOLIDWORKS' read-only open option.
-- Reports a missing assembly or load diagnostics, and leaves an already-open robot untouched.
-- Preserves existing CommandManager tabs across unload/reload.
+- Sign In validates your account against `https://cad.imdad.stream/svn/2027-Robot/`, then saves the login in Windows Credential Manager. SVN password caching and interactive SVN prompts are disabled. Invalid TLS certificates are not accepted.
+- Update checks out the complete robot on first use and subsequently uses SVN update. The workspace is `C:\JOCO-ROBOS\2027-Robot`. The repository URL and UUID are checked before use. Existing non-SVN folders are never overwritten.
+- Update requires all SOLIDWORKS documents to be closed. It stops on local changes, unknown files, conflicts, switched files, or unsupported workspace items. It does not merge binary CAD or silently revert files.
+- Open Robot updates first, then opens `00_Master\Robot.SLDASM` read-only. The server currently only contains the canonical folders; it will report that the master assembly has not been uploaded yet.
+- Edit acts on the **active document** in its own window. Open a component separately before locking it. It checks the server revision, requests a non-stealing exclusive lock, and confirms both server ownership and the local lock token. Then it changes SOLIDWORKS to writable using `SetReadOnlyState(false)` without reloading the model.
+- Release Edit only unlocks a file with no unsaved or on-disk changes. It is available for clean locking tests before Submit exists. Modified files and their locks are retained.
 
-The prototype has no Update, Edit, Submit, credentials, network calls, or SVN dependency. Read-only opening of the top-level assembly is not workspace-wide enforcement: referenced components and other documents are not protected by this prototype. Do not use it to coordinate shared production CAD yet.
+Network work runs off the SOLIDWORKS UI thread in an owned modal progress window. A per-user file lock serializes add-in workspace operations across SOLIDWORKS instances. The first upgrade replaces the original two-button prototype tab once; later sessions retain customizations.
 
-## Build on one Windows developer PC
+## Validation and limits
 
-Prerequisites: 64-bit desktop SOLIDWORKS, a .NET SDK capable of building `net48`, and the .NET Framework 4.8 Developer Pack. These are developer prerequisites only; the eventual student installer will bundle the add-in and runtime dependencies.
+- The original local toolbar and callbacks were reported working by the user in SOLIDWORKS 2026.
+- v0.2 compiles with zero warnings/errors using .NET SDK 8.0.425, .NET Framework 4.8 reference assemblies, SharpSvn 1.14005.390, and SOLIDWORKS 2024 interop 32.1.0 reference DLLs for the Linux compilation check. Those downloaded reference DLLs are not committed or distributed. The Windows build uses your installed SOLIDWORKS 2026 API DLLs.
+- Policy tests cover path boundaries, traversal, metadata paths, symlinks, extension handling, and missing/stale/wrong-user lock tokens. Run `dotnet run --project tests\WorkspacePolicy.Tests -c Release`.
+- The server passed actual HTTPS checkout, commit, update, competing lock, lock stealing/breaking denial, and backup restoration tests using the native SVN client.
+- **The new SharpSvn runtime, Credential Manager integration, and document mode transitions still require Windows SOLIDWORKS 2026 testing.** Compilation and server tests do not establish those behaviors.
+- Read-only attributes reduce mistakes; server hooks enforce commit ownership. An assembly lock does not lock its referenced parts. Offline editing and live notification of mentor-broken locks are not supported in this milestone.
+- Initial CAD import, Submit, an installer, selected-component locking, and off-device backups remain to be implemented. Do not use this release for irreplaceable team edits yet.
 
-1. Extract this folder to a stable local path, for example `C:\Dev\JOCO-ROBOS-CAD`.
-2. Open Windows PowerShell in this folder and build:
+## Windows acceptance checks
 
-   ```powershell
-   .\scripts\Build.ps1
-   ```
+1. Close SOLIDWORKS, build/register the updated source, and restart. Verify the three-button toolbar appears without a duplicate prototype tab.
+2. Use Sign In with an incorrect password: it must fail without storing that login. Use the correct password: it must validate and save successfully. Restart SOLIDWORKS and use Test Connection without another sign-in.
+3. With all documents closed, click Update. An existing non-SVN robot folder must be refused unchanged; move it to a safe backup location and retry. A fresh checkout should create the canonical folders.
+4. With any CAD document open, Update must refuse. With changed/unversioned files in the workspace, it must preserve them and refuse the update.
+5. After a mentor imports a real disposable CAD test file with its required SVN properties, open it read-only. Click Edit: the correct user should get the lock and SOLIDWORKS should become writable without a reload.
+6. In a second Windows working copy under a different account, Edit on that file must be refused and it must remain read-only. Use Release Edit on the unchanged first copy, then confirm the second account can lock it.
+7. Releasing a modified file must fail without deleting changes. A network failure must never report successful lock acquisition or unlock.
 
-   For a non-default SOLIDWORKS installation:
+## Dependencies
 
-   ```powershell
-   .\scripts\Build.ps1 -SolidWorksInteropDir 'D:\SOLIDWORKS\api\redist'
-   ```
+The project targets .NET Framework 4.8/x64 and pins [SharpSvn 1.14005.390](https://www.nuget.org/packages/SharpSvn/1.14005.390). NuGet bundles SVN; students will not need the SVN command line. The native library requires the [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). SOLIDWORKS API DLLs come from the installed SOLIDWORKS `api\redist` directory.
 
-   The directory must contain `SolidWorks.Interop.sldworks.dll`, `SolidWorks.Interop.swconst.dll`, and `SolidWorks.Interop.swpublished.dll` from your SOLIDWORKS installation. No proprietary API DLLs are included in this package.
-
-3. Close SOLIDWORKS. In **64-bit Windows PowerShell running as administrator**, register:
-
-   ```powershell
-   .\scripts\Register-Dev.ps1
-   ```
-
-   This uses .NET Framework's 64-bit RegAsm and adds this add-in's machine-wide SOLIDWORKS discovery key. RegAsm may warn about `/codebase` with an unsigned assembly; signing is deferred. Registration points at the build output, so keep it in place. No type library is generated or needed for this callback prototype.
-
-4. Start SOLIDWORKS as your normal Windows user. Open **Tools → Add-Ins**, enable **JOCO ROBOS CAD**, and select **Start Up**. Startup is selected manually for this developer milestone; the final installer will configure the intended student's profile.
-5. Open any part, assembly, or drawing to see the **JOCO ROBOS CAD** CommandManager tab. With no document open, use the add-in menu under Tools or enable its toolbar through SOLIDWORKS toolbar customization.
-
-Use a disposable robot assembly and its referenced files for the first check. SOLIDWORKS Pack and Go can gather a representative test copy; arrange the top-level assembly at the fixed path above and check that its references resolve. The package does not contain a fabricated `.SLDASM` file.
-
-## Windows acceptance checklist
-
-All items below are **pending**, not claimed test results. Record the SOLIDWORKS year/service pack and Windows version when running them.
-
-- Build finishes with zero errors using the installed SOLIDWORKS API assemblies.
-- Registration succeeds and the add-in appears in Tools → Add-Ins.
-- Loading it creates the tab in part, assembly, and drawing documents.
-- **Test Callback** displays “the callback works.”
-- **Open Robot**, before the test assembly exists, displays the expected path without crashing.
-- With a valid test assembly in place, **Open Robot** opens it and the top-level assembly reports read-only in SOLIDWORKS. Verify referenced components resolve.
-- Clicking **Open Robot** again does not close, reload, or discard edits in the existing document.
-- Unloading and reloading the add-in does not duplicate tabs; both callbacks still work.
-- Restarting SOLIDWORKS with Start Up selected loads the add-in and working commands.
-- Close SOLIDWORKS and run `.\scripts\Unregister-Dev.ps1` as administrator. The add-in disappears from Add-Ins; CAD files remain untouched. Run unregister before deleting the build folder. If elevated using another administrator account, startup cleanup applies to that account; clear Start Up as the original user first.
-
-If a callback does nothing, confirm the add-in loaded, that the matching x64 DLL was registered, and that the old DLL was not left loaded during a rebuild. Public callback methods are exposed through an explicit COM dispatch interface.
-
-## Files
-
-- `src/JocoRobos.Cad/Addin.cs`: COM add-in, command creation, callbacks, local assembly opening.
-- `src/JocoRobos.Cad/JocoRobos.Cad.csproj`: x64 .NET Framework project with local SOLIDWORKS API references.
-- `scripts/`: developer build, registration, and unregistration.
-- `docs/NEXT-MILESTONES.md`: planned SVN behavior and verification gates.
-
-## API references
-
-The add-in uses the documented [ISwAddin registration model](https://help.solidworks.com/2023/English/api/sldworksapiprogguide/Overview/Using_SwAddin_to_Create_a_SolidWorks_Addin.htm), [CommandManager tabs and callbacks](https://help.solidworks.com/2023/English/api/sldworksapi/Create_CommandManager_Tab_and_Tab_Boxes_Example_CSharp.htm), and [OpenDoc6](https://help.solidworks.com/2025/English/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.ISldWorks~OpenDoc6.html). The command group ID must change if the command layout changes; see [CreateCommandGroup2](https://help.solidworks.com/2021/english/api/sldworksapi/SOLIDWORKS.Interop.sldworks~SOLIDWORKS.Interop.sldworks.ICommandManager~CreateCommandGroup2.html).
+API references: [ISwAddin registration](https://help.solidworks.com/2023/English/api/sldworksapiprogguide/Overview/Using_SwAddin_to_Create_a_SolidWorks_Addin.htm), [CommandManager](https://help.solidworks.com/2021/english/api/sldworksapi/SOLIDWORKS.Interop.sldworks~SOLIDWORKS.Interop.sldworks.ICommandManager~CreateCommandGroup2.html), [SetReadOnlyState](https://help.solidworks.com/2026/English/api/sldworksapi/SolidWorks.Interop.sldworks~SolidWorks.Interop.sldworks.IModelDoc2~SetReadOnlyState.html), and [SharpSvn source](https://github.com/AmpScm/SharpSvn).

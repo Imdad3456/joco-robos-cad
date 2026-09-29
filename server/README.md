@@ -1,6 +1,6 @@
 # Steam Deck SVN service
 
-This is the server milestone, separate from the Windows add-in. The add-in still has only its two local prototype commands. No real robot files have been uploaded.
+The v0.2 Windows add-in now has sign-in, Update, and Edit source, pending Windows runtime acceptance. No real robot files have been uploaded. Initial CAD import and Submit are the next milestones.
 
 ## Deployment
 
