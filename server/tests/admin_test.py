@@ -116,4 +116,29 @@ s, _, b = req('/catalog.json', *U); check('2029-Robot' not in b, 'deleted season
 out = svn('svn ls http://localhost/svn/2029-Robot'); check(out.returncode != 0, 'deleted season not reachable')
 s, loc = post('/admin', {'action': 'activate', 'name': '2027-Robot'}); check('ok=' in loc, 'reactivate 2027')
 s, loc = post('/admin', {'action': 'delete-season', 'name': '2028-Robot'}); check('history' in loc, 'season with commits not deleted ' + loc)
+# Add-in updates
+import hashlib, json
+def publish(name, data, required=False):
+    s, _, b = req('/admin/addin', *M); tok = re.search(r'name="token" value="([0-9a-f]+)"', b).group(1)
+    bnd = uuid.uuid4().hex
+    body = (f'--{bnd}\r\nContent-Disposition: form-data; name="token"\r\n\r\n{tok}\r\n'
+            f'--{bnd}\r\nContent-Disposition: form-data; name="kind"\r\n\r\naddin\r\n' +
+            (f'--{bnd}\r\nContent-Disposition: form-data; name="required"\r\n\r\n1\r\n' if required else '') +
+            f'--{bnd}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() + data + f'\r\n--{bnd}--\r\n'.encode()
+    s, h, _ = req('/admin/addin', *M, data=body, ctype='multipart/form-data; boundary=' + bnd)
+    return urllib.parse.unquote(h['Location'])
+exe = b'MZ' + bytes(range(256)) * 400
+check(req('/admin/addin', *M)[0] == 200 and req('/admin/addin', *U)[0] == 403, 'add-in page mentor only')
+check('Upload the file' in publish('evil.exe', exe), 'bad installer name refused')
+check('not a Windows program' in publish('JOCO-ROBOS-CAD-Setup-0.6.0.exe', b'hello'), 'non-exe refused')
+check('Published add-in 0.6.0' in publish('JOCO-ROBOS-CAD-Setup-0.6.0.exe', exe), 'publish 0.6.0')
+catalog = json.loads(req('/catalog.json', *U)[2])
+check(catalog['addin']['version'] == '0.6.0' and catalog['addin']['sha256'] == hashlib.sha256(exe).hexdigest() and not catalog['addin']['required'], 'catalog advertises update')
+raw = urllib.request.Request(BASE + '/updates/JOCO-ROBOS-CAD-Setup-0.6.0.exe'); raw.add_header('Authorization', 'Basic ' + base64.b64encode(b'sarah:sarahpass123').decode())
+check(hashlib.sha256(urllib.request.urlopen(raw).read()).hexdigest() == catalog['addin']['sha256'], 'downloaded bytes match checksum')
+check(req('/updates/JOCO-ROBOS-CAD-Setup-0.6.0.exe')[0] == 401, 'anonymous download refused')
+check('not newer' in publish('JOCO-ROBOS-CAD-Setup-0.5.9.exe', exe), 'older version refused')
+check('required update' in publish('JOCO-ROBOS-CAD-Setup-0.10.0.exe', exe, required=True), 'publish required 0.10.0 (numeric compare)')
+check(json.loads(req('/catalog.json', *U)[2])['addin']['required'], 'required in catalog')
+s, loc = post('/admin/addin', {'action': 'addin-required'}); check('now optional' in loc, 'toggle required')
 print(f'PASS: {n} server/admin checks')

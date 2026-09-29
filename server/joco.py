@@ -33,6 +33,8 @@ STATE = os.path.join(CONFIG, 'state.json')
 AUTHZ = os.path.join(CONFIG, 'authz')
 CATALOG = os.path.join(CONFIG, 'public', 'catalog.json')
 SECRET = os.path.join(CONFIG, 'admin-secret')
+UPDATES = os.path.join(CONFIG, 'public', 'updates')
+INSTALLER = re.compile(r'^JOCO-ROBOS-CAD-Setup-(\d{1,4})\.(\d{1,4})\.(\d{1,4})\.exe$')
 LIBRARY = 'Library'
 SEASON = re.compile(r'^(19|20)\d{2}-Robot$')
 USERNAME = re.compile(r'^[a-z0-9][a-z0-9._-]{1,31}$')
@@ -117,6 +119,8 @@ def publish(state):
         'active': state['active'],
         'robots': [{'name': n, 'uuid': uuid(n), 'archived': n in state['archived']} for n in seasons],
         'library': {'name': LIBRARY, 'uuid': uuid(LIBRARY)} if LIBRARY in repositories() else None,
+        # Newest published student installer; the add-in offers it when it is newer than itself.
+        'addin': state.get('addin'),
     }
     write_atomic(CATALOG, json.dumps(catalog, indent=2) + '\n', 0o644)
 
@@ -309,6 +313,12 @@ def act(user, form):
         state['mentors'] = sorted(set(state['mentors']) ^ {name})
         save_state(state)
         return name + (' is now a mentor.' if name in state['mentors'] else ' is no longer a mentor.')
+    if action == 'addin-required':
+        if not state.get('addin'):
+            raise Refused('No add-in has been published yet.')
+        state['addin']['required'] = not state['addin'].get('required')
+        save_state(state)
+        return 'Add-in %s is now %s.' % (state['addin']['version'], 'required' if state['addin']['required'] else 'optional')
     if action == 'promote':
         repo, _, source = form.get('choice', '').partition('|')
         if repo not in repositories() or not SEASON.match(repo) or source not in files(repo):
@@ -322,7 +332,43 @@ def act(user, form):
     raise Refused('Unknown action.')
 
 
+def version_key(text):
+    return tuple(int(x) for x in text.split('.'))
+
+
+def publish_addin(fields):
+    uploads = fields.get('files', [])
+    if len(uploads) != 1:
+        raise Refused('Choose one JOCO-ROBOS-CAD-Setup-x.y.z.exe file.')
+    name, data = os.path.basename(uploads[0][0].replace('\\', '/')), uploads[0][1]
+    match = INSTALLER.match(name)
+    if not match:
+        raise Refused('Upload the file made by Build-Installer.ps1, named like JOCO-ROBOS-CAD-Setup-0.6.0.exe.')
+    if not data.startswith(b'MZ'):
+        raise Refused(name + ' is not a Windows program.')
+    version = '.'.join(match.groups())
+    state = load_state()
+    current = state.get('addin')
+    if current and version_key(version) <= version_key(current['version']):
+        raise Refused('Version %s is not newer than the published %s. Bump <Version> in the .csproj and rebuild.' % (version, current['version']))
+    os.makedirs(UPDATES, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=UPDATES, delete=False) as handle:
+        handle.write(data)
+    os.chmod(handle.name, 0o644)
+    os.replace(handle.name, os.path.join(UPDATES, name))
+    state['addin'] = {'version': version, 'file': name, 'sha256': hashlib.sha256(data).hexdigest(),
+                      'required': bool(fields.get('required')), 'size': len(data)}
+    save_state(state)
+    # Keep the three newest installers so students mid-download are not cut off.
+    old = sorted((f for f in os.listdir(UPDATES) if INSTALLER.match(f)), key=lambda f: version_key('.'.join(INSTALLER.match(f).groups())))
+    for stale in old[:-3]:
+        os.remove(os.path.join(UPDATES, stale))
+    return 'Published add-in %s%s. Students are offered it the next time SOLIDWORKS checks.' % (version, ' as a required update' if state['addin']['required'] else '')
+
+
 def upload(user, fields):
+    if fields.get('kind') == b'addin':
+        return publish_addin(fields)
     folder = clean_path(fields.get('folder', b'').decode('utf-8', 'replace') or 'Hardware')
     message = fields.get('comment', b'').decode('utf-8', 'replace').strip() or 'Add parts to library'
     uploads = [(clean_path(folder + '/' + os.path.basename(name.replace('\\', '/'))), data) for name, data in fields.get('files', [])]
@@ -391,7 +437,7 @@ class Admin(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         notice = query.get('ok', [''])[0]
         error = query.get('error', [''])[0]
-        pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page}
+        pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page, '/admin/addin': self.addin_page}
         if path not in pages:
             self.send_error(404)
             return
@@ -404,14 +450,14 @@ class Admin(BaseHTTPRequestHandler):
             banner = '<div class="notice ok">' + esc(notice) + '</div>'
         if error:
             banner = '<div class="notice bad">' + esc(error) + '</div>'
-        self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts'}[path], banner + body, path)
+        self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts', '/admin/addin': 'Add-in'}[path], banner + body, path)
 
     def do_POST(self):
         state = self.guard()
         if state is None:
             return
         back = urlsplit(self.path).path.rstrip('/') or '/admin'
-        if back not in ('/admin', '/admin/locks', '/admin/library', '/admin/users'):
+        if back not in ('/admin', '/admin/locks', '/admin/library', '/admin/users', '/admin/addin'):
             back = '/admin'
         try:
             # Browsers resend Basic credentials automatically: require same-origin plus a per-user token.
@@ -460,7 +506,7 @@ class Admin(BaseHTTPRequestHandler):
         self.end_headers()
 
     def page(self, title, body, current, status=200):
-        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts')]
+        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'), ('/admin/addin', 'Add-in')]
         nav = ''.join('<a href="%s"%s>%s</a>' % (h, ' class="on"' if h == current else '', t) for h, t in links)
         text = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>%s · JOCO ROBOS CAD</title><style>%s</style></head><body><header><b>JOCO ROBOS CAD</b><nav>%s</nav>'
@@ -521,6 +567,25 @@ class Admin(BaseHTTPRequestHandler):
                 'Any unsubmitted changes on their computer can then no longer be submitted.</p><div class="scroll"><table>'
                 '<tr><th>Where</th><th>File</th><th>Locked by</th><th>Since</th><th></th></tr>%s</table></div></section>') % (
                     rows or '<tr><td colspan="5" class="muted">Nothing is locked.</td></tr>')
+
+    def addin_page(self, state):
+        current = state.get('addin')
+        if current:
+            info = ('<p>Published: <b>%s</b> (%s, %.1f MB) — %s</p><p class="muted">SHA-256 <code>%s</code></p>%s') % (
+                esc(current['version']), esc(current['file']), current.get('size', 0) / 1048576.0,
+                '<span class="bad">required: students must install it before Edit or Submit</span>' if current.get('required')
+                else '<span class="ok">optional: students are offered it</span>', esc(current['sha256']),
+                self.form('addin-required', {}, 'Make optional' if current.get('required') else 'Make required'))
+        else:
+            info = '<p class="muted">Nothing published yet. Students keep whatever version they installed.</p>'
+        upload_form = ('<form method="post" enctype="multipart/form-data" class="row"><input type="hidden" name="token" value="%s">'
+                       '<input type="hidden" name="kind" value="addin"><input type="file" name="files" accept=".exe" required>'
+                       '<label><input type="checkbox" name="required" value="1"> Required</label><button class="primary">Publish</button></form>'
+                       '<p class="muted">On the Windows PC: bump <code>&lt;Version&gt;</code> in <code>JocoRobos.Cad.csproj</code>, run '
+                       '<code>scripts\\Build-Installer.ps1</code>, and upload <code>installer\\Output\\JOCO-ROBOS-CAD-Setup-x.y.z.exe</code>. '
+                       'Students get a prompt in SOLIDWORKS; after they save and close SOLIDWORKS it installs and reopens. '
+                       'Use <b>Required</b> when the server or file format changed and older add-ins must not submit.</p>') % self.token()
+        return '<section><h2>Student add-in</h2>%s</section><section><h2>Publish a new version</h2>%s</section>' % (info, upload_form)
 
     def library_page(self, state):
         parts = files(LIBRARY) if LIBRARY in repositories() else []

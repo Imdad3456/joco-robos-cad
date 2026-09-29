@@ -72,6 +72,20 @@ static class Program
             Check(catalog.Robots[1].Repository.AbsoluteUri == "https://cad.imdad.stream/svn/2028-Robot/", "Repository URL wrong");
             Denied(() => Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"version\": 1, \"active\": \"x\", \"robots\": [{\"name\": \"../evil\", \"uuid\": \"b8f359f6-f382-4c21-998e-c00f2827aa38\"}]}"))), "Unsafe robot name accepted");
             Denied(() => Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("not json"))), "Garbage catalog accepted");
+            string sha = new string('a', 64);
+            Func<string, string, string, Catalog.AddinRelease> release = (v, f, h) => new Catalog.AddinRelease { Version = v, File = f, Sha256 = h };
+            var v05 = new Version(0, 5, 0);
+            Check(Updater.Offer(release("0.6.0", "JOCO-ROBOS-CAD-Setup-0.6.0.exe", sha), v05) != null, "Newer add-in not offered");
+            Check(Updater.Offer(release("0.10.0", "JOCO-ROBOS-CAD-Setup-0.10.0.exe", sha), new Version(0, 9, 0)) != null, "Version compared as text");
+            Check(Updater.Offer(release("0.5.0", "JOCO-ROBOS-CAD-Setup-0.5.0.exe", sha), v05) == null, "Same version offered");
+            Check(Updater.Offer(release("0.4.0", "JOCO-ROBOS-CAD-Setup-0.4.0.exe", sha), v05) == null, "Downgrade offered");
+            Check(Updater.Offer(release("0.6.0", "..\\evil.exe", sha), v05) == null, "Unsafe installer name offered");
+            Check(Updater.Offer(release("0.6.0", "JOCO-ROBOS-CAD-Setup-0.7.0.exe", sha), v05) == null, "Mismatched installer version offered");
+            Check(Updater.Offer(release("0.6.0", "JOCO-ROBOS-CAD-Setup-0.6.0.exe", "xyz"), v05) == null, "Missing checksum offered");
+            Check(Updater.Offer(null, v05) == null, "Nothing published but offered");
+            var withAddin = Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json.Substring(0, json.Length - 1) +
+                ", \"addin\": {\"version\": \"0.6.0\", \"file\": \"JOCO-ROBOS-CAD-Setup-0.6.0.exe\", \"sha256\": \"" + sha + "\", \"required\": true}}")));
+            Check(withAddin.Addin != null && withAddin.Addin.Required && withAddin.Addin.Version == "0.6.0", "Catalog add-in release misread");
             Console.WriteLine("PASS: " + assertions + " workspace and lock-ownership checks");
         }
         finally { Directory.Delete(temp, true); }

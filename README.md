@@ -2,7 +2,13 @@
 
 A small C# add-in for SOLIDWORKS 2026 that puts SVN behind familiar CAD commands. The intended workflow is **Open Robot → Edit → CAD normally → Submit**.
 
-**Current milestone: v0.5 — installer, status pane, component Edit.** Everything below v0.2 in this list is compiled and unit-tested but not yet run on Windows; follow **[TESTING.md](TESTING.md)**.
+**Current milestone: v0.6 — automatic add-in updates and GitHub builds.**
+
+**Releasing a new add-in version.** Bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj` and push a matching tag (`git tag v0.7.0 && git push --tags`). GitHub Actions then builds the installer and attaches it to a GitHub Release. You can also build it with `scripts\Build-Installer.ps1` on Windows. Upload the `.exe` on **https://cad.imdad.stream/admin/addin**, optionally marked **Required**. Each add-in checks the server when SOLIDWORKS starts and every 3 minutes. When it finds a newer version, it asks the student once and shows **Install update** in the pane. It downloads the installer and checks its SHA-256 against the value mentors published. The installer asks Windows for admin approval, waits for the student to close SOLIDWORKS, installs silently, and reopens SOLIDWORKS. A required update blocks Edit, Submit, and Insert from Library until it's installed. Anyone with a mentor account can push code to every student PC this way: keep mentor accounts few, with strong passwords.
+
+**Automated builds.** `.github/workflows/build.yml` runs on every push. It builds the server container and runs the mentor-page and lock/backup tests. It also runs the add-in policy tests and, once the SOLIDWORKS API DLLs are in `lib/solidworks` (see its README), builds the installer.
+
+**v0.5 — installer, status pane, component Edit.** Everything below v0.2 in this list is compiled and unit-tested but not yet run on Windows; follow **[TESTING.md](TESTING.md)**.
 
 **v0.4 — seasons and the parts library.** v0.2 (Sign In, Update, Edit, Release Edit) was verified in SOLIDWORKS 2026 with the imported hexapod. Submit (v0.3), season switching, and Insert from Library compile and pass policy tests, but have not yet run on Windows. Keep using disposable CAD.
 
@@ -38,7 +44,7 @@ Network work runs off the SOLIDWORKS UI thread in an owned modal progress window
 
 - The original local toolbar and callbacks were reported working by the user in SOLIDWORKS 2026.
 - v0.4 compiles with zero warnings/errors using .NET SDK 8.0.425, .NET Framework 4.8 reference assemblies, SharpSvn 1.14005.390, and SOLIDWORKS 2024 interop 32.1.0 reference DLLs for the Linux compilation check. Those downloaded reference DLLs are not committed or distributed. The Windows build uses your installed SOLIDWORKS 2026 API DLLs.
-- 29 policy tests cover repository names, library copy locations, catalog parsing, path boundaries, traversal, metadata paths, symlinks, extension handling, missing/stale/wrong-user lock tokens, submittable-file filtering, new-folder scheduling, and comment validation. Run `dotnet run --project tests\WorkspacePolicy.Tests -c Release`.
+- 38 policy tests cover update offers (newer-only, numeric versions, safe file names, checksum present), repository names, library copy locations, catalog parsing, path boundaries, traversal, metadata paths, symlinks, extension handling, missing/stale/wrong-user lock tokens, submittable-file filtering, new-folder scheduling, and comment validation. Run `dotnet run --project tests\WorkspacePolicy.Tests -c Release`.
 - The server passed actual HTTPS checkout, commit, update, competing lock, lock stealing/breaking denial, and backup restoration tests using the native SVN client.
 - Verified on Windows by the user: Sign In, Update, opening the imported hexapod, Edit, and Release Edit.
 - **Not yet run on Windows:** Submit, interrupted-Submit recovery, `GetDocumentDependencies2` reference checks, Open Robot's master-assembly fallback, catalog download, Library checkout, and Insert from Library (`ReplaceReferencedDocument`, `AddComponent5`).

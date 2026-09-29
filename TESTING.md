@@ -1,4 +1,4 @@
-# Test plan — v0.5
+# Test plan — v0.6
 
 Work top to bottom on the Windows VM. Each step says what should happen. **If anything differs, stop and send the exact message text or a screenshot.** Don't delete or revert files to make a step pass.
 
@@ -51,9 +51,17 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 
 ## G. Installer
 
-24. ⚙ `winget install JRSoftware.InnoSetup`, reopen PowerShell, then run `.\scripts\Unregister-Dev.ps1` as admin and `.\scripts\Build-Installer.ps1`. Expect `installer\Output\JOCO-ROBOS-CAD-Setup-0.5.0.exe`.
+24. ⚙ `winget install JRSoftware.InnoSetup`, reopen PowerShell, then run `.\scripts\Unregister-Dev.ps1` as admin and `.\scripts\Build-Installer.ps1`. Expect `installer\Output\JOCO-ROBOS-CAD-Setup-0.6.0.exe`. (Or, once the SOLIDWORKS DLLs are in `lib/solidworks`, download the installer from GitHub → Actions → latest run → Artifacts.)
 25. Run the setup file. Expect the Windows "unknown publisher" warning → More info → Run anyway. With SOLIDWORKS open it asks you to close it. After install, start SOLIDWORKS: the add-in loads without visiting Tools → Add-Ins.
 26. Uninstall from Windows Settings → Apps. The add-in is gone, and `C:\JOCO-ROBOS` is untouched.
+
+## G2. Automatic updates
+
+- Install 0.6.0 with the setup file (step 25).
+- ⚙ Change `<Version>` to `0.6.1` and build again (or push tag `v0.6.1` and download it from the GitHub Release).
+- 🌐 On the **Add-in** page, publish `JOCO-ROBOS-CAD-Setup-0.6.1.exe`.
+- 🧑 Within 3 minutes (or after *Check now*), SOLIDWORKS asks "0.6.1 is available". Answer Yes → Windows permission prompt → "Update is ready". Close SOLIDWORKS; it should reopen by itself within about a minute. The pane header now says **0.6.1**.
+- 🌐 Mark it **Required** and publish `0.6.2`. 🧑 Clicking Edit without updating is refused with the install prompt.
 
 ## H. Failure cases
 

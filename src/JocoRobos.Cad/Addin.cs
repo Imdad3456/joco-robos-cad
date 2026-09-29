@@ -30,6 +30,7 @@ namespace JocoRobos.Cad
         [DispId(8)] void Submit();
         [DispId(9)] void InsertFromLibrary();
         [DispId(10)] void ChooseRobot();
+        [DispId(11)] void InstallUpdate();
     }
 
     [ComVisible(true)]
@@ -43,7 +44,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591904;
+        private const int LayoutVersion = 591905;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -56,6 +57,8 @@ namespace JocoRobos.Cad
         private DateTime paneCatalogAt, checkedAt;
         private WorkspaceSnapshot robotSnapshot, librarySnapshot;
         private string paneUser, paneError;
+        private Catalog.AddinRelease offeredUpdate;
+        private string promptedVersion;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -100,6 +103,7 @@ namespace JocoRobos.Cad
                 Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
                 Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
+                Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
                 group.HasToolbar = true;
                 if (!group.Activate()) throw new InvalidOperationException("Could not activate toolbar.");
@@ -171,7 +175,7 @@ namespace JocoRobos.Cad
                 new KeyValuePair<string, Action>("Edit", Edit),
                 new KeyValuePair<string, Action>("Submit", Submit),
                 new KeyValuePair<string, Action>("Insert from Library", InsertFromLibrary),
-            }, RefreshStatus);
+            }, RefreshStatus, InstallUpdate);
             pane.CreateControl();
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
@@ -195,7 +199,9 @@ namespace JocoRobos.Cad
             {
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
-                pane.Show(StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt));
+                var state = StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt);
+                state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
+                pane.Show(state);
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
         }
@@ -231,6 +237,7 @@ namespace JocoRobos.Cad
                         librarySnapshot = task.Result.Item3;
                         paneError = null;
                         checkedAt = DateTime.Now;
+                        offeredUpdate = Updater.Offer(task.Result.Item1.Addin, Updater.Current);
                     }
                     else
                     {
@@ -239,8 +246,55 @@ namespace JocoRobos.Cad
                         if (paneError.Length > 120) paneError = paneError.Substring(0, 120) + "…";
                     }
                     RenderStatus();
+                    // Ask once per version per session; the pane keeps offering it afterwards.
+                    if (offeredUpdate != null && promptedVersion != offeredUpdate.Version && !busy)
+                    {
+                        promptedVersion = offeredUpdate.Version;
+                        InstallUpdate();
+                    }
                 }));
             });
+        }
+
+        // ---------- add-in updates ----------
+
+        public void InstallUpdate()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var offer = Updater.Offer(LoadCatalog(login).Addin, Updater.Current);
+                if (offer == null) { Message("JOCO ROBOS CAD " + Updater.Current + " is the newest version."); return; }
+                InstallUpdate(login, offer);
+            });
+        }
+
+        private void InstallUpdate(NetworkCredential login, Catalog.AddinRelease offer)
+        {
+            string question = "JOCO ROBOS CAD " + offer.Version + " is available (you have " + Updater.Current + ")." +
+                (offer.Required ? "\nMentors marked it required: Edit and Submit need it." : "") +
+                "\n\nInstall it now? It downloads first; Windows then asks for permission. " +
+                "When you close SOLIDWORKS it installs and SOLIDWORKS reopens. Your files and locks are not touched.";
+            if (MessageBox.Show(new SolidWorksWindow(), question, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            string installer = OperationDialog.Run("Downloading JOCO ROBOS CAD " + offer.Version + "…", () => Updater.Download(login, offer));
+            try { Updater.Launch(installer); }
+            catch (System.ComponentModel.Win32Exception exception) when (exception.NativeErrorCode == 1223)
+            {
+                Message("Update cancelled. It stays available in the JOCO ROBOS CAD pane.", MessageBoxIcon.Warning);
+                return;
+            }
+            Message("Update " + offer.Version + " is ready.\n\nSave your work and close SOLIDWORKS. The update installs by itself and SOLIDWORKS reopens.");
+        }
+
+        // A required update means the server changed in a way older add-ins must not write to.
+        private void RequireCurrentAddin(NetworkCredential login, Catalog catalog)
+        {
+            var offer = Updater.Offer(catalog.Addin, Updater.Current);
+            if (offer == null || !offer.Required) return;
+            InstallUpdate(login, offer);
+            throw new InvalidOperationException("JOCO ROBOS CAD " + offer.Version + " is required before you can edit or submit. " +
+                "Close SOLIDWORKS to finish installing it, or use Tools → JOCO ROBOS CAD → Install Add-in Update.");
         }
 
         // ---------- sign-in and seasons ----------
@@ -427,6 +481,7 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
                 WorkspaceInfo workspace;
                 ModelDoc2 doc = ActiveCad(catalog, out workspace);
                 // Never reload a dirty document or change it behind an open assembly.
@@ -492,6 +547,7 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
                 var workspaces = new[] { catalog.Robot, catalog.Library }
                     .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
                 if (workspaces.Count == 0) throw new InvalidOperationException("Click Update first to download the robot.");
@@ -585,6 +641,7 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
                 var library = catalog.Library;
                 if (library == null) throw new InvalidOperationException("The server has no parts library yet. Ask a mentor.");
                 var assemblyDoc = application.ActiveDoc as ModelDoc2;

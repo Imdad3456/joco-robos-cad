@@ -18,6 +18,7 @@ namespace JocoRobos.Cad
         internal string ActiveStatus = "";
         internal Color ActiveColor = SystemColors.ControlText;
         internal string Locks = "";
+        internal string Update;
     }
 
     internal sealed class StatusPane : UserControl
@@ -28,13 +29,18 @@ namespace JocoRobos.Cad
         private readonly Label activeFile = Caption(9.5f, FontStyle.Bold);
         private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
         private readonly Label locks = Caption(8.5f, FontStyle.Regular);
+        private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
+        private readonly Button install = new Button { Text = "Install update", Width = 200, Height = 30, FlatStyle = FlatStyle.System };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
             WrapContents = false, AutoScroll = true, Padding = new Padding(10) };
 
-        internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh)
+        internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate)
         {
             BackColor = SystemColors.Window;
-            layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD", SystemColors.GrayText));
+            layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current, SystemColors.GrayText));
+            layout.Controls.Add(update);
+            install.Click += (s, e) => installUpdate();
+            layout.Controls.Add(install);
             layout.Controls.Add(robot);
             layout.Controls.Add(sync);
             layout.Controls.Add(details);
@@ -77,6 +83,8 @@ namespace JocoRobos.Cad
             activeStatus.Text = state.ActiveStatus;
             activeStatus.ForeColor = state.ActiveColor;
             locks.Text = state.Locks;
+            update.Text = state.Update ?? "";
+            update.Visible = install.Visible = state.Update != null;
         }
 
         /// <summary>Plain-language status for the pane. Pure so it can be reasoned about without SOLIDWORKS.</summary>

@@ -26,4 +26,7 @@ if (!$iscc) { throw 'Install Inno Setup 6 first:  winget install JRSoftware.Inno
 $version = ($project.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
 & $iscc "/DAppVersion=$version" (Join-Path $root 'installer\JocoRobosCad.iss')
 if ($LASTEXITCODE -ne 0) { throw "Installer build failed: $LASTEXITCODE" }
-Write-Host "Built installer\Output\JOCO-ROBOS-CAD-Setup-$version.exe"
+$output = Join-Path $root "installer\Output\JOCO-ROBOS-CAD-Setup-$version.exe"
+Write-Host "Built $output"
+Write-Host ("SHA-256: " + (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant())
+Write-Host 'Publish it on https://cad.imdad.stream/admin/addin to offer it to students.'

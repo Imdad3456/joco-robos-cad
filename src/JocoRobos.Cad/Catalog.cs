@@ -53,18 +53,30 @@ namespace JocoRobos.Cad
         }
 
         [DataContract]
+        internal sealed class AddinRelease
+        {
+            [DataMember(Name = "version")] public string Version { get; set; }
+            [DataMember(Name = "file")] public string File { get; set; }
+            [DataMember(Name = "sha256")] public string Sha256 { get; set; }
+            [DataMember(Name = "required")] public bool Required { get; set; }
+            [DataMember(Name = "size")] public long Size { get; set; }
+        }
+
+        [DataContract]
         private sealed class Document
         {
             [DataMember(Name = "version")] public int Version { get; set; }
             [DataMember(Name = "active")] public string Active { get; set; }
             [DataMember(Name = "robots")] public List<Entry> Robots { get; set; }
             [DataMember(Name = "library")] public Entry Library { get; set; }
+            [DataMember(Name = "addin")] public AddinRelease Addin { get; set; }
         }
 
         private const string SettingsKey = @"Software\JOCO ROBOS\CAD";
         internal readonly List<WorkspaceInfo> Robots = new List<WorkspaceInfo>();
         internal WorkspaceInfo Library;
         internal string Active;
+        internal AddinRelease Addin;
 
         internal static Catalog Fetch(NetworkCredential login)
         {
@@ -94,7 +106,7 @@ namespace JocoRobos.Cad
             catch (SerializationException) { document = null; }
             if (document == null || document.Version != 1 || document.Robots == null)
                 throw new InvalidOperationException("The server's robot list is not readable. Ask a mentor, or update the add-in.");
-            var catalog = new Catalog { Active = document.Active };
+            var catalog = new Catalog { Active = document.Active, Addin = document.Addin };
             foreach (var entry in document.Robots)
                 catalog.Robots.Add(new WorkspaceInfo(entry.Name, new Guid(entry.Uuid), entry.Archived, false));
             if (document.Library != null)

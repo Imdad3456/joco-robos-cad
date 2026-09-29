@@ -56,7 +56,19 @@ begin
     '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
 end;
 
+function WaitForSolidWorks(): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/WAITFORSW') = 0 then
+      Result := True;
+end;
+
 function InitializeSetup(): Boolean;
+var
+  Waited: Integer;
 begin
   Result := True;
   if not IsDotNetInstalled(net48, 0) then
@@ -65,12 +77,28 @@ begin
     Result := False;
     Exit;
   end;
-  while SolidWorksRunning() do
-    if MsgBox('Please save your work and close SOLIDWORKS, then click OK.', mbInformation, MB_OKCANCEL) = IDCANCEL then
+  if WaitForSolidWorks() then
+  begin
+    // Automatic update from the add-in: wait quietly (up to 12 hours) for the student to close SOLIDWORKS.
+    Waited := 0;
+    while SolidWorksRunning() do
     begin
-      Result := False;
-      Exit;
+      Sleep(3000);
+      Waited := Waited + 3;
+      if Waited > 12 * 3600 then
+      begin
+        Result := False;
+        Exit;
+      end;
     end;
+  end
+  else
+    while SolidWorksRunning() do
+      if MsgBox('Please save your work and close SOLIDWORKS, then click OK.', mbInformation, MB_OKCANCEL) = IDCANCEL then
+      begin
+        Result := False;
+        Exit;
+      end;
 end;
 
 function NeedsVcRedist(): Boolean;
@@ -83,6 +111,7 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Code: Integer;
+  Relaunch: String;
 begin
   if CurStep = ssPostInstall then
   begin
@@ -90,5 +119,9 @@ begin
     if not Exec(ExpandConstant('{dotnet4064}\RegAsm.exe'), '"' + ExpandConstant('{app}\JocoRobos.Cad.dll') + '" /codebase /silent',
       '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
       RaiseException('Registering the SOLIDWORKS add-in failed (RegAsm code ' + IntToStr(Code) + '). Run setup again as an administrator.');
+    // Reopen SOLIDWORKS for the student (not elevated) after an automatic update.
+    Relaunch := ExpandConstant('{param:RELAUNCH}');
+    if (Relaunch <> '') and FileExists(Relaunch) and (CompareText(ExtractFileName(Relaunch), 'SLDWORKS.exe') = 0) then
+      ExecAsOriginalUser(Relaunch, '', '', SW_SHOWNORMAL, ewNoWait, Code);
   end;
 end;

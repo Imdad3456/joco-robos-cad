@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-mkdir -p /var/lib/svn /etc/joco/public
+mkdir -p /var/lib/svn /etc/joco/public/updates
 touch /etc/joco/users
 # The admin service (www-data) manages accounts and generated files; Apache reads them.
 chown -R www-data:www-data /var/lib/svn /etc/joco
