@@ -86,6 +86,10 @@ static class Program
             var withAddin = Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json.Substring(0, json.Length - 1) +
                 ", \"addin\": {\"version\": \"0.6.0\", \"file\": \"JOCO-ROBOS-CAD-Setup-0.6.0.exe\", \"sha256\": \"" + sha + "\", \"required\": true}}")));
             Check(withAddin.Addin != null && withAddin.Addin.Required && withAddin.Addin.Version == "0.6.0", "Catalog add-in release misread");
+            string tempRoot = Path.Combine(temp, "Temp");
+            Check(WorkspacePolicy.IsTemporary(Path.Combine(tempRoot, "swx14316", "IC~~", "Screw3.step.SLDPRT"), tempRoot), "Imported temp part not recognized");
+            Check(!WorkspacePolicy.IsTemporary(Path.Combine(temp, "Temporary", "Plate.SLDPRT"), tempRoot), "Sibling-prefix folder treated as temp");
+            Check(!WorkspacePolicy.IsTemporary(part, tempRoot), "Robot part treated as temp");
             Console.WriteLine("PASS: " + assertions + " workspace and lock-ownership checks");
         }
         finally { Directory.Delete(temp, true); }

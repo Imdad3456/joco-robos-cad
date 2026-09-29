@@ -143,7 +143,10 @@ namespace JocoRobos.Cad
             try { action(); }
             catch (Exception exception)
             {
-                Message(exception.Message + "\n\nIf your password changed, use Tools → JOCO ROBOS CAD → Sign In.", MessageBoxIcon.Error);
+                string text = exception.Message;
+                bool login = text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("authoriz", StringComparison.OrdinalIgnoreCase) >= 0 || text.Contains("401");
+                Message(text + (login ? "\n\nIf your password changed, use Tools → JOCO ROBOS CAD → Sign In." : ""), MessageBoxIcon.Error);
             }
             finally
             {
@@ -577,7 +580,7 @@ namespace JocoRobos.Cad
                     selected = dialog.Selected;
                     comment = dialog.Comment;
                 }
-                RequireReferencesIncluded(selected, plan, catalog);
+                if (!RequireReferencesIncluded(selected, plan, catalog)) return;
                 // One revision per repository. The library goes last so a robot failure stops before it.
                 var lines = new List<string>();
                 bool warned = false;
@@ -608,28 +611,71 @@ namespace JocoRobos.Cad
 
         // Teammates must be able to open what is submitted: every reference inside the same robot
         // (library parts are copied in, never linked), and no new files left behind on this computer.
-        private void RequireReferencesIncluded(List<SubmitItem> selected, SubmitPlan plan, Catalog catalog)
+        // Returns false if the student chose not to continue.
+        private bool RequireReferencesIncluded(List<SubmitItem> selected, SubmitPlan plan, Catalog catalog)
         {
             var chosen = new HashSet<string>(selected.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
             var newFiles = new HashSet<string>(plan.Items.Where(x => x.Kind == SubmitKind.New).Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
             var problems = new List<string>();
+            var temporary = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+            var indexes = new Dictionary<string, ILookup<string, string>>();
             foreach (var item in selected.Where(x => x.Kind != SubmitKind.ReleaseOnly && WorkspacePolicy.IsCad(x.Path)))
-                foreach (string reference in Dependencies(item.Path))
+            {
+                ILookup<string, string> index;
+                if (!indexes.TryGetValue(item.Workspace.Name, out index)) indexes[item.Workspace.Name] = index = CadByName(item.Workspace.Root);
+                var mine = new List<string>();
+                foreach (string reference in Dependencies(item.Path).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    if (!item.Workspace.Contains(reference))
+                    string resolved = Resolve(reference, item.Path, index);
+                    if (resolved == null)
                     {
-                        var other = catalog.Owning(reference);
-                        problems.Add(Path.GetFileName(item.Path) + (other != null && other.IsLibrary
-                            ? " links directly to the Library part " + Path.GetFileName(reference) + ". Replace it using Insert from Library."
-                            : " uses a file outside " + item.Workspace.Label + ":\n    " + reference));
+                        // Imported (3D Interconnect) or virtual data that only lives in SOLIDWORKS' temp folder.
+                        if (WorkspacePolicy.IsTemporary(reference, Path.GetTempPath())) temporary.Add(Path.GetFileName(reference));
+                        continue; // Otherwise missing here too; Submit doesn't make that worse.
                     }
-                    else if (newFiles.Contains(reference) && !chosen.Contains(reference))
-                        problems.Add(Path.GetFileName(item.Path) + " uses the new file " + Path.GetFileName(reference) + ", which is unchecked");
+                    if (!item.Workspace.Contains(resolved))
+                    {
+                        var other = catalog.Owning(resolved);
+                        mine.Add(other != null && other.IsLibrary
+                            ? "links directly to the Library part " + Path.GetFileName(resolved) + " (use Insert from Library)"
+                            : "uses " + resolved);
+                    }
+                    else if (newFiles.Contains(resolved) && !chosen.Contains(resolved))
+                        mine.Add("uses the new file " + Path.GetFileName(resolved) + ", which is unchecked");
                 }
+                if (mine.Count > 0)
+                    problems.Add(Path.GetFileName(item.Path) + ":\n" + String.Join("\n", mine.Take(6).Select(x => "   • " + x)) +
+                        (mine.Count > 6 ? "\n   • …and " + (mine.Count - 6) + " more" : ""));
+            }
             if (problems.Count > 0)
                 throw new InvalidOperationException("Teammates would not be able to open this submission:\n\n" +
-                    String.Join("\n", problems.Distinct()) + "\n\nFor outside parts, save a copy into the robot folder and replace the component. " +
-                    "Nothing was submitted.");
+                    String.Join("\n\n", problems.Take(5)) + (problems.Count > 5 ? "\n\n…and " + (problems.Count - 5) + " more files" : "") +
+                    "\n\nSave a copy of each outside part into the robot folder, replace the component, save, and Submit again. Nothing was submitted.");
+            if (temporary.Count == 0) return true;
+            string examples = String.Join(", ", temporary.Take(4)) + (temporary.Count > 4 ? ", …" : "");
+            return MessageBox.Show(new SolidWorksWindow(),
+                temporary.Count + " imported part(s) exist only in SOLIDWORKS' temporary folder (" + examples + ").\n\n" +
+                "This happens with parts inserted from STEP or other CAD formats. They open on this computer, but teammates may see them as missing.\n" +
+                "To make them permanent: right-click each imported part → Break Link, or open it and Save As into the robot folder.\n\n" +
+                "Submit anyway?", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
+        }
+
+        // Where SOLIDWORKS will actually find a reference: the stored path if it exists (outside the temp folder),
+        // otherwise a file with the same name, preferring the referencing document's own folder.
+        private static string Resolve(string reference, string referencing, ILookup<string, string> index)
+        {
+            if (File.Exists(reference) && !WorkspacePolicy.IsTemporary(reference, Path.GetTempPath())) return Path.GetFullPath(reference);
+            var matches = index[Path.GetFileName(reference)].ToList();
+            string folder = Path.GetDirectoryName(referencing);
+            return matches.FirstOrDefault(m => String.Equals(Path.GetDirectoryName(m), folder, StringComparison.OrdinalIgnoreCase)) ?? matches.FirstOrDefault();
+        }
+
+        private static ILookup<string, string> CadByName(string root)
+        {
+            if (!Directory.Exists(root)) return new string[0].ToLookup(x => x);
+            return Directory.EnumerateFiles(root, "*.sld*", SearchOption.AllDirectories)
+                .Where(f => WorkspacePolicy.IsSubmittableCad(f) && f.IndexOf(@"\.svn\", StringComparison.OrdinalIgnoreCase) < 0)
+                .ToLookup(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase);
         }
 
         // ---------- library ----------
@@ -677,7 +723,9 @@ namespace JocoRobos.Cad
         // assemblies at the copies. Files already copied into this robot are reused, never overwritten.
         private string CopyFromLibrary(WorkspaceInfo library, WorkspaceInfo robot, string source)
         {
-            var files = new[] { source }.Concat(Dependencies(source)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var index = CadByName(library.Root);
+            var files = new[] { source }.Concat(Dependencies(source).Select(r => Resolve(r, source, index)).Where(r => r != null))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var outside = files.Where(f => !library.Contains(f)).ToList();
             if (outside.Count > 0)
                 throw new InvalidOperationException(Path.GetFileName(source) + " uses files outside the Library, so it cannot be copied safely:\n" +
@@ -702,7 +750,11 @@ namespace JocoRobos.Cad
                 {
                     string original = files.First(f => WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f).Equals(target, StringComparison.OrdinalIgnoreCase));
                     foreach (string reference in Dependencies(original))
-                        application.ReplaceReferencedDocument(target, reference, WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, reference));
+                    {
+                        string resolved = Resolve(reference, original, index);
+                        if (resolved != null && library.Contains(resolved))
+                            application.ReplaceReferencedDocument(target, reference, WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, resolved));
+                    }
                     var stillLinked = Dependencies(target).Where(library.Contains).ToList();
                     if (stillLinked.Count > 0)
                         throw new InvalidOperationException("Could not point " + Path.GetFileName(target) + " at the robot copies of:\n" + String.Join("\n", stillLinked));
@@ -742,8 +794,9 @@ namespace JocoRobos.Cad
             if (!Directory.Exists(robot.MasterFolder)) return null;
             string[] assemblies = Directory.GetFiles(robot.MasterFolder, "*.sldasm")
                 .Where(WorkspacePolicy.IsSubmittableCad).ToArray();
-            var referenced = new HashSet<string>(assemblies.SelectMany(Dependencies), StringComparer.OrdinalIgnoreCase);
-            string[] top = assemblies.Where(x => !referenced.Contains(Path.GetFullPath(x))).ToArray();
+            // Compare names: stored reference paths can be stale (for example after a STEP import).
+            var referenced = new HashSet<string>(assemblies.SelectMany(Dependencies).Select(Path.GetFileName), StringComparer.OrdinalIgnoreCase);
+            string[] top = assemblies.Where(x => !referenced.Contains(Path.GetFileName(x))).ToArray();
             return top.Length == 1 ? top[0] : null;
         }
 

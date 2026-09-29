@@ -31,6 +31,18 @@ namespace JocoRobos.Cad
             return Path.Combine(Path.GetFullPath(robotRoot), "90_COTS", relative);
         }
 
+        // SOLIDWORKS keeps imported (3D Interconnect) and session data under the Windows temp folder.
+        internal static bool IsTemporary(string path, string tempRoot)
+        {
+            try
+            {
+                string full = Path.GetFullPath(path);
+                string temp = Path.GetFullPath(tempRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                return full.StartsWith(temp, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (ArgumentException) { return false; }
+        }
+
         // SOLIDWORKS owner/lock files ("~$Part.SLDPRT") share CAD extensions but are never submitted.
         internal static bool IsSubmittableCad(string path)
         {
