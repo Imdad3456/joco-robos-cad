@@ -1,0 +1,87 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # attach installers to releases for v* tags
+
+jobs:
+  server:
+    name: Server (container, mentor page, lock rules)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: docker build -f server/Containerfile -t joco-svn:test server
+      - name: Start a disposable server
+        run: |
+          mkdir -p "$RUNNER_TEMP/joco/data" "$RUNNER_TEMP/joco/config"
+          docker run -d --name joco-test -p 127.0.0.1:18091:80 \
+            -v "$RUNNER_TEMP/joco/data:/var/lib/svn" -v "$RUNNER_TEMP/joco/config:/etc/joco" joco-svn:test
+          for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:18091/ && break; sleep 1; done
+          docker exec joco-test sh -c 'htpasswd -B -b /etc/joco/users mentor1 mentorpass123 &&
+            htpasswd -B -b /etc/joco/users sarah sarahpass123 &&
+            runuser -u www-data -- python3 /opt/joco/joco.py mentor add mentor1'
+      - name: Mentor page, seasons, library, add-in publishing
+        run: python3 server/tests/admin_test.py
+      - name: Lock enforcement and backup restore
+        run: docker exec -i joco-test python3 - < server/tests/integration.py
+      - name: Server log on failure
+        if: failure()
+        run: docker logs joco-test
+
+  addin:
+    name: Add-in and installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Policy and catalog tests
+        run: dotnet run --project tests/WorkspacePolicy.Tests -c Release
+      - name: Find SOLIDWORKS API files
+        id: sw
+        shell: pwsh
+        run: |
+          $missing = 'sldworks', 'swconst', 'swpublished' | Where-Object { !(Test-Path "lib/solidworks/SolidWorks.Interop.$_.dll") }
+          if ($missing) {
+            "::warning::Installer skipped: add SolidWorks.Interop.{sldworks,swconst,swpublished}.dll to lib/solidworks (see lib/solidworks/README.md)."
+            "found=false" >> $env:GITHUB_OUTPUT
+          } else { "found=true" >> $env:GITHUB_OUTPUT }
+      - name: Tag matches project version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/JocoRobos.Cad/JocoRobos.Cad.csproj
+          $version = ($project.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match <Version>$version</Version> in JocoRobos.Cad.csproj." }
+      - name: Install Inno Setup
+        if: steps.sw.outputs.found == 'true'
+        run: choco install innosetup --no-progress -y
+      - name: Build add-in and installer
+        if: steps.sw.outputs.found == 'true'
+        shell: pwsh
+        run: ./scripts/Build-Installer.ps1 -SolidWorksInteropDir "$env:GITHUB_WORKSPACE\lib\solidworks"
+      - name: Keep installer for download
+        if: steps.sw.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: JOCO-ROBOS-CAD-installer
+          path: installer/Output/*.exe
+          retention-days: 30
+      - name: Publish GitHub release
+        if: steps.sw.outputs.found == 'true' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
+          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          gh release create $env:GITHUB_REF_NAME $exe.FullName --title "JOCO ROBOS CAD $env:GITHUB_REF_NAME" `
+            --notes "Download $($exe.Name), then publish it on https://cad.imdad.stream/admin/addin so students are offered it.`n`nSHA-256: $hash"
