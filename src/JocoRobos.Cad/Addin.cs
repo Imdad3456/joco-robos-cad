@@ -31,6 +31,7 @@ namespace JocoRobos.Cad
         [DispId(9)] void InsertFromLibrary();
         [DispId(10)] void ChooseRobot();
         [DispId(11)] void InstallUpdate();
+        [DispId(12)] void OpenOldRobot();
     }
 
     [ComVisible(true)]
@@ -44,7 +45,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591905;
+        private const int LayoutVersion = 591906;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -104,6 +105,7 @@ namespace JocoRobos.Cad
                 Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
                 Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
+                Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
                 group.HasToolbar = true;
@@ -204,6 +206,12 @@ namespace JocoRobos.Cad
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
                 var state = StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt);
+                var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
+                if (season != null && !season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name)
+                {
+                    state.ActiveStatus = "Reference copy from " + season.Name + ". Read-only; your robot is " + robotSnapshot.Info.Name + ".";
+                    state.ActiveColor = System.Drawing.SystemColors.GrayText;
+                }
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
             }
@@ -373,6 +381,46 @@ namespace JocoRobos.Cad
             });
         }
 
+        public void OpenOldRobot()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var older = catalog.Robots.Where(r => r.Name != catalog.Robot.Name).Reverse().ToList();
+                if (older.Count == 0) { Message("There are no other seasons yet."); return; }
+                WorkspaceInfo season;
+                using (var dialog = new PickRobotDialog("Open Old Robot", "Open a previous robot read-only, for reference:",
+                    older.Select(r => r.Name + (r.Archived ? "  (archived)" : "") + (new SvnWorkspace(login, r).IsCheckedOut ? "" : "  (downloads once)")).ToList()))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    season = older[dialog.Index];
+                }
+                RequireNoOtherSeasonOpen(catalog, season);
+                // Downloaded once, then left alone: reference copies never update unless the student switches to that season.
+                if (!new SvnWorkspace(login, season).IsCheckedOut) UpdateWorkspace(login, season);
+                string master = FindMaster(season);
+                if (master == null) { Message("No master assembly was found in " + season.MasterFolder + ". Use File → Open in that folder."); return; }
+                int errors = 0, warnings = 0;
+                if (application.OpenDoc6(master, (int)swDocumentTypes_e.swDocASSEMBLY, (int)swOpenDocOptions_e.swOpenDocOptions_ReadOnly, "", ref errors, ref warnings) == null)
+                    throw new InvalidOperationException(season.Name + " could not open. SOLIDWORKS errors: " + errors + "; warnings: " + warnings);
+            });
+        }
+
+        // SOLIDWORKS can't hold two different files with the same name. Each season reuses names like
+        // Shooter.SLDASM, so opening a second season would silently show the first one's file.
+        private void RequireNoOtherSeasonOpen(Catalog catalog, WorkspaceInfo target)
+        {
+            var clash = OpenDocuments().Select(d => d.GetPathName()).Where(p => !String.IsNullOrEmpty(p))
+                .Select(p => new { Path = p, Season = catalog.Owning(p) })
+                .Where(x => x.Season != null && !x.Season.IsLibrary && x.Season.Name != target.Name).ToList();
+            if (clash.Count > 0)
+                throw new InvalidOperationException("Close the " + clash[0].Season.Name + " documents first. SOLIDWORKS can't open two seasons at once, " +
+                    "because files with the same name (like Shooter.SLDASM) would be mixed up.\n\nOpen: " +
+                    String.Join(", ", clash.Take(5).Select(x => Path.GetFileName(x.Path))) + (clash.Count > 5 ? ", …" : ""));
+        }
+
         // ---------- update and open ----------
 
         // Never change files beneath a loaded document, including hidden assembly components.
@@ -431,6 +479,7 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
+                RequireNoOtherSeasonOpen(catalog, catalog.Robot);
                 string summary = UpdateAll(login, catalog);
                 if (summary.StartsWith("Switched", StringComparison.Ordinal) || summary.Contains("not updated")) Message(summary);
                 string master = FindMaster(catalog.Robot);
@@ -496,6 +545,11 @@ namespace JocoRobos.Cad
                 RequireCurrentAddin(login, catalog);
                 WorkspaceInfo workspace;
                 ModelDoc2 doc = ActiveCad(catalog, out workspace);
+                // Submit only covers the current season and the library, so edits elsewhere could never be submitted.
+                if (!workspace.IsLibrary && workspace.Name != catalog.Robot.Name)
+                    throw new InvalidOperationException(Path.GetFileName(doc.GetPathName()) + " is from " + workspace.Name + ", a reference copy.\n\n" +
+                        "To reuse it in " + catalog.Robot.Name + ", ask a mentor to add it to the Library, then use Insert from Library. " +
+                        "To edit " + workspace.Name + " itself, switch with Tools → JOCO ROBOS CAD → Choose Robot.");
                 // Never reload a dirty document or change it behind an open assembly.
                 if (doc.GetSaveFlag())
                     throw new InvalidOperationException("This document has unsaved changes. Preserve them before acquiring a new edit lock.");

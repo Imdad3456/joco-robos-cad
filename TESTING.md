@@ -47,7 +47,7 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 ## F. Seasons
 
 22. 🌐 **Seasons** → create `2028-Robot` and **don't** make it active. 🧑 Nothing changes for students.
-23. 🌐 Make `2028-Robot` active → 🧑 **Open Robot** says "Switched to 2028-Robot" and creates `C:\JOCO-ROBOS\2028-Robot` (empty folders). **Tools → Choose Robot** can pick 2027 again. 🌐 Make **2027** active again, then **Delete (empty)** on 2028.
+23. 🌐 Make `2028-Robot` active → 🧑 **Open Robot** says "Switched to 2028-Robot" and creates `C:\JOCO-ROBOS\2028-Robot` (empty folders). **Tools → Choose Robot** can pick 2027 again. While 2028 is current, **Tools → Open Old Robot** → 2027 opens `full assembly` read-only without updating; the pane says "Reference copy from 2027-Robot", Edit is refused with a Library hint, and Open Old Robot/Open Robot refuse while the other season's documents are open. 🌐 Make **2027** active again, then **Delete (empty)** on 2028.
 
 ## G. Installer
 

@@ -168,4 +168,32 @@ namespace JocoRobos.Cad
             CancelButton = cancel;
         }
     }
+
+    internal sealed class PickRobotDialog : Form
+    {
+        private readonly ListBox list = new ListBox();
+        internal int Index { get { return list.SelectedIndex; } }
+
+        internal PickRobotDialog(string title, string prompt, IList<string> items)
+        {
+            Text = "JOCO ROBOS CAD — " + title;
+            ClientSize = new Size(420, 280);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Controls.Add(new Label { Text = prompt, Location = new Point(20, 15), AutoSize = true });
+            list.SetBounds(20, 40, 380, 170);
+            foreach (string item in items) list.Items.Add(item);
+            list.SelectedIndex = 0;
+            list.DoubleClick += (s, e) => { DialogResult = DialogResult.OK; Close(); };
+            Controls.Add(list);
+            var ok = new Button { Text = "Open", DialogResult = DialogResult.OK, Location = new Point(200, 230), Size = new Size(95, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(305, 230), Size = new Size(95, 30) };
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            AcceptButton = ok;
+            CancelButton = cancel;
+        }
+    }
 }
