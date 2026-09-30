@@ -1,13 +1,13 @@
-# Test plan — v0.6
+# Test plan
 
 Work top to bottom on the Windows VM. Each step says what should happen. **If anything differs, stop and send the exact message text or a screenshot.** Don't delete or revert files to make a step pass.
 
 Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/admin) · ⚙ PowerShell
 
-## A. Install (dev build first, then the real installer)
+## A. Install
 
-1. ⚙ Close SOLIDWORKS. Download the latest ZIP from GitHub into `C:\Dev\joco-robos-cad`, then run `.\scripts\Build.ps1` and, as administrator, `.\scripts\Register-Dev.ps1`.
-2. 🧑 Start SOLIDWORKS. Expect the toolbar to show **Open Robot, Update, Edit, Submit, Insert from Library**, and a **JOCO ROBOS CAD** tab (blue "J" icon) in the task pane on the right.
+1. Close SOLIDWORKS. If you ever used the development build, run `.\scripts\Unregister-Dev.ps1` as administrator first. Then install the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest), or let the automatic updater bring you to the newest released version.
+2. 🧑 Start SOLIDWORKS. The panel header shows the version you installed, without "(dev build)". Expect the toolbar to show **Open Robot, Update, Edit, Submit, Insert from Library**, and a **JOCO ROBOS CAD** tab (blue "J" icon) in the task pane on the right.
    - The pane shows **2027-Robot** and either **✓ Up to date** or **N updates available**.
 
 ## B. Basics (regression)
@@ -39,7 +39,7 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 ## E. Two students (the CacheCAD test)
 
 17. 🌐 **Accounts** → add `testkid` with a 10+ character password.
-18. Create a second Windows user on the VM (or use a second VM), sign in there as `testkid`, and use the dev build or the installer from step 24.
+18. Create a second Windows user on the VM (or use a second VM), sign in there as `testkid`, and install the newest release (step 24). Installing is per-PC, so each Windows user only needs to sign in.
 19. As **imdad**: Edit `femur.SLDPRT`. As **testkid**: open `femur` → Edit. Expect "Locked by imdad". The pane shows 🔒 **Locked by imdad**, and the file stays read-only.
 20. As **imdad**: change `femur`, save, Submit. As **testkid**: the pane shows "1 update available — imdad: …" within 3 minutes (or click *Check now*) → close docs → **Update** → **Edit** `femur` now succeeds.
 21. 🌐 **Locks** → release testkid's `femur` lock. testkid's Submit of femur must now be refused (their lock is gone).
@@ -51,17 +51,17 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 
 ## G. Installer
 
-24. ⚙ `winget install JRSoftware.InnoSetup`, reopen PowerShell, then run `.\scripts\Unregister-Dev.ps1` as admin and `.\scripts\Build-Installer.ps1`. Expect `installer\Output\JOCO-ROBOS-CAD-Setup-0.6.0.exe`. (Or, once the SOLIDWORKS DLLs are in `lib/solidworks`, download the installer from GitHub → Actions → latest run → Artifacts.)
+24. Download the newest setup file from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest). Check that its size matches the one shown on the release page; a partial download won't run.
 25. Run the setup file. Expect the Windows "unknown publisher" warning → More info → Run anyway. With SOLIDWORKS open it asks you to close it. After install, start SOLIDWORKS: the add-in loads without visiting Tools → Add-Ins.
 26. Uninstall from Windows Settings → Apps. The add-in is gone, and `C:\JOCO-ROBOS` is untouched.
 
 ## G2. Automatic updates
 
-- Install 0.6.0 with the setup file (step 25).
-- ⚙ Change `<Version>` to `0.6.1` and build again (or push tag `v0.6.1` and download it from the GitHub Release).
-- 🌐 On the **Add-in** page, publish `JOCO-ROBOS-CAD-Setup-0.6.1.exe`.
-- 🧑 Within 3 minutes (or after *Check now*), SOLIDWORKS asks "0.6.1 is available". Answer Yes → Windows permission prompt → "Update is ready". Close SOLIDWORKS; it should reopen by itself within about a minute. The pane header now says **0.6.1**.
-- 🌐 Mark it **Required** and publish `0.6.2`. 🧑 Clicking Edit without updating is refused with the install prompt.
+- ⚙ Bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, and push a matching tag (for example `v0.6.7`). GitHub builds it and stages it on the server.
+- 🌐 On the **Add-in** page, under "Waiting from GitHub", click **Release to students**.
+- 🧑 Within 3 minutes (or after *Check now*), SOLIDWORKS asks "x.y.z is available". Answer Yes → Windows permission prompt (it may be behind SOLIDWORKS) → "Update is ready". Close SOLIDWORKS; it should reopen by itself within about a minute. The panel header shows the new version, and no update is offered anymore.
+- If the version didn't change, the add-in says so at the next start and points to the installer log in `%LOCALAPPDATA%\JocoRobos.Cad\updates`.
+- 🌐 Release the next version as **Required**. 🧑 Clicking Edit without updating is refused with the install prompt.
 
 ## G3. Changes without Edit
 

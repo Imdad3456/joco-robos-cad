@@ -1,4 +1,6 @@
-# Continue after the Windows prototype passes
+# Original design notes (historical)
+
+> Written before implementation. The current behavior is described in [README.md](../README.md); keep this only for the reasoning behind the design.
 
 The student workflow remains **Open Robot → Edit → CAD normally → Submit**. SVN owns history, synchronization, lock tokens, and revisions. The add-in translates those operations into SOLIDWORKS actions. This document records proposed behavior; none of it is implemented in the local prototype.
 

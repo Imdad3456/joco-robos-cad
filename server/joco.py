@@ -693,7 +693,8 @@ class Admin(BaseHTTPRequestHandler):
         sources = ''.join('<option value="%s|%s">%s — %s</option>' % (esc(s), esc(f), esc(s), esc(f)) for s in reversed(seasons) for f in files(s))
         token = self.token()
         return ('<section><h2>Reusable parts library</h2><p class="muted">Every student has a copy at <code>C:\\JOCO-ROBOS\\Library</code>. '
-                '“Insert from Library” in SOLIDWORKS copies a part into the robot, so later library changes never alter an old robot. '
+                '“Insert from Library” copies a part into the robot the first time it is used there. That copy then belongs to the robot: '
+                'later library changes never replace it, so mates and geometry can\'t change underneath a design. '
                 'Students can also improve library parts with Edit and Submit.</p><div class="scroll"><table><tr><th>Part</th><th></th></tr>%s</table></div></section>'
                 '<section><h2>Upload new parts</h2><form method="post" enctype="multipart/form-data" class="row"><input type="hidden" name="token" value="%s">'
                 '<input type="file" name="files" multiple accept=".sldprt,.sldasm,.slddrw" required>'

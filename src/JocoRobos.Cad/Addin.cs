@@ -586,7 +586,7 @@ namespace JocoRobos.Cad
                         : safety != null ? "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety
                         : "\n\nSOLIDWORKS reloaded the file; redo your last change.";
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
-                        (workspace.IsLibrary ? " in the Library. Changes reach robots only when someone inserts the part again." : ".") +
+                        (workspace.IsLibrary ? " in the Library. Robots that already have a copy keep their own; only future first-time inserts get your version." : ".") +
                         (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
                         kept + "\n\nSave normally, then click Submit when you are done.");
                 }
