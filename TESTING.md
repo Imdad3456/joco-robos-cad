@@ -70,6 +70,13 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 - 🧑 Close SOLIDWORKS. In Explorer, clear read-only on a part, change it in SOLIDWORKS, and save. **Submit** lists it as "not locked yet; Submit locks it" and submits it.
 - 🧑 Repeat while testkid holds the lock: Submit shows it under "Cannot be submitted". **Tools → Set Aside My Changes** (with the document closed) saves your copy, restores the team's version, and Update works again.
 
+## G4. Lock on first change, release on close
+
+- 🧑 **File → Open** a robot part (not locked). Wait 10 seconds, then change a dimension. Expect "You're changing … Lock it for editing now?" → Yes → it's locked and writable, and your change is still there.
+- 🧑 As testkid, Edit a part. As imdad, open it, wait, and change it. Expect a warning right away that testkid is editing it.
+- 🧑 Edit a part, don't change it, close it. Within a few seconds the pane's "Your locked files" no longer lists it, and 🌐 Locks doesn't show it.
+- 🧑 Open the whole robot and just look around (rotate, zoom, open subassemblies). You should **not** get any lock questions. Tell me if you do.
+
 ## H. Failure cases
 
 27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.

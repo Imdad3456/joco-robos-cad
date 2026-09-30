@@ -62,6 +62,7 @@ namespace JocoRobos.Cad
         private Catalog.AddinRelease offeredUpdate;
         private string promptedVersion;
         private bool updateChecked;
+        private DocumentWatcher watcher;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -188,6 +189,10 @@ namespace JocoRobos.Cad
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
             application.ActiveModelDocChangeNotify += OnActiveDocumentChanged;
+            watcher = new DocumentWatcher(application,
+                path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
+                doc => pane.BeginInvoke((Action)(() => OfferLock(doc))),
+                path => pane.BeginInvoke((Action)(() => ReleaseIfUnchanged(path))));
             statusTimer = new Timer { Interval = 3 * 60 * 1000 };
             statusTimer.Tick += (s, e) => RefreshStatus();
             statusTimer.Start();
@@ -539,14 +544,21 @@ namespace JocoRobos.Cad
 
         public void Edit()
         {
-            Execute(() =>
+            Execute(() => EditDocument(null));
+        }
+
+        // target null: the active document or selected component (Edit button). Otherwise a document the watcher saw change.
+        private void EditDocument(ModelDoc2 target)
+        {
             {
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
                 RequireCurrentAddin(login, catalog);
                 WorkspaceInfo workspace;
-                ModelDoc2 doc = ActiveCad(catalog, out workspace);
+                ModelDoc2 doc = target ?? ActiveCad(catalog, out workspace);
+                workspace = catalog.Owning(doc.GetPathName());
+                if (workspace == null) throw new InvalidOperationException("This file is not in a robot or library folder under " + WorkspaceInfo.BaseFolder + ".");
                 // Submit only covers the current season and the library, so edits elsewhere could never be submitted.
                 if (!workspace.IsLibrary && workspace.Name != catalog.Robot.Name)
                     throw new InvalidOperationException(Path.GetFileName(doc.GetPathName()) + " is from " + workspace.Name + ", a reference copy.\n\n" +
@@ -557,7 +569,8 @@ namespace JocoRobos.Cad
                 bool unsaved = doc.GetSaveFlag();
                 if (unsaved && !doc.IsOpenedReadOnly())
                     throw new InvalidOperationException("Save this document first, then click Edit.");
-                string safety = unsaved ? SaveSafetyCopy(doc, workspace) : null;
+                // A change noticed seconds ago doesn't need a backup file; one from the Edit button might be long work.
+                string safety = unsaved && target == null ? SaveSafetyCopy(doc, workspace) : null;
                 var svn = new SvnWorkspace(login, workspace);
                 try
                 {
@@ -569,8 +582,9 @@ namespace JocoRobos.Cad
                         throw new InvalidOperationException("Your SVN lock is held, but SOLIDWORKS could not make the document writable. Close and reopen it, then retry Edit.");
                     bool component = !ReferenceEquals(doc, application.ActiveDoc);
                     string kept = !unsaved ? "" : doc.GetSaveFlag()
-                        ? "\n\nYour earlier changes are still here. Save to keep them. (A backup copy is in " + safety + ")"
-                        : "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety;
+                        ? "\n\nYour earlier changes are still here. Save to keep them." + (safety != null ? " (A backup copy is in " + safety + ")" : "")
+                        : safety != null ? "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety
+                        : "\n\nSOLIDWORKS reloaded the file; redo your last change.";
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
                         (workspace.IsLibrary ? " in the Library. Changes reach robots only when someone inserts the part again." : ".") +
                         (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
@@ -584,6 +598,59 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException(exception.Message + "\n\nYour unsaved changes were saved as a copy in:\n" + safety +
                         "\n\nYou can close this document without saving; your work is in that copy. Show it to whoever is editing the file.", exception);
                 }
+            }
+        }
+
+        // ---------- lock on first change, release on close ----------
+
+        // A read-only team file was just changed (even if it was opened with File → Open): offer to lock it now,
+        // before the student spends time on changes they could not save.
+        private void OfferLock(ModelDoc2 doc)
+        {
+            if (busy || application == null) return;
+            string path;
+            try { path = Path.GetFullPath(doc.GetPathName()); if (!doc.IsOpenedReadOnly()) return; }
+            catch (Exception) { return; } // Closed in the meantime.
+            var season = paneCatalog?.Owning(path);
+            if (season != null && (season.Archived || (!season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name))) return;
+            string name = Path.GetFileName(path);
+            // From the last status check; Edit re-checks with the server either way.
+            string owner = new[] { robotSnapshot, librarySnapshot }
+                .Where(x => x != null && !x.Mine.Contains(path) && x.Locks.ContainsKey(path))
+                .Select(x => x.Locks[path]).FirstOrDefault();
+            if (owner != null)
+            {
+                Message(owner + " is editing " + name + ", so your changes can't be saved into the robot.\n\n" +
+                    "Undo them (Ctrl+Z), or use File → Save As to keep a copy outside the robot folder and show it to " + owner + ".", MessageBoxIcon.Warning);
+                return;
+            }
+            if (MessageBox.Show(new SolidWorksWindow(), "You're changing " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
+                "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                Execute(() => EditDocument(doc));
+        }
+
+        // Closing a locked file without saving changes gives it back, so forgotten locks don't block teammates.
+        private void ReleaseIfUnchanged(string path)
+        {
+            if (application == null) return;
+            var season = paneCatalog?.Owning(path);
+            bool mine = new[] { robotSnapshot, librarySnapshot }.Any(x => x != null && x.Mine.Contains(path));
+            var login = paneUser == null ? null : CredentialStore.Read();
+            if (season == null || !mine || login == null) return;
+            if (OpenDocuments().Any(d => String.Equals(d.GetPathName(), path, StringComparison.OrdinalIgnoreCase))) return;
+            var svn = new SvnWorkspace(login, season);
+            Task.Run(() =>
+            {
+                // ReleaseEdit refuses unless this computer owns the lock and the file on disk is unchanged.
+                svn.ReleaseEdit(path);
+                File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
+            }).ContinueWith(task =>
+            {
+                if (pane == null || pane.IsDisposed) return;
+                pane.BeginInvoke((Action)(() =>
+                {
+                    if (task.Status == TaskStatus.RanToCompletion) RefreshStatus();
+                }));
             });
         }
 
@@ -949,6 +1016,8 @@ namespace JocoRobos.Cad
             if (busy) return false;
             try
             {
+                watcher?.Dispose();
+                watcher = null;
                 statusTimer?.Stop();
                 statusTimer?.Dispose();
                 if (application != null && pane != null) application.ActiveModelDocChangeNotify -= OnActiveDocumentChanged;
