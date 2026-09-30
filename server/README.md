@@ -27,6 +27,18 @@ ssh -t deck@100.97.7.84 'podman exec -it joco-svn htpasswd -B /etc/joco/users im
 
 Enter the new CAD password at the prompt; do not put it in a command, GitHub, or chat. Use unique usernames for each student. All authenticated users can read every repository and write to non-archived ones. Passwords are bcrypt hashes; configuration stays on the Deck, not in Git.
 
+## FRCDesignLib adapter
+
+`frcdesign.py` serves `/admin/api/frcdesign/*` to the add-in (any signed-in student; requires the add-in's `X-Joco-Client` header). It reads the public FRCDesignLib catalog from `app.frcdesign.org` (cached, refreshed hourly when its version changes; the last good copy is used if the site is down) and proxies thumbnails. It exports geometry through Onshape with **signed requests**: Part Studios as Parasolid in one call, and assemblies as a flattened multi-body Parasolid (one translation plus a few polls). Exports are cached under `data/.frcdesign`. Imports are recorded in `config/frcdesign.json` (fingerprint → Library file, who, when, source IDs). Each part/configuration is reserved for the first student, so two students can't create duplicates. Limits: 40 exports per day for the team and 12 per student (`JOCO_FRC_DAILY_EXPORTS`, `JOCO_FRC_USER_DAILY_EXPORTS`), because Onshape allows 2,500 API calls a year on Free/EDU plans.
+
+The Onshape API key (read-documents scope only) is in `~/server/joco-cad/secrets/onshape.env` (mode 600) and reaches the container only through `--env-file`. It's never returned, logged, or backed up; like the tunnel token, recreate it after rebuilding the Deck. To replace it:
+
+```sh
+ssh -t deck@100.97.7.84 'umask 077; read -rp "Onshape access key: " a; read -rsp "Onshape secret key (hidden): " s; echo; a=$(printf %s "$a" | tr -d "[:space:]"); s=$(printf %s "$s" | tr -d "[:space:]"); printf "ONSHAPE_ACCESS_KEY=%s\nONSHAPE_SECRET_KEY=%s\n" "$a" "$s" > ~/server/joco-cad/secrets/onshape.env; echo "saved: ${#a} / ${#s} characters"; systemctl --user restart joco-svn.service'
+```
+
+The container won't start without that file; create an empty one to run without FRCDesignLib export.
+
 ## Lock enforcement
 
 The pre-commit hook requires a lock owned by the submitting user for modifications, property changes, deletion, or replacement of existing `.SLDPRT`, `.SLDASM`, and `.SLDDRW` files (case-insensitive). SVN additionally checks the client's lock token. Newly committed CAD must have `svn:needs-lock` and `svn:mime-type=application/octet-stream`.
@@ -78,4 +90,4 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v8`; earlier tags (`v7` … `initial`) are rollback images.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v10`; earlier tags (`v9` … `initial`) are rollback images.

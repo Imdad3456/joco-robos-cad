@@ -26,6 +26,8 @@ from email.policy import HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlsplit
 
+import frcdesign
+
 REPOS = os.environ.get('JOCO_REPOS', '/var/lib/svn')
 CONFIG = os.environ.get('JOCO_CONFIG', '/etc/joco')
 HOOKS = os.environ.get('JOCO_HOOKS', '/opt/joco')
@@ -606,7 +608,55 @@ class Admin(BaseHTTPRequestHandler):
             return None
         return state
 
+    # ---------- FRCDesignLib API for the add-in (any signed-in student) ----------
+
+    def frc_api(self, method):
+        path = urlsplit(self.path).path
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        try:
+            parts = path[len('/admin/api/frcdesign/'):].split('/')
+            if method == 'GET' and parts[0] == 'search':
+                return self.json_reply({'results': frcdesign.search(parse_qs(urlsplit(self.path).query).get('q', [''])[0])})
+            if method == 'GET' and parts[0] == 'item' and len(parts) == 2:
+                return self.json_reply(frcdesign.details(parts[1]))
+            if method == 'GET' and parts[0] == 'thumb' and len(parts) == 2:
+                size = parse_qs(urlsplit(self.path).query).get('size', ['300x300'])[0]
+                data, kind = frcdesign.thumbnail(parts[1], '70x40' if size == '70x40' else '300x300')
+                return self.bytes_reply(data, kind, 'public, max-age=86400')
+            if method == 'GET' and parts[0] == 'download' and len(parts) == 2:
+                data, name = frcdesign.download(self.user, parts[1])
+                return self.bytes_reply(data, 'application/octet-stream', 'no-store', name)
+            if method == 'POST' and parts[0] in ('claim', 'complete', 'abandon'):
+                body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 65536)) or b'{}')
+                with Locked():
+                    if parts[0] == 'claim':
+                        return self.json_reply(frcdesign.claim(self.user, str(body.get('id', '')), body.get('configuration') or {}))
+                    if parts[0] == 'complete':
+                        return self.json_reply(frcdesign.complete(self.user, str(body.get('fingerprint', ''))))
+                    return self.json_reply(frcdesign.abandon(self.user, str(body.get('fingerprint', ''))))
+            return self.reply(404, 'Unknown request.')
+        except frcdesign.FrcError as exc:
+            return self.reply(exc.status, str(exc))
+        except ValueError:
+            return self.reply(400, 'Bad request.')
+
+    def json_reply(self, value):
+        return self.bytes_reply(json.dumps(value).encode(), 'application/json', 'no-store')
+
+    def bytes_reply(self, data, kind, cache, filename=None):
+        self.send_response(200)
+        self.send_header('Content-Type', kind)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', cache)
+        if filename:
+            self.send_header('Content-Disposition', 'attachment; filename="%s"' % re.sub(r'[^A-Za-z0-9 ._()&+,-]', '_', filename))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self):
+        if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
+            return self.frc_api('GET')
         state = self.guard()
         if state is None:
             return
@@ -637,6 +687,8 @@ class Admin(BaseHTTPRequestHandler):
             return self.stage()
         if urlsplit(self.path).path == '/admin/api/heartbeat':
             return self.heartbeat()
+        if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
+            return self.frc_api('POST')
         state = self.guard()
         if state is None:
             return
@@ -880,11 +932,11 @@ class Admin(BaseHTTPRequestHandler):
         seasons = [n for n in repositories() if SEASON.match(n)]
         sources = ''.join('<option value="%s|%s">%s — %s</option>' % (esc(s), esc(f), esc(s), esc(f)) for s in reversed(seasons) for f in files(s))
         token = self.token()
-        return ('<section><h2>Reusable parts library</h2><p class="muted">Every student has a copy at <code>C:\\JOCO-ROBOS\\Library</code>. '
+        return (('<section><h2>Reusable parts library</h2><p class="muted">Every student has a copy at <code>C:\\JOCO-ROBOS\\Library</code>. '
                 '“Insert from Library” copies a part into the robot the first time it is used there. That copy then belongs to the robot: '
                 'later library changes never replace it, so mates and geometry can\'t change underneath a design. '
                 'Students can also improve library parts with Edit and Submit.</p><div class="scroll"><table><tr><th>Part</th><th></th></tr>%s</table></div></section>'
-                '<section><h2>Upload new parts</h2><form method="post" enctype="multipart/form-data" class="row"><input type="hidden" name="token" value="%s">'
+                '<!--frcdesign--><section><h2>Upload new parts</h2><form method="post" enctype="multipart/form-data" class="row"><input type="hidden" name="token" value="%s">'
                 '<input type="file" name="files" multiple accept=".sldprt,.sldasm,.slddrw" required>'
                 '<input name="folder" list="folders" value="Hardware" required aria-label="Library folder"><datalist id="folders">%s</datalist>'
                 '<input name="comment" placeholder="Comment (optional)" aria-label="Comment"><button class="primary">Upload</button></form>'
@@ -892,7 +944,26 @@ class Admin(BaseHTTPRequestHandler):
                 '<section><h2>Copy a robot part into the library</h2><form method="post" class="row"><input type="hidden" name="token" value="%s">'
                 '<input type="hidden" name="action" value="promote"><select name="choice" required aria-label="Robot file">%s</select>'
                 '<input name="folder" list="folders" value="Mechanisms" required aria-label="Library folder"><button class="primary">Add to library</button></form></section>') % (
-                    rows or '<tr><td colspan="2" class="muted">Empty so far.</td></tr>', token, options, token, sources or '<option value="">No robot files yet</option>')
+                    rows or '<tr><td colspan="2" class="muted">Empty so far.</td></tr>', token, options, token, sources or '<option value="">No robot files yet</option>'
+                )).replace('<!--frcdesign-->', self.frc_section(), 1)
+
+    def frc_section(self):
+        registry = frcdesign._registry()
+        imports = registry.get('imports', {}).values()
+        ready = sorted((e for e in imports if e.get('status') == 'ready'), key=lambda e: -e.get('completedAt', 0))
+        pending = [e for e in imports if e.get('status') == 'importing']
+        day = time.strftime('%Y-%m-%d', time.gmtime())
+        today = sum(1 for e in registry.get('exports', []) if e.get('day') == day)
+        configured = bool(os.environ.get('ONSHAPE_ACCESS_KEY')) and bool(os.environ.get('ONSHAPE_SECRET_KEY'))
+        rows = ''.join('<tr><td>%s<div class="muted">%s %s</div></td><td>%s</td><td><code>%s</code></td></tr>' % (
+            esc(e['name']), esc(e.get('vendor', '')), esc(e.get('partNumber', '')), esc(e.get('by', '')), esc(e['libraryPath']))
+            for e in ready[:15])
+        return ('<section><h2>FRCDesignLib imports</h2><p class="muted">Students search FRCDesignLib in SOLIDWORKS; the first person to use a part and '
+                'configuration imports it into <code>Library/FRCDesignLib</code>, and everyone after reuses it. Onshape export: %s. '
+                'Exports today: %d of %d. Imported so far: %d%s.</p><div class="scroll"><table><tr><th>Part</th><th>Imported by</th><th>Library file</th></tr>%s</table></div></section>') % (
+                    '<span class="ok">ready</span>' if configured else '<span class="bad">no Onshape key on the server</span>',
+                    today, frcdesign.DAILY_EXPORTS, len(ready), (', %d in progress' % len(pending)) if pending else '',
+                    rows or '<tr><td colspan="3" class="muted">Nothing imported yet.</td></tr>')
 
     def users_page(self, state):
         rows = ''

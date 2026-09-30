@@ -92,6 +92,20 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 - 🌐 **Season change with work outstanding:** with a saved-but-unsubmitted change in 2027, create and activate `2028-Robot`. The page notes your lock. 🧑 Open Robot keeps you on 2027 with an explanation → Submit → the next Open Robot switches you to 2028. Then 🌐 re-activate 2027 and delete 2028.
 - 🧑 **Shared PC:** sign in to Windows as a second user and install. That user's robot goes to `C:\Users\<them>\JOCO-ROBOS`, and they can't open the first user's `C:\JOCO-ROBOS`.
 
+## J. FRCDesignLib (new in 0.8)
+
+1. 🧑 Open the robot, select an assembly, and click **Edit**. In the panel, click the **Library** tab → type `bearing`. Results with small pictures appear as you type.
+2. 🧑 Click a simple non-configurable part (for example `120A Main Breaker`). You get a big picture, vendor, and part number. Click **Insert**.
+   - First time: "Preparing … (first time only)", then "Adding … to the team Library", and the part is inserted at the origin.
+   - Check that `C:\JOCO-ROBOS\Library\FRCDesignLib\Control System\120A Main Breaker.SLDPRT` exists, plus a copy in `2027-Robot\90_COTS\FRCDesignLib\Control System\`.
+   - Tell me whether SOLIDWORKS showed any import questions or diagnostics.
+3. 🧑 Insert the same part again: instant, no "Preparing".
+4. 🧑 Search `kraken` → **Kraken X44** → change **Back Cap Type** to *Standard*. **Include ReFire Board Case** appears only for *ReFire Powerpole*. Click Insert. It arrives as one part named `Kraken X44 Brushless Motor (Standard).SLDPRT`.
+5. 🧑 Save → **Submit**: the new files in `90_COTS` are listed as New.
+6. 🌐 **Library** tab: "FRCDesignLib imports" lists both parts with who imported them; exports today is 2.
+7. 🧑 As testkid, insert the Kraken with the same options. It comes from the Library (no export); the export count doesn't change.
+8. 🧑 Turn off the network and click Insert: a clear error, and nothing changes in the robot or Library.
+
 ## H. Failure cases
 
 27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.

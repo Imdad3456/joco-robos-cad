@@ -21,7 +21,8 @@ jobs:
       - name: Start a disposable server
         run: |
           mkdir -p "$RUNNER_TEMP/joco/data" "$RUNNER_TEMP/joco/config"
-          docker run -d --name joco-test -p 127.0.0.1:18091:80 \
+          # Fake FRCDesignLib catalog (unreachable URL + seeded cache), so CI never depends on frcdesign.org.
+          docker run -d --name joco-test -p 127.0.0.1:18091:80 -e JOCO_FRC_CATALOG=http://127.0.0.1:9/api \
             -v "$RUNNER_TEMP/joco/data:/var/lib/svn" -v "$RUNNER_TEMP/joco/config:/etc/joco" joco-svn:test
           for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:18091/ && break; sleep 1; done
           docker exec joco-test sh -c 'htpasswd -B -b /etc/joco/users mentor1 mentorpass123 &&

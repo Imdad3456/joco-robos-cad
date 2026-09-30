@@ -192,7 +192,11 @@ namespace JocoRobos.Cad
                 new KeyValuePair<string, Action>("Edit", Edit),
                 new KeyValuePair<string, Action>("Submit", Submit),
                 new KeyValuePair<string, Action>("Insert from Library", InsertFromLibrary),
-            }, RefreshStatus, InstallUpdate);
+            }, RefreshStatus, InstallUpdate, () =>
+            {
+                try { return CredentialStore.Read(); }
+                catch (Exception) { return null; }
+            }, InsertFromFrcDesign, InsertFromLibrary);
             pane.CreateControl();
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
@@ -1091,6 +1095,97 @@ namespace JocoRobos.Cad
                 Message("Inserted " + Path.GetFileName(copy) + ".\n\nIt was copied into your robot at:\n" + copy +
                     "\n\nMate it, save the assembly, and it will be included in your next Submit.");
             });
+        }
+
+        // ---------- FRCDesignLib ----------
+
+        // One click for the student. Behind it: reuse the team's Library copy if this exact part and configuration
+        // was imported before; otherwise download it once, import it natively in SOLIDWORKS, add it to the Library,
+        // then copy it into the robot and insert it like any Library part.
+        private void InsertFromFrcDesign(FrcItem item, Dictionary<string, string> configuration)
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
+                var library = catalog.Library;
+                if (library == null) throw new InvalidOperationException("The server has no team Library yet. Ask a mentor.");
+                var assemblyDoc = WritableRobotAssembly(catalog);
+                var client = new FrcClient(login);
+                var claim = OperationDialog.Run("Checking the team Library for " + item.Name + "…", () => client.Claim(item.Id, configuration));
+                if (claim.Status == "busy")
+                {
+                    Message(claim.Name + " is being prepared by " + claim.By + " right now. Try again in a minute; it will then insert straight from the team Library.");
+                    return;
+                }
+                string libraryFile = Path.Combine(library.Root, claim.LibraryPath.Replace('/', '\\'));
+                WorkspacePolicy.RequireInside(library.Root, libraryFile);
+                var librarySvn = new SvnWorkspace(login, library);
+                if (claim.Status == "ready")
+                {
+                    if (!File.Exists(libraryFile)) UpdateWorkspace(login, library);
+                    if (!File.Exists(libraryFile)) throw new InvalidOperationException("The team Library should have " + claim.LibraryPath + " but it didn't download. Click Update and try again.");
+                }
+                else
+                {
+                    if (!librarySvn.IsCheckedOut) UpdateWorkspace(login, library);
+                    ImportIntoLibrary(client, claim, item, library, libraryFile, login);
+                }
+                // The download may have taken a while: make sure the assembly is still open and ours to change.
+                if (!OpenDocuments().Any(d => ReferenceEquals(d, assemblyDoc)) || assemblyDoc.IsOpenedReadOnly())
+                    throw new InvalidOperationException(claim.Name + " is in the team Library now, but your assembly was closed or is no longer locked. " +
+                        "Open it, click Edit, and use Insert again (it will be instant).");
+                string copy = CopyFromLibrary(library, catalog.Robot, libraryFile);
+                AddToAssembly(assemblyDoc, copy);
+                Message("Inserted " + claim.Name + ".\n\nIt's in your robot at:\n" + copy + "\n\nMate it, save, and Submit.");
+            });
+        }
+
+        private void ImportIntoLibrary(FrcClient client, FrcClaim claim, FrcItem item, WorkspaceInfo library, string libraryFile, NetworkCredential login)
+        {
+            string staging = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "JocoRobos.Cad", "imports", claim.Fingerprint, "export.x_t");
+            bool saved = false, submitting = false;
+            try
+            {
+                OperationDialog.Run("Preparing " + claim.Name + " for the team (first time only)…", () => { client.Download(claim.Fingerprint, staging); return true; });
+                int errors = 0;
+                var imported = application.LoadFile4(staging, "r", null, ref errors) as ModelDoc2;
+                if (imported == null)
+                    throw new InvalidOperationException("SOLIDWORKS could not open the downloaded " + claim.Name + " (error " + errors + "). Nothing was inserted.");
+                try
+                {
+                    if (imported.GetType() != (int)swDocumentTypes_e.swDocPART)
+                        throw new InvalidOperationException(claim.Name + " came in as an assembly, which isn't supported yet. Nothing was inserted.");
+                    if (File.Exists(libraryFile))
+                        throw new InvalidOperationException("The team Library already has a file at " + libraryFile + ". Click Update and try again.");
+                    Directory.CreateDirectory(Path.GetDirectoryName(libraryFile));
+                    int saveErrors = 0, warnings = 0;
+                    saved = imported.Extension.SaveAs3(libraryFile, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
+                        (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, null, ref saveErrors, ref warnings) && File.Exists(libraryFile);
+                    if (!saved) throw new InvalidOperationException("Could not save " + claim.Name + " as a SOLIDWORKS part (error " + saveErrors + "). Nothing was inserted.");
+                }
+                finally
+                {
+                    application.CloseDoc(imported.GetTitle());
+                }
+                var svn = new SvnWorkspace(login, library);
+                var newItem = new SubmitItem { Kind = SubmitKind.New, Path = libraryFile, Workspace = library };
+                submitting = true; // From here, Submit's own interrupted-commit recovery owns the file.
+                OperationDialog.Run("Adding " + claim.Name + " to the team Library…", () => SvnWorkspace.Exclusive(() =>
+                    svn.Submit(new List<SubmitItem> { newItem }, "Import " + claim.Name + " from FRCDesignLib (" + item.Vendor + ")")));
+                OperationDialog.Run("Finishing…", () => { client.Complete(claim.Fingerprint); return true; });
+            }
+            catch
+            {
+                // Library and robot stay unchanged: remove an uncommitted save, release the reservation, keep the download for diagnosis.
+                if (saved && !submitting && File.Exists(libraryFile))
+                    try { File.Delete(libraryFile); } catch (IOException) { }
+                client.Abandon(claim.Fingerprint);
+                throw;
+            }
         }
 
         // Copies a library part (and an assembly's library parts) into the robot and points copied

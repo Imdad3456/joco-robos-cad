@@ -6,6 +6,7 @@ COPY pre-commit.py /opt/joco/pre-commit
 COPY pre-lock.py /opt/joco/pre-lock
 COPY pre-unlock.py /opt/joco/pre-unlock
 COPY joco.py /opt/joco/joco.py
+COPY frcdesign.py /opt/joco/frcdesign.py
 COPY entrypoint.sh /opt/joco/entrypoint.sh
 RUN chmod 755 /opt/joco/pre-* /opt/joco/joco.py /opt/joco/entrypoint.sh
 EXPOSE 80

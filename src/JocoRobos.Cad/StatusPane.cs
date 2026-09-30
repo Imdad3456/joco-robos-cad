@@ -36,7 +36,8 @@ namespace JocoRobos.Cad
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
             WrapContents = false, AutoScroll = true, Padding = new Padding(10) };
 
-        internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate)
+        internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate,
+            Func<System.Net.NetworkCredential> login, Action<FrcItem, Dictionary<string, string>> insertFrc, Action teamLibrary)
         {
             BackColor = SystemColors.Window;
             layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText));
@@ -63,7 +64,15 @@ namespace JocoRobos.Cad
             var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
             check.LinkClicked += (s, e) => refresh();
             layout.Controls.Add(check);
-            Controls.Add(layout);
+            // Robot: the existing status view. Library: FRCDesignLib search and the team Library.
+            var tabs = new TabControl { Dock = DockStyle.Fill };
+            var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
+            robotTab.Controls.Add(layout);
+            var libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
+            libraryTab.Controls.Add(new FrcLibraryPanel(login, insertFrc, teamLibrary) { Dock = DockStyle.Fill });
+            tabs.TabPages.Add(robotTab);
+            tabs.TabPages.Add(libraryTab);
+            Controls.Add(tabs);
             Show(new PaneState());
         }
 

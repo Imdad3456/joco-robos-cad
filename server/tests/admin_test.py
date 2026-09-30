@@ -227,4 +227,51 @@ sh('cd /tmp/u && svn up -q' + AUTH + ' && svn lock -q 10_Drivetrain/Gear.SLDPRT'
 s_, loc = post('/admin', {'action': 'create-season', 'name': '2030-Robot'})
 s_, loc = post('/admin', {'action': 'activate', 'name': '2030-Robot'}); check('still has 1 locked file' in loc and 'sarah' in loc, 'activate warns about outstanding locks ' + loc)
 post('/admin', {'action': 'activate', 'name': '2027-Robot'})
+# FRCDesignLib adapter with a seeded fake catalog (container runs with JOCO_FRC_CATALOG pointing nowhere)
+catalog = {'groupOrder': ['g1', 'g2'], 'groups': {'g1': {'name': 'Bearings'}, 'g2': {'name': 'Motors & Servos'}}, 'insertables': {
+    't-bearing': {'id': 't-bearing', 'name': 'Test Flanged Bearing', 'vendors': ['WCP'], 'groupId': 'g1', 'elementType': 'PARTSTUDIO',
+                  'isConfigurable': False, 'isVisible': True, 'documentId': 'd1', 'versionId': 'v1', 'elementId': 'e1', 'microversionId': 'm1',
+                  'largeThumbnailUrl': '/api/thumbnail/300x300/e1?v=m1', 'smallThumbnailUrl': '/api/thumbnail/70x40/e1?v=m1'},
+    't-motor': {'id': 't-motor', 'name': 'Test Motor', 'vendors': ['CTRE'], 'groupId': 'g2', 'elementType': 'ASSEMBLY',
+                'isConfigurable': True, 'isVisible': True, 'documentId': 'd2', 'versionId': 'v2', 'elementId': 'e2', 'microversionId': 'm2',
+                'largeThumbnailUrl': '/api/thumbnail/300x300/e2?v=m2'}}}
+config = {'parameters': [{'id': 'Cap', 'name': 'Back Cap', 'type': 'enum', 'default': 'Default', 'options': [{'id': 'Default', 'name': 'None'}, {'id': 'Std', 'name': 'Standard'}]},
+                         {'id': 'Case', 'name': 'Include Case', 'type': 'boolean', 'default': 'true', 'condition': {'type': 'equal', 'id': 'Cap', 'value': 'Std'}}],
+          'records': [{'partNumber': 'TM-1', 'configurationKey': ''}]}
+seed = {'catalog.json': json.dumps(catalog), 'config-t-motor-m2.json': json.dumps(config), 'thumb-e1-m1-300x300': 'GIF89a-fake'}
+for name, text in seed.items():
+    subprocess.run(['docker', 'exec', '-i', 'joco-test', 'sh', '-c', f"mkdir -p /var/lib/svn/.frcdesign && cat > '/var/lib/svn/.frcdesign/{name}' && chown -R www-data:www-data /var/lib/svn/.frcdesign"], input=text.encode())
+def frc(user, method, path, body=None, client='addin'):
+    r = urllib.request.Request(BASE + '/admin/api/frcdesign/' + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+    r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
+    if client: r.add_header('X-Joco-Client', client)
+    r.add_header('Content-Type', 'application/json')
+    try:
+        resp = urllib.request.urlopen(r); data = resp.read()
+        return resp.status, (json.loads(data) if resp.headers.get('Content-Type') == 'application/json' else data)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode(errors='replace')
+check(frc(U, 'GET', 'search?q=bearing', client=None)[0] == 403, 'FRCDesignLib API needs the add-in header')
+check(frc(P, 'GET', 'search?q=bearing')[0] == 403, 'publisher cannot use FRCDesignLib API')
+s_, body = frc(U, 'GET', 'search?q=bearing'); check(s_ == 200 and [r['name'] for r in body['results']] == ['Test Flanged Bearing'], 'search ' + str(body))
+s_, body = frc(U, 'GET', 'search?q=ctre'); check(s_ == 200 and body['results'][0]['kind'] == 'assembly', 'search by vendor')
+s_, body = frc(U, 'GET', 'item/t-motor'); check(s_ == 200 and body['parameters'][0]['id'] == 'Cap' and body['partNumber'] == 'TM-1', 'item details')
+check(body['choices'][1] == {'id': 'Case', 'name': 'Include Case', 'kind': 'boolean', 'default': 'true', 'options': [],
+                             'visibleWhen': {'mode': 'equals', 'id': 'Cap', 'value': 'Std'}}, 'choices in JOCO shape ' + str(body['choices']))
+check(frc(U, 'GET', 'item/../../etc/passwd')[0] in (400, 403, 404) and frc(U, 'GET', 'item/not-a-real-id')[0] == 404, 'unknown item refused')
+s_, body = frc(U, 'GET', 'thumb/t-bearing'); check(s_ == 200 and body.startswith(b'GIF89a'), 'thumbnail proxied from cache')
+s_, body = frc(U, 'POST', 'claim', {'id': 't-motor', 'configuration': {'Cap': 'Nope'}}); check(s_ == 400 and 'Invalid choice' in body, 'invalid configuration refused')
+s_, body = frc(U, 'POST', 'claim', {'id': 't-motor', 'configuration': {'Cap': 'Std'}})
+check(s_ == 200 and body['status'] == 'yours' and body['libraryPath'] == 'FRCDesignLib/Motors & Servos/Test Motor (Standard).SLDPRT', 'claim configured motor ' + str(body))
+s_, body = frc(U, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'yours' and body['libraryPath'] == 'FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT', 'claim bearing')
+fp = body['fingerprint']
+s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'busy' and body['by'] == 'sarah', 'second student sees busy')
+s_, body = frc(M, 'GET', 'download/' + fp); check(s_ == 409, 'only the claimant can download')
+s_, body = frc(U, 'GET', 'download/' + fp); check(s_ == 503 and 'not set up' in body, 'no Onshape key: clear message, no export')
+s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp}); check(s_ == 409 and 'Submit it first' in body, 'complete requires the Library file')
+sh('rm -rf /tmp/lib2 && svn co -q http://localhost/svn/Library /tmp/lib2' + AUTH + ' && mkdir -p "/tmp/lib2/FRCDesignLib/Bearings" && printf part > "/tmp/lib2/FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && cd /tmp/lib2 && svn add -q --parents "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ps -q svn:needs-lock "*" "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ps -q svn:mime-type application/octet-stream "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ci -q -m "Import from FRCDesignLib"' + AUTH)
+s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp}); check(s_ == 200 and body['status'] == 'ready', 'complete after Library submit ' + str(body))
+s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'ready' and body['libraryPath'].endswith('Test Flanged Bearing.SLDPRT'), 'next student reuses the Library copy')
+page = req('/admin/library', *M)[2]; check('FRCDesignLib imports' in page and 'Test Flanged Bearing' in page and 'no Onshape key' in page, 'mentor sees FRCDesignLib imports')
+s_, body = frc(U, 'POST', 'abandon', {'fingerprint': 'nothing'}); check(s_ == 200, 'abandon is harmless')
 print(f'PASS: {n} server/admin checks')
