@@ -31,15 +31,16 @@ namespace JocoRobos.Cad
             if (login != null)
                 request.Headers[HttpRequestHeader.Authorization] = "Basic " + Convert.ToBase64String(Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
             byte[] body = Encoding.UTF8.GetBytes(json);
-            using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
             try
             {
+                using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
                 using (request.GetResponse()) { }
             }
             catch (WebException exception)
             {
-                var response = exception.Response as HttpWebResponse;
-                if (response == null) throw new InvalidOperationException("Can't reach the CAD server. Check your internet connection.", exception);
+                string problem = NetworkProblem.Describe(exception);
+                if (problem != null) throw new InvalidOperationException(problem, exception);
+                var response = (HttpWebResponse)exception.Response;
                 using (response)
                 using (var reader = new StreamReader(response.GetResponseStream()))
                 {

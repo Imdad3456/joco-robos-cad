@@ -246,14 +246,14 @@ namespace JocoRobos.Cad
             if (token != null) request.Headers["X-Joco-Token"] = token;
             request.Headers[HttpRequestHeader.Authorization] = "Basic " +
                 Convert.ToBase64String(Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
-            if (body != null)
-            {
-                request.ContentType = "application/json";
-                request.ContentLength = body.Length;
-                using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
-            }
             try
             {
+                if (body != null)
+                {
+                    request.ContentType = "application/json";
+                    request.ContentLength = body.Length;
+                    using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
+                }
                 using (var response = (HttpWebResponse)request.GetResponse())
                 using (var stream = response.GetResponseStream())
                 using (var buffer = new MemoryStream())
@@ -264,9 +264,9 @@ namespace JocoRobos.Cad
             }
             catch (WebException exception)
             {
-                var response = exception.Response as HttpWebResponse;
-                if (response == null)
-                    throw new InvalidOperationException("FRCDesignLib isn't available right now (can't reach the CAD server). Your robot was not changed.", exception);
+                string problem = NetworkProblem.Describe(exception);
+                if (problem != null) throw new InvalidOperationException("FRCDesignLib isn't available: " + problem + " Your robot was not changed.", exception);
+                var response = (HttpWebResponse)exception.Response;
                 using (response)
                 using (var reader = new StreamReader(response.GetResponseStream()))
                 {

@@ -171,6 +171,10 @@ namespace JocoRobos.Cad
             {
                 throw new InvalidOperationException("The server did not accept your CAD username or password.");
             }
+            catch (WebException exception) when (NetworkProblem.Describe(exception) != null)
+            {
+                throw new InvalidOperationException(NetworkProblem.Describe(exception), exception);
+            }
         }
 
         internal static Catalog Parse(Stream stream)
@@ -223,6 +227,51 @@ namespace JocoRobos.Cad
                 using (var key = Registry.CurrentUser.CreateSubKey(SettingsKey))
                     key.SetValue("Robot", value ?? "", RegistryValueKind.String);
             }
+        }
+    }
+
+    /// <summary>
+    /// Plain-language reasons a connection to the CAD server failed. School networks are the usual cause: filters that block
+    /// the name, drop the connection, redirect to a block page, or inspect HTTPS with their own certificate.
+    /// </summary>
+    internal static class NetworkProblem
+    {
+        internal static string Describe(WebException exception)
+        {
+            string host = WorkspaceInfo.Server.Host;
+            var response = exception.Response as HttpWebResponse;
+            if (response != null)
+            {
+                string location = response.Headers[HttpResponseHeader.Location];
+                Uri target;
+                if ((int)response.StatusCode >= 300 && (int)response.StatusCode < 400 && Uri.TryCreate(location ?? "", UriKind.Absolute, out target) &&
+                    !String.Equals(target.Host, host, StringComparison.OrdinalIgnoreCase))
+                    return "This network sent you to " + target.Host + " instead of " + host + ", probably a web filter's block page. " + Advice(host);
+                return null; // The server answered; the caller explains its reply.
+            }
+            switch (exception.Status)
+            {
+                case WebExceptionStatus.NameResolutionFailure:
+                    return "This network can't find " + host + ". It's probably blocking it (school networks often do), or there's no internet. " + Advice(host);
+                case WebExceptionStatus.TrustFailure:
+                case WebExceptionStatus.SecureChannelFailure:
+                    return "This network is interfering with the secure connection to " + host + ". School web filters that inspect HTTPS do this. " + Advice(host);
+                case WebExceptionStatus.Timeout:
+                    return host + " didn't answer in time. This network may be blocking it, or the server is down. " + Advice(host);
+                case WebExceptionStatus.ConnectFailure:
+                case WebExceptionStatus.ConnectionClosed:
+                case WebExceptionStatus.ReceiveFailure:
+                case WebExceptionStatus.SendFailure:
+                case WebExceptionStatus.KeepAliveFailure:
+                    return "The connection to " + host + " was refused or cut off. There's no internet, or this network blocks it. " + Advice(host);
+                default:
+                    return "Can't reach " + host + " (" + exception.Status + ": " + exception.Message + "). " + Advice(host);
+            }
+        }
+
+        private static string Advice(string host)
+        {
+            return "Try another network (home Wi-Fi or a phone hotspot), or ask the network's IT to allow " + host + ".";
         }
     }
 }

@@ -194,6 +194,10 @@ namespace JocoRobos.Cad
             {
                 ErrorLog.Write("command", exception);
                 string text = exception.Message;
+                // SVN's own wording when a school filter swaps in its HTTPS certificate.
+                if (text.IndexOf("certificate", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("verif", StringComparison.OrdinalIgnoreCase) >= 0)
+                    text = "This network is interfering with the secure connection to " + WorkspaceInfo.Server.Host + " (school web filters that inspect HTTPS do this). " +
+                        "Try another network (home Wi-Fi or a phone hotspot), or ask the network's IT to allow it.\n\nDetails: " + text;
                 bool login = text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     text.IndexOf("authoriz", StringComparison.OrdinalIgnoreCase) >= 0 || text.Contains("401");
                 Message(text + (login ? "\n\nIf your password changed, use Tools → JOCO ROBOS CAD → Sign In." : ""), MessageBoxIcon.Error);
