@@ -83,7 +83,9 @@ namespace JocoRobos.Cad
         private readonly FlowLayoutPanel issuePanel = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false,
             AutoScroll = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8) };
         private readonly ListView files = new ListView { View = View.Details, CheckBoxes = true, FullRowSelect = true, ShowGroups = true,
-            HeaderStyle = ColumnHeaderStyle.Nonclickable, Dock = DockStyle.Fill, MultiSelect = false };
+            HeaderStyle = ColumnHeaderStyle.Nonclickable, Dock = DockStyle.Fill, MultiSelect = false,
+            // Set here, never later: changing it after items are added rebuilds the list and drops its checkboxes and groups.
+            ShowItemToolTips = true };
         private readonly ListViewGroup changedGroup = new ListViewGroup("Changed");
         private readonly ListViewGroup newGroup = new ListViewGroup("New");
         private readonly ListViewGroup releaseGroup = new ListViewGroup("Release lock (unchanged)");
@@ -296,7 +298,6 @@ namespace JocoRobos.Cad
                     files.Items.Add(row);
                     if (extra.Length > 0) row.SubItems[2].ForeColor = SystemColors.GrayText;
                 }
-                files.ShowItemToolTips = true;
                 foreach (var pair in new[] { Tuple.Create(changedGroup, "Changed"), Tuple.Create(newGroup, "New"), Tuple.Create(releaseGroup, "Release lock (unchanged)") })
                     pair.Item1.Header = pair.Item2 + " (" + pair.Item1.Items.Count + ")";
             }
