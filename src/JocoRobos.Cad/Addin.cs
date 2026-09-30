@@ -1865,14 +1865,20 @@ namespace JocoRobos.Cad
             bool wasOpen = OpenDocuments().Any(d => String.Equals(d.GetPathName(), path, StringComparison.OrdinalIgnoreCase));
             int errors = 0, warnings = 0;
             int type = path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY : (int)swDocumentTypes_e.swDocPART;
-            // SOLIDWORKS requires the component to be loaded before AddComponent5.
-            var component = application.OpenDoc6(path, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+            // SOLIDWORKS requires the component to be loaded before AddComponent5. Loaded without a window: opening and closing
+            // one would leave SOLIDWORKS showing whatever window was behind it (often the whole robot) instead of this assembly.
+            if (!wasOpen) application.DocumentVisible(false, type);
+            ModelDoc2 component;
+            try { component = application.OpenDoc6(path, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings); }
+            finally { if (!wasOpen) application.DocumentVisible(true, type); }
             if (component == null) throw new InvalidOperationException("SOLIDWORKS could not open " + Path.GetFileName(path) + " (error " + errors + "). It is copied into the robot; insert it manually.");
             int activateErrors = 0;
             application.ActivateDoc3(assemblyDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
             var added = ((AssemblyDoc)assemblyDoc).AddComponent5(path, (int)swAddComponentConfigOptions_e.swAddComponentConfigOptions_CurrentSelectedConfig,
                 "", false, "", 0, 0, 0);
             if (!wasOpen) application.CloseDoc(component.GetTitle());
+            // Whatever happened above, end on the assembly the part went into.
+            application.ActivateDoc3(assemblyDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
             if (added == null) throw new InvalidOperationException(Path.GetFileName(path) + " is copied into the robot, but SOLIDWORKS could not insert it. Drag it in from:\n" + path);
         }
 
