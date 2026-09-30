@@ -43,4 +43,18 @@ item = {'id': 'x', 'name': 'A' * 200, 'groupId': 'g', 'microversionId': 'm'}
 f._catalog.update(data={'groups': {'g': {'name': 'G' * 100}}, 'insertables': {}}, loaded=1e18)
 path = f.library_path(item, params, {'Size': 'XL', 'Bore': 'Big'}, 'abcdef123456')
 check(len(path) <= 13 + 40 + 1 + 72 + 7 and path.endswith('.SLDPRT'), 'library path stays short: %d chars' % len(path))
-print('PASS: %d FRCDesignLib configuration checks' % n)
+# Two downloads of the same part at once (a retry while the first export is still running): one Onshape export.
+import threading, time as _time
+f.CACHE = tempfile.mkdtemp()
+calls = []
+def slow_export(item, configuration):
+    calls.append(1); _time.sleep(0.3); return b'PARASOLID-data'
+f.export_part_studio = slow_export
+f._catalog.update(data={'groups': {'g': {'name': 'G'}}, 'insertables': {'p1': {'id': 'p1', 'name': 'Part', 'elementType': 'PARTSTUDIO', 'microversionId': 'm'}}}, loaded=1e18)
+f._save({'imports': {'fp1': {'status': 'importing', 'token': 't', 'insertable': 'p1', 'configuration': {}, 'name': 'Part', 'elementType': 'PARTSTUDIO'}}, 'exports': []})
+results = []
+threads = [threading.Thread(target=lambda: results.append(f.download('sam', 'fp1', 't'))) for _ in range(3)]
+[t.start() for t in threads]; [t.join() for t in threads]
+check(len(calls) == 1 and len(results) == 3 and all(r[0] == b'PARASOLID-data' for r in results), 'same part exported once for concurrent downloads (%d exports)' % len(calls))
+check(not [x for x in os.listdir(f.CACHE) if x.endswith('.part') or x.endswith('.tmp')], 'no temporary files left behind')
+print('PASS: %d FRCDesignLib configuration and export checks' % n)

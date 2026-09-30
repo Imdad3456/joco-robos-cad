@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import tempfile
 import threading
 import time
 import urllib.error
@@ -35,6 +36,7 @@ ANNUAL_CALLS = int(os.environ.get('JOCO_ONSHAPE_ANNUAL_CALLS', '2300'))
 CALLS_PER_EXPORT = {'PARTSTUDIO': 2, 'ASSEMBLY': 10}  # Worst case, checked before starting an export.
 _lock = threading.Lock()
 _registry_lock = threading.RLock()  # Every read-modify-write of frcdesign.json.
+_export_locks = {}  # One lock per fingerprint: the same part is never exported twice at once.
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -127,15 +129,14 @@ def search(query, limit=40):
 def details(insertable_id):
     item = _item(insertable_id)
     result = summary(item)
-    result['parameters'] = []
-    if item.get('isConfigurable'):
-        raw = _cached('config-%s-%s.json' % (insertable_id, item['microversionId']),
-                      lambda: _get('%s/configuration/insertable/%s?v=%s' % (CATALOG_BASE, insertable_id, item['microversionId']))[0])
-        config = json.loads(raw)
-        result['parameters'] = [p for p in config.get('parameters', []) if not p.get('isCosmetic')]
-        result['choices'] = [_choice(p) for p in result['parameters']]
-        records = config.get('records') or []
-        result['partNumber'] = next((r.get('partNumber') for r in records if r.get('partNumber')), '')
+    # Fetched for every item (cached): non-configurable parts have no parameters but still carry their part number.
+    raw = _cached('config-%s-%s.json' % (insertable_id, item['microversionId']),
+                  lambda: _get('%s/configuration/insertable/%s?v=%s' % (CATALOG_BASE, insertable_id, item['microversionId']))[0])
+    config = json.loads(raw)
+    result['parameters'] = [p for p in config.get('parameters', []) if not p.get('isCosmetic')] if item.get('isConfigurable') else []
+    result['choices'] = [_choice(p) for p in result['parameters']]
+    records = config.get('records') or []
+    result['partNumber'] = next((r.get('partNumber') for r in records if r.get('partNumber')), '')
     return result
 
 
@@ -503,33 +504,42 @@ def download(user, fp, token):
     entry = _entry(fp, token)
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, 'export-%s.x_t' % fp)
-    if not os.path.exists(path):
-        with _registry_lock:
-            registry = _registry()
-            day = time.strftime('%Y-%m-%d', time.gmtime())
-            today = [e for e in registry.get('exports', []) if e.get('day') == day]
-            if len(today) >= DAILY_EXPORTS:
-                raise FrcError('The team has used today\'s FRCDesignLib imports. Try again tomorrow, or ask a mentor.', 429)
-            if sum(1 for e in today if e.get('by') == user) >= USER_DAILY_EXPORTS:
-                raise FrcError('You\'ve imported a lot of new parts today. Try again tomorrow.', 429)
-            if calls_this_year() + CALLS_PER_EXPORT.get(entry.get('elementType'), 10) > ANNUAL_CALLS:
-                raise FrcError('The team\'s Onshape allowance for this year is almost used up, so new FRCDesignLib parts can\'t be '
-                               'imported. Parts already in the team Library still work. Ask a mentor.', 429)
-        item = _item(entry['insertable'])
-        export = export_assembly if item.get('elementType') == 'ASSEMBLY' else export_part_studio
-        data = export(item, entry['configuration'])  # Slow: outside the lock.
-        with open(path + '.tmp', 'wb') as handle:
-            handle.write(data)
-        os.replace(path + '.tmp', path)
-        with _registry_lock:
-            registry = _registry()
-            registry.setdefault('exports', []).append({'day': time.strftime('%Y-%m-%d', time.gmtime()), 'by': user, 'fingerprint': fp})
-            registry['exports'] = registry['exports'][-500:]
-            if fp in registry['imports']:
-                registry['imports'][fp]['neutralSha256'] = hashlib.sha256(data).hexdigest()
-            _save(registry)
+    with _registry_lock:
+        export_lock = _export_locks.setdefault(fp, threading.Lock())
+    with export_lock:  # A retry waits for a running export of the same part, then reuses its file.
+        if not os.path.exists(path):
+            _export(user, fp, entry, path)
     with open(path, 'rb') as handle:
         return handle.read(), entry['name'] + '.x_t'
+
+
+def _export(user, fp, entry, path):
+    """One Onshape export within the daily and yearly limits; callers hold the fingerprint's export lock."""
+    with _registry_lock:
+        registry = _registry()
+        day = time.strftime('%Y-%m-%d', time.gmtime())
+        today = [e for e in registry.get('exports', []) if e.get('day') == day]
+        if len(today) >= DAILY_EXPORTS:
+            raise FrcError('The team has used today\'s FRCDesignLib imports. Try again tomorrow, or ask a mentor.', 429)
+        if sum(1 for e in today if e.get('by') == user) >= USER_DAILY_EXPORTS:
+            raise FrcError('You\'ve imported a lot of new parts today. Try again tomorrow.', 429)
+        if calls_this_year() + CALLS_PER_EXPORT.get(entry.get('elementType'), 10) > ANNUAL_CALLS:
+            raise FrcError('The team\'s Onshape allowance for this year is almost used up, so new FRCDesignLib parts can\'t be '
+                           'imported. Parts already in the team Library still work. Ask a mentor.', 429)
+    item = _item(entry['insertable'])
+    export = export_assembly if item.get('elementType') == 'ASSEMBLY' else export_part_studio
+    data = export(item, entry['configuration'])  # Slow: outside the registry lock.
+    fd, temp = tempfile.mkstemp(dir=CACHE, prefix='export-', suffix='.part')  # Unique per export.
+    with os.fdopen(fd, 'wb') as handle:
+        handle.write(data)
+    os.replace(temp, path)
+    with _registry_lock:
+        registry = _registry()
+        registry.setdefault('exports', []).append({'day': time.strftime('%Y-%m-%d', time.gmtime()), 'by': user, 'fingerprint': fp})
+        registry['exports'] = registry['exports'][-500:]
+        if fp in registry['imports']:
+            registry['imports'][fp]['neutralSha256'] = hashlib.sha256(data).hexdigest()
+        _save(registry)
 
 
 def complete(user, fp, token=''):

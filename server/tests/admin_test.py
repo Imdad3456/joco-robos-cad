@@ -274,7 +274,8 @@ catalog = {'groupOrder': ['g1', 'g2'], 'groups': {'g1': {'name': 'Bearings'}, 'g
 config = {'parameters': [{'id': 'Cap', 'name': 'Back Cap', 'type': 'enum', 'default': 'Default', 'options': [{'id': 'Default', 'name': 'None'}, {'id': 'Std', 'name': 'Standard'}]},
                          {'id': 'Case', 'name': 'Include Case', 'type': 'boolean', 'default': 'true', 'condition': {'type': 'equal', 'id': 'Cap', 'value': 'Std'}}],
           'records': [{'partNumber': 'TM-1', 'configurationKey': ''}]}
-seed = {'catalog.json': json.dumps(catalog), 'config-t-motor-m2.json': json.dumps(config), 'thumb-e1-m1-300x300': 'GIF89a-fake'}
+seed = {'catalog.json': json.dumps(catalog), 'config-t-motor-m2.json': json.dumps(config), 'thumb-e1-m1-300x300': 'GIF89a-fake',
+        'config-t-bearing-m1.json': json.dumps({'parameters': [], 'records': [{'partNumber': 'WCP-0001', 'configurationKey': ''}]})}
 for name, text in seed.items():
     subprocess.run(['docker', 'exec', '-i', 'joco-test', 'sh', '-c', f"mkdir -p /var/lib/svn/.frcdesign && cat > '/var/lib/svn/.frcdesign/{name}' && chown -R www-data:www-data /var/lib/svn/.frcdesign"], input=text.encode())
 def frc(user, method, path, body=None, client='addin', token=None):
@@ -292,6 +293,7 @@ check(frc(U, 'GET', 'search?q=bearing', client=None)[0] == 403, 'FRCDesignLib AP
 check(frc(P, 'GET', 'search?q=bearing')[0] == 403, 'publisher cannot use FRCDesignLib API')
 s_, body = frc(U, 'GET', 'search?q=bearing'); check(s_ == 200 and [r['name'] for r in body['results']] == ['Test Flanged Bearing'], 'search ' + str(body))
 s_, body = frc(U, 'GET', 'search?q=ctre'); check(s_ == 200 and body['results'][0]['kind'] == 'assembly', 'search by vendor')
+s_, b2 = frc(U, 'GET', 'item/t-bearing'); check(s_ == 200 and b2['partNumber'] == 'WCP-0001' and b2['choices'] == [], 'non-configurable part shows its part number')
 s_, body = frc(U, 'GET', 'item/t-motor'); check(s_ == 200 and body['parameters'][0]['id'] == 'Cap' and body['partNumber'] == 'TM-1', 'item details')
 check(body['choices'][1] == {'id': 'Case', 'name': 'Include Case', 'kind': 'boolean', 'default': 'true', 'options': [],
                              'visibleWhen': {'mode': 'equals', 'id': 'Cap', 'value': 'Std'}, 'optionRules': []}, 'choices in JOCO shape ' + str(body['choices']))
