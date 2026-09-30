@@ -61,7 +61,12 @@ out = svn('svn lock -m edit /tmp/wc/10_Drivetrain/Plate.SLDPRT'); check(out.retu
 s, _, b = req('/admin/locks', *M); check('Plate.SLDPRT' in b and 'sarah' in b, 'lock listed')
 # Archive refused while active / locked
 s, loc = post('/admin', {'action': 'archive', 'name': '2028-Robot'}); check('Make another season active' in loc, 'cannot archive active')
-s, loc = post('/admin/locks', {'action': 'release-lock', 'repo': '2028-Robot', 'path': '/10_Drivetrain/Plate.SLDPRT'}); check('ok=Released' in loc, 'release lock ' + loc)
+s, loc = post('/admin/locks', {'action': 'release-lock', 'repo': '2028-Robot', 'path': '/10_Drivetrain/Plate.SLDPRT'}); check('Tick the box' in loc, 'release needs confirming ' + loc)
+s, loc = post('/admin/locks', {'action': 'release-lock', 'repo': '2028-Robot', 'path': '/10_Drivetrain/Plate.SLDPRT', 'confirmed': '1'}); check('ok=Released' in loc, 'release lock ' + loc)
+# The team's approved SOLIDWORKS version reaches the add-in through the catalog.
+s, loc = post('/admin/addin', {'action': 'set-solidworks', 'year': '26'}); check('like 2026' in loc, 'bad SOLIDWORKS year refused')
+s, loc = post('/admin/addin', {'action': 'set-solidworks', 'year': '2026'}); check('SOLIDWORKS version: 2026' in loc, 'set approved SOLIDWORKS ' + loc)
+check(__import__('json').loads(req('/catalog.json', 'sarah', 'sarahpass123')[2])['solidworks'] == '2026', 'catalog carries the approved version')
 check('Plate.SLDPRT' not in req('/admin/locks', *M)[2], 'lock gone')
 # Library upload (multipart) and promote
 boundary = uuid.uuid4().hex

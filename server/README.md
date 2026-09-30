@@ -90,4 +90,15 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v19`; earlier tags (`v18` … `initial`) are rollback images.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v20`; earlier tags (`v19` … `initial`) are rollback images.
+
+## Restore drill (prove the backups work)
+
+```sh
+# On the Deck, newest Deck backup:
+sh ~/server/joco-cad/source/restore-drill.sh "$(ls -1d ~/server/joco-cad/backups/2*/ | tail -1)" --report
+# On the off-device computer, newest pulled copy:
+sh server/restore-drill.sh "$(ls -1d ~/Backups/joco-cad/2*/ | tail -1)" --report
+```
+
+It copies the backup to a temporary folder, starts a throwaway server from it on a spare local port, verifies every repository, reads every file back, checks history, locks, accounts and settings, then deletes the copy. The live server is never touched. `--report` shows the result on the mentor page's Health panel.

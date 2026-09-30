@@ -193,6 +193,7 @@ namespace JocoRobos.Cad
             {
                 var outside = new List<string>();
                 var library = new List<string>();
+                var missing = new List<string>();
                 foreach (string reference in input.References(item.Path).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     string resolved = Resolve(reference, item.Path, names(item.Workspace), input.TempFolder);
@@ -200,7 +201,10 @@ namespace JocoRobos.Cad
                     {
                         // Imported (3D Interconnect) or virtual data that only lives in SOLIDWORKS' temp folder.
                         if (WorkspacePolicy.IsTemporary(reference, input.TempFolder)) temporary.Add(Path.GetFileName(reference));
-                        continue; // Otherwise missing here too; Submit doesn't make that worse.
+                        // Not anywhere SOLIDWORKS will look: teammates would see it missing. Only CAD files: design tables,
+                        // decals, and similar aren't synced by JOCO (a documented limit).
+                        else if (WorkspacePolicy.IsCad(reference)) missing.Add(reference);
+                        continue;
                     }
                     if (!item.Workspace.Contains(resolved))
                     {
@@ -214,6 +218,15 @@ namespace JocoRobos.Cad
                         users.Add(item.Name);
                     }
                 }
+                string missingKey = "missing:" + item.Path;
+                if (missing.Count > 0 && !input.Acknowledged.Contains(missingKey))
+                    issues.Add(new SubmitIssue { Level = IssueLevel.Blocking, Key = missingKey,
+                        Title = item.Name + " uses " + (missing.Count == 1 ? "a file that isn't" : missing.Count + " files that aren't") + " on this computer",
+                        Description = String.Join("\n", missing.Take(4).Select(p => "   " + Path.GetFileName(p) + "  (was at " + Path.GetDirectoryName(p) + ")")) +
+                            (missing.Count > 4 ? "\n   …and " + (missing.Count - 4) + " more" : "") +
+                            "\nTeammates would see " + (missing.Count == 1 ? "it" : "them") + " as missing too. Find the file and copy it into the robot (File → Open " + item.Name +
+                            " shows what SOLIDWORKS can't find), or remove that component. If it really isn't needed, Submit anyway.",
+                        Files = { item.Path }, Actions = { IssueAction.SubmitAnyway } });
                 if (outside.Count + library.Count == 0) continue;
                 bool importable = !item.Workspace.IsLibrary && item.Path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase);
                 var lines = outside.Take(4).Select(p => "   " + Path.GetFileName(p) + "  (" + Path.GetDirectoryName(p) + ")")

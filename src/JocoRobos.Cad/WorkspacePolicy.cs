@@ -112,7 +112,7 @@ namespace JocoRobos.Cad
             string relative = full.Length == fullRoot.Length ? "" : full.Substring(prefix.Length);
             foreach (string segment in relative.Split(Path.DirectorySeparatorChar))
                 if (segment.Equals(".svn", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("SVN metadata cannot be edited as CAD.");
+                    throw new InvalidOperationException("That's JOCO's own bookkeeping folder, not CAD.");
             // Reject junctions/symlinks, including the workspace's ancestors.
             string cursor = full;
             while (!String.IsNullOrEmpty(cursor))
@@ -123,6 +123,28 @@ namespace JocoRobos.Cad
                 cursor = Path.GetDirectoryName(cursor);
             }
             return full;
+        }
+
+        /// <summary>SOLIDWORKS' revision number ("34.1.0") as its version year (2026); 0 if unknown.</summary>
+        internal static int SolidWorksYear(string revisionNumber)
+        {
+            int major;
+            string first = (revisionNumber ?? "").Split('.')[0];
+            return Int32.TryParse(first, out major) && major >= 20 && major < 100 ? 1992 + major : 0;
+        }
+
+        /// <summary>
+        /// Why this SOLIDWORKS must not change team CAD, or null. A newer SOLIDWORKS saves files the team's version can't open;
+        /// an older one can't open what the team saved. No approved version (or an unknown one here) means no restriction.
+        /// </summary>
+        internal static string SolidWorksProblem(int mine, string approved)
+        {
+            int team;
+            if (mine == 0 || !Int32.TryParse(approved ?? "", out team) || team == mine) return null;
+            return mine > team
+                ? "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Files saved here couldn't be opened by everyone else, " +
+                  "so you can look at the robot but not edit or submit it. Use SOLIDWORKS " + team + ", or ask a mentor (the team upgrades together)."
+                : "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Update SOLIDWORKS to " + team + " to edit and submit.";
         }
 
         internal static bool OwnsLock(string user, string localToken, string remoteToken, string owner)

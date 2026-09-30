@@ -14,6 +14,18 @@ namespace JocoRobos.Cad
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "errors.log"); }
         }
 
+        /// <summary>Records operations that took long enough for a student to notice (SOLIDWORKS looked stuck).</summary>
+        internal static void Slow(string what, long milliseconds, long threshold)
+        {
+            if (milliseconds < threshold) return;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+                File.AppendAllText(FilePath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + Updater.Current + "  slow: " + what + " took " + milliseconds + " ms\r\n\r\n");
+            }
+            catch (Exception) { }
+        }
+
         internal static void Write(string where, Exception exception)
         {
             try

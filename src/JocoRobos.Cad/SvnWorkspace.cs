@@ -55,26 +55,26 @@ namespace JocoRobos.Cad
         {
             SvnInfoEventArgs info;
             if (!client.GetInfo(target, out info) || info == null)
-                throw new InvalidOperationException("Could not confirm SVN file information.");
+                throw new InvalidOperationException("Couldn't read the team's information about this file. Check the connection and try again.");
             return info;
         }
 
         private void RequireIdentity(SvnInfoEventArgs info)
         {
             if (info.RepositoryId != Info.Id)
-                throw new InvalidOperationException(Info.Label + " on the server does not match the expected repository. Ask a mentor to check the server.");
+                throw new InvalidOperationException(Info.Label + " on the server isn't the one this computer expects. Ask a mentor to check the server.");
         }
 
         private void RequireWorkspace(SvnClient client)
         {
             WorkspacePolicy.RequireInside(Root, Root);
             if (!IsCheckedOut)
-                throw new InvalidOperationException("Click Update first to download " + Info.Label + ".");
+                throw new InvalidOperationException("Click Open Robot first to download " + Info.Label + ".");
             var info = GetInfo(client, new SvnPathTarget(Root));
             RequireIdentity(info);
             if (!SameUri(info.Uri, Repository) ||
                 !String.Equals(Path.GetFullPath(client.GetWorkingCopyRoot(Root)).TrimEnd('\\'), Root, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The local folder belongs to a different SVN working copy:\n" + Root);
+                throw new InvalidOperationException("This folder is linked to a different team robot, so JOCO won't touch it. Ask a mentor:\n" + Root);
         }
 
         private static bool SameUri(Uri a, Uri b)
@@ -128,7 +128,7 @@ namespace JocoRobos.Cad
                 if (!IsCheckedOut)
                 {
                     if (File.Exists(Root) || (Directory.Exists(Root) && Directory.EnumerateFileSystemEntries(Root).Any()))
-                        throw new InvalidOperationException("This folder already contains files but is not an SVN workspace.\n" +
+                        throw new InvalidOperationException("This folder already has files that JOCO didn't download.\n" +
                             "Move it to a safe backup location first. It will not be overwritten.\n" + Root);
                     Directory.CreateDirectory(Path.GetDirectoryName(Root));
                     client.CheckOut(Repository, Root, new SvnCheckOutArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
@@ -161,7 +161,7 @@ namespace JocoRobos.Cad
                 var local = GetInfo(client, new SvnPathTarget(path));
                 RequireIdentity(local);
                 Uri expected = UrlFor(path);
-                if (!SameUri(local.Uri, expected)) throw new InvalidOperationException("This file was switched to another repository location.");
+                if (!SameUri(local.Uri, expected)) throw new InvalidOperationException("This file is linked somewhere unexpected. Ask a mentor.");
                 var remote = GetInfo(client, new SvnUriTarget(expected));
                 if (WorkspacePolicy.OwnsLock(login.UserName, local.Lock?.Token, remote.Lock?.Token, remote.Lock?.Owner))
                     return login.UserName;
@@ -172,7 +172,7 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("Locked by " + remote.Lock.Owner + ". You can inspect this file, but cannot edit it.");
                 RequireClean(status);
                 if (local.LastChangeRevision != remote.LastChangeRevision)
-                    throw new InvalidOperationException("This file has a newer server revision. Close the CAD documents and click Update before Edit.");
+                    throw new InvalidOperationException("A teammate submitted a newer version of this file. Close your robot documents to get it (or use Close & Update in the panel), then Edit.");
                 string needsLock;
                 client.GetProperty(new SvnPathTarget(path), "svn:needs-lock", out needsLock);
                 if (needsLock == null) throw new InvalidOperationException("This file is missing its lock policy. Ask a mentor to repair it.");
@@ -186,6 +186,29 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("The server changed during locking. Your lock is retained; close documents and Update before Edit.");
                 return login.UserName;
             }
+        }
+
+        /// <summary>Recent submits that changed this file, newest first (server read only).</summary>
+        internal List<FileVersion> History(string path, int limit)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            var versions = new List<FileVersion>();
+            using (var client = Client())
+                client.Log(UrlFor(path), new SvnLogArgs { Limit = limit }, (s, e) => versions.Add(new FileVersion
+                {
+                    Revision = e.Revision, Author = e.Author ?? "", Time = e.Time.ToLocalTime(), Comment = (e.LogMessage ?? "").Trim(),
+                }));
+            return versions;
+        }
+
+        /// <summary>Saves an older version of a team file as a separate copy (never into the live robot).</summary>
+        internal void SaveVersion(string path, long revision, string target)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            using (var client = Client())
+            using (var output = File.Create(target))
+                client.Write(new SvnUriTarget(UrlFor(path), revision), output);
+            File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
         }
 
         /// <summary>True for a file the team doesn't have yet (not versioned, or only scheduled to be added). Local only.</summary>
@@ -252,12 +275,17 @@ namespace JocoRobos.Cad
                         // your own submit from another computer still has to come down to this one.
                         if (e.ChangedPaths == null || e.ChangedPaths.Count == 0 || e.ChangedPaths.All(c => AlreadyHere(c, e.Revision, here))) return;
                         string who = e.Author == login.UserName ? "you (another computer)" : e.Author;
-                        snapshot.Incoming.Add("r" + e.Revision + " " + who + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
+                        snapshot.Incoming.Add("#" + e.Revision + " " + who + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
                     });
+                snapshot.PendingSubmit = File.Exists(JournalPath);
                 foreach (var item in statuses)
                 {
                     string path = Path.GetFullPath(item.FullPath);
-                    if (item.RemoteLock != null) snapshot.Locks[path] = item.RemoteLock.Owner;
+                    if (item.RemoteLock != null)
+                    {
+                        snapshot.Locks[path] = item.RemoteLock.Owner;
+                        snapshot.LockedSince[path] = item.RemoteLock.CreationTime.ToLocalTime();
+                    }
                     if (WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner))
                         snapshot.Mine.Add(path);
                     if (item.LocalNodeStatus == SvnStatus.Modified) snapshot.Changed.Add(path);
@@ -372,7 +400,7 @@ namespace JocoRobos.Cad
                 if (status == null) throw new InvalidOperationException("Could not inspect the file.");
                 RequireClean(status);
                 if (!WorkspacePolicy.OwnsLock(login.UserName, status.LocalLock?.Token, status.RemoteLock?.Token, status.RemoteLock?.Owner))
-                    throw new InvalidOperationException("This working copy does not own the file's lock.");
+                    throw new InvalidOperationException("This computer isn't the one editing this file.");
                 client.Unlock(path, new SvnUnlockArgs { BreakLock = false });
                 // A failed request keeps the caller in read-only mode until ownership is rechecked.
             }

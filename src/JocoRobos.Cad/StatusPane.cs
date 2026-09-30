@@ -10,7 +10,7 @@ namespace JocoRobos.Cad
     /// <summary>What the panel's buttons and links do; all of it lives in the add-in.</summary>
     internal sealed class PaneActions
     {
-        internal Action OpenRobot, Edit, Submit, CloseAndUpdate, InstallUpdate, Refresh, ReleaseUnchanged;
+        internal Action OpenRobot, Edit, Submit, CloseAndUpdate, InstallUpdate, Refresh, ReleaseUnchanged, History, Diagnostics;
         internal Func<NetworkCredential> Login;
         internal Action<FrcItem, Dictionary<string, string>> InsertFrc;
         internal Func<string, List<string>> SearchTeam;
@@ -28,6 +28,9 @@ namespace JocoRobos.Cad
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
         private readonly Button install = Action("Install update", null);
         private readonly Label flash = Caption(10f, FontStyle.Bold, "", Color.ForestGreen);
+        private readonly Label warning = Caption(9.5f, FontStyle.Bold, "", Color.Firebrick);
+        private readonly LinkLabel history = new LinkLabel { Text = "History of this file", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
+        private readonly LinkLabel diagnostics = new LinkLabel { Text = "Copy diagnostics for a mentor", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
         private readonly Label working = Caption(9.5f, FontStyle.Italic, "", SystemColors.GrayText);
         private readonly Label robot = Caption(12f, FontStyle.Bold);
         private readonly Label sync = Caption(10f, FontStyle.Bold);
@@ -58,8 +61,10 @@ namespace JocoRobos.Cad
             release.LinkClicked += (s, e) => actions.ReleaseUnchanged();
             var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
             check.LinkClicked += (s, e) => actions.Refresh();
-            foreach (var control in new Control[] { version, update, install, flash, working, robot, sync, details, open, closeUpdate, Spacer(),
-                activeFile, activeStatus, edit, Spacer(), pending, submit, Spacer(), locks, release, check })
+            history.LinkClicked += (s, e) => actions.History();
+            diagnostics.LinkClicked += (s, e) => actions.Diagnostics();
+            foreach (var control in new Control[] { version, update, install, warning, flash, working, robot, sync, details, open, closeUpdate, Spacer(),
+                activeFile, activeStatus, edit, history, Spacer(), pending, submit, Spacer(), locks, release, check, diagnostics })
                 layout.Controls.Add(control);
             var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
             robotTab.Controls.Add(layout);
@@ -151,8 +156,11 @@ namespace JocoRobos.Cad
             edit.Text = "  " + (String.IsNullOrEmpty(state.EditTarget) ? "Edit" : "Edit " + state.EditTarget);
             pending.Text = state.Pending;
             pending.Visible = state.Pending.Length > 0;
-            submit.Visible = state.SubmitCount > 0;
-            submit.Text = "  Submit " + state.SubmitCount;
+            submit.Visible = state.SubmitCount > 0 || state.InterruptedSubmit;
+            submit.Text = "  Submit" + (state.SubmitCount > 0 ? " " + state.SubmitCount : "");
+            warning.Text = state.Warning ?? "";
+            warning.Visible = !String.IsNullOrEmpty(state.Warning);
+            history.Visible = state.ShowHistory;
             locks.Text = state.Locks;
             locks.Visible = state.Locks.Length > 0;
             release.Visible = state.HasLocks;

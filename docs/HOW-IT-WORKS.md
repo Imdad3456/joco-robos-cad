@@ -67,11 +67,26 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 - A *required* update blocks **new** edits and inserts until installed. Submit, Set Aside, and Release Edit always work, so nobody's unfinished work is trapped behind an update.
 - Every add-in reports its version, so the Accounts tab shows who has what.
 
+## SOLIDWORKS version
+
+Mentors set the team's **approved SOLIDWORKS version** on the Add-in tab. A computer with a *newer* SOLIDWORKS can open and look at the robot, but Edit, inserts, imports, Submit and Upgrade Robot Files refuse, because files it saved couldn't be opened by everyone else; the panel says why. An older SOLIDWORKS is told to update. Every add-in reports its version, shown on the Accounts tab (in red when it doesn't match). The team upgrades together: everyone installs the new SOLIDWORKS, a mentor changes the approved version, then runs Upgrade Robot Files once.
+
+## Support
+
+- **Copy Diagnostics** (panel link, or Tools menu) copies a report to the clipboard and saves it as a text file: add-in, SOLIDWORKS and Windows versions, account name, workspace folder, server reachability and timing, per-robot state (versions here and on the server, changes waiting, locks, interrupted Submit), open windows, and the latest errors and slow operations. Passwords, codes, tokens and sign-in headers are never read or are scrubbed (`Diagnostics.Sanitize`, unit-tested).
+- **Errors and slow operations** go to `%LOCALAPPDATA%\JocoRobos.Cad\errors.log`: any window-level error (instead of crashing SOLIDWORKS), progress windows over 5 s, reference reads over 1.5 s, Submit checks over 3 s, and status checks over 20 s.
+- **File History** lists recent submits of a team file (who, when, comment) and can save an older version as a separate copy outside the robot folder. It never changes the live robot.
+
+## Interrupted Submit
+
+Before committing, Submit writes a small journal of what it's sending. If the connection drops, SOLIDWORKS closes, or the answer never arrives, the panel says "An earlier Submit was interrupted" and the next Submit settles it: for each file it compares the server's newest version (author, revision, and content hash) with the file on disk. Files the server already has exactly are settled with nothing sent twice; files that never arrived keep their edits and locks and go with this Submit. A commit is all-or-nothing, so a mix only means some files were saved again afterwards: the ones the server has are settled, the newer edits are kept, and the student is told which. When the robot and the Library are submitted together and only one gets through, the window says which one and the other stays ready to Submit.
+
 ## Backups
 
 - **On the Deck:** a daily verified `svnadmin hotcopy` of every repository plus the configuration, kept 14 days.
 - **Off the Deck:** a second computer pulls each completed backup daily over SSH and keeps 90 days (`server/offsite-pull.sh`). The Deck can't delete those copies.
-- **Health panel:** the Seasons tab shows both backup times and free disk space.
+- **Health panel:** the Seasons tab shows both backup times, the last restore drill, and free disk space.
+- **Restore drill:** `server/restore-drill.sh <backup folder> --report` restores a backup into a throwaway server (never the live one), verifies every repository, reads every file back, checks history, locks, accounts and settings, and records the result on the Health panel. Run it on the Deck against its newest backup and on the off-device computer against its newest copy, a couple of times a season.
 
 ## Testing
 

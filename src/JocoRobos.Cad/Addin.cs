@@ -40,6 +40,8 @@ namespace JocoRobos.Cad
         [DispId(18)] void ChangePassword();
         [DispId(19)] void UpgradeRobotFiles();
         [DispId(20)] void ShowLibrary();
+        [DispId(21)] void FileHistory();
+        [DispId(22)] void CopyDiagnostics();
     }
 
     [ComVisible(true)]
@@ -52,10 +54,10 @@ namespace JocoRobos.Cad
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591905;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904 };
+        private const int GroupId = 591906;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591915;
+        private const int LayoutVersion = 591916;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -137,10 +139,12 @@ namespace JocoRobos.Cad
                 Add(group, "Release Edit", "Give back your lock on an unchanged file (normally automatic when you close it)", nameof(ReleaseEdit), 6, menu, 8);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu, 9);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu, 10);
+                Add(group, "File History", "Who changed the active file, when, and why; save an older version as a copy", nameof(FileHistory), 20, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
                 Add(group, "Test Connection", "Check your CAD account and connection", nameof(TestConnection), 5, menu, 6);
+                Add(group, "Copy Diagnostics", "Copy a report (no passwords) to send a mentor when something's wrong", nameof(CopyDiagnostics), 21, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Set Aside My Changes", "Recovery: keep your version of changed files as a copy and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
                 Add(group, "Restore Deleted Files", "Recovery: bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu, 12);
@@ -192,10 +196,11 @@ namespace JocoRobos.Cad
 
         public int CanRun() { return application != null && !busy ? 1 : 0; }
 
-        private void Execute(Action action)
+        private void Execute(Action action, [System.Runtime.CompilerServices.CallerMemberName] string name = "")
         {
             if (CanRun() == 0) return;
             busy = true;
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             try { action(); }
             catch (Exception exception)
             {
@@ -212,6 +217,8 @@ namespace JocoRobos.Cad
             finally
             {
                 busy = false;
+                // Includes dialogs the student had open, so only very long commands are worth noting.
+                ErrorLog.Slow("command " + name, clock.ElapsedMilliseconds, 60000);
                 RefreshStatus();
             }
         }
@@ -247,6 +254,7 @@ namespace JocoRobos.Cad
                     try { return CredentialStore.Read(); }
                     catch (Exception) { return null; }
                 },
+                History = FileHistory, Diagnostics = CopyDiagnostics,
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
             });
@@ -306,6 +314,8 @@ namespace JocoRobos.Cad
                 var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
                     doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any());
                 state.Working = working;
+                state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
+                if (state.Warning != null) state.EditTarget = null;
                 if (autoUpdateProblem != null && state.CanAutoUpdate)
                     state.Details += "\nCouldn't get them automatically: " + autoUpdateProblem + "\nTry Tools → JOCO ROBOS CAD → Update.";
                 var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
@@ -335,12 +345,15 @@ namespace JocoRobos.Cad
             if (login == null) { RenderStatus(); return; }
             refreshing = true;
             var cached = DateTime.UtcNow - paneCatalogAt < TimeSpan.FromMinutes(10) ? paneCatalog : null;
+            int year = SolidWorksYear; // SOLIDWORKS is only asked on its own thread.
             Task.Run(() =>
             {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
                 var catalog = cached ?? Catalog.Fetch(login);
-                if (!heartbeatSent) heartbeatSent = SendHeartbeat(login);
+                if (!heartbeatSent) heartbeatSent = SendHeartbeat(login, year);
                 var robot = new SvnWorkspace(login, catalog.Robot).Snapshot();
                 var library = catalog.Library == null ? null : new SvnWorkspace(login, catalog.Library).Snapshot();
+                ErrorLog.Slow("status check (background)", clock.ElapsedMilliseconds, 20000);
                 return Tuple.Create(catalog, robot, library);
             }).ContinueWith(task =>
             {
@@ -383,7 +396,7 @@ namespace JocoRobos.Cad
         }
 
         // Lets mentors see which add-in version each student runs (Accounts tab). Best effort, once per session.
-        private static bool SendHeartbeat(NetworkCredential login)
+        private static bool SendHeartbeat(NetworkCredential login, int solidWorks)
         {
             try
             {
@@ -396,7 +409,8 @@ namespace JocoRobos.Cad
                 request.Headers[HttpRequestHeader.Authorization] = "Basic " +
                     Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
                 byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"version\": \"" + Updater.Current + "\", \"computer\": \"" +
-                    System.Text.RegularExpressions.Regex.Replace(System.Environment.MachineName, "[^A-Za-z0-9._-]", "") + "\"}");
+                    System.Text.RegularExpressions.Regex.Replace(System.Environment.MachineName, "[^A-Za-z0-9._-]", "") + "\", \"solidworks\": \"" +
+                    (solidWorks > 0 ? solidWorks.ToString() : "") + "\"}");
                 using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
                 using (request.GetResponse()) { }
                 return true;
@@ -440,8 +454,29 @@ namespace JocoRobos.Cad
         }
 
         // A required update means the server changed in a way older add-ins must not write to.
+        // This computer's SOLIDWORKS as a year (2026), read once.
+        private int solidWorksYear = -1;
+        private int SolidWorksYear
+        {
+            get
+            {
+                if (solidWorksYear < 0)
+                    try { solidWorksYear = WorkspacePolicy.SolidWorksYear(application.RevisionNumber()); }
+                    catch (Exception) { solidWorksYear = 0; }
+                return solidWorksYear;
+            }
+        }
+
+        // Anything that changes team CAD (Edit, inserts, imports, Submit, Upgrade) goes through here.
+        private void RequireTeamSolidWorks(Catalog catalog)
+        {
+            string problem = WorkspacePolicy.SolidWorksProblem(SolidWorksYear, catalog.SolidWorks);
+            if (problem != null) throw new InvalidOperationException(problem);
+        }
+
         private void RequireCurrentAddin(NetworkCredential login, Catalog catalog)
         {
+            RequireTeamSolidWorks(catalog);
             var offer = Updater.Offer(catalog.Addin, Updater.Current);
             if (offer == null || !offer.Required) return;
             InstallUpdate(login, offer);
@@ -720,7 +755,7 @@ namespace JocoRobos.Cad
             long revision = UpdateWorkspace(login, robot);
             using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
                 key.SetValue("LastRobot", robot.Name, RegistryValueKind.String);
-            string summary = robot.Name + " is at revision " + revision + "." + (robot.Archived ? " It is archived and read-only." : "");
+            string summary = robot.Name + " is up to date." + (robot.Archived ? " It is archived and read-only." : "");
             if (previous != null && previous != robot.Name)
                 summary = "Switched to " + robot.Name + ". " + summary + "\nYour previous robot stays in " + Path.Combine(WorkspaceInfo.BaseFolder, previous) + ".";
             if (catalog.Library != null)
@@ -850,11 +885,11 @@ namespace JocoRobos.Cad
                 try
                 {
                     if (!unsaved && !doc.SetReadOnlyState(true)) throw new InvalidOperationException("SOLIDWORKS could not put the document in read-only mode.");
-                    string owner = OperationDialog.Run("Checking the revision and acquiring your edit lock…",
+                    string owner = OperationDialog.Run("Checking it's the newest version and locking it for you…",
                         () => SvnWorkspace.Exclusive(() => svn.Edit(path)));
                     File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
                     if (!doc.SetReadOnlyState(false) || doc.IsOpenedReadOnly())
-                        throw new InvalidOperationException("Your SVN lock is held, but SOLIDWORKS could not make the document writable. Close and reopen it, then retry Edit.");
+                        throw new InvalidOperationException("The file is locked for you, but SOLIDWORKS couldn't make it editable. Close and reopen it, then click Edit again.");
                     bool component = !ReferenceEquals(doc, application.ActiveDoc);
                     string kept = !unsaved ? "" : doc.GetSaveFlag()
                         ? "\n\nYour earlier changes are still here. Save to keep them." + (safety != null ? " (A backup copy is in " + safety + ")" : "")
@@ -1045,6 +1080,119 @@ namespace JocoRobos.Cad
                 .Where(p => !p.StartsWith(frc, StringComparison.OrdinalIgnoreCase) && !p.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase))
                 .Where(p => { string relative = p.Substring(library.Root.Length + 1).ToLowerInvariant(); return words.All(relative.Contains); })
                 .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase).Take(20).ToList();
+        }
+
+        // ---------- file history and diagnostics ----------
+
+        public void FileHistory()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                WorkspaceInfo workspace;
+                var doc = ActiveCad(catalog, out workspace);
+                string path = Path.GetFullPath(doc.GetPathName());
+                var svn = new SvnWorkspace(login, workspace);
+                var versions = OperationDialog.Run("Reading the history of " + Path.GetFileName(path) + "…", () => svn.History(path, 30));
+                if (versions.Count == 0) { Message(Path.GetFileName(path) + " is new: it has no team history yet."); return; }
+                using (var dialog = new HistoryDialog(Path.GetFileName(path), versions, version =>
+                {
+                    string name = Path.GetFileNameWithoutExtension(path) + " (version " + version.Revision + ")" + Path.GetExtension(path);
+                    using (var save = new SaveFileDialog { Title = "Save an older version as a copy", FileName = name,
+                        InitialDirectory = System.Environment.GetFolderPath(System.Environment.SpecialFolder.DesktopDirectory),
+                        Filter = "SOLIDWORKS file|*" + Path.GetExtension(path) })
+                    {
+                        if (save.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                        string target = Path.GetFullPath(save.FileName);
+                        // A copy inside the robot would become a second file with a clashing name at the next Submit.
+                        if (target.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase))
+                            throw new InvalidOperationException("Save the copy outside " + WorkspaceInfo.BaseFolder + " (for example on the Desktop), so it doesn't become part of the robot.");
+                        OperationDialog.Run("Saving version " + version.Revision + "…", () => { svn.SaveVersion(path, version.Revision, target); return true; });
+                        ShowFlash("✓ Saved version " + version.Revision + " of " + Path.GetFileName(path) + " as a copy");
+                        System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + target + "\"");
+                    }
+                }))
+                    dialog.ShowDialog(new SolidWorksWindow());
+            });
+        }
+
+        // Everything a mentor needs to help, in one report the student can paste or send. No passwords, codes, or tokens:
+        // the report never reads Credential Manager beyond the username, and Diagnostics.Sanitize scrubs the rest.
+        public void CopyDiagnostics()
+        {
+            Execute(() =>
+            {
+                var text = new System.Text.StringBuilder();
+                Action<string, object> line = (label, value) => text.Append(label).Append(": ").Append(value).Append("\r\n");
+                text.Append("JOCO ROBOS CAD diagnostics — ").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz")).Append("\r\n\r\n");
+                line("Add-in", Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""));
+                string revision;
+                try { revision = application.RevisionNumber(); } catch (Exception exception) { revision = "unknown (" + exception.Message + ")"; }
+                line("SOLIDWORKS", revision + (SolidWorksYear > 0 ? " (" + SolidWorksYear + ")" : ""));
+                line("Windows", System.Environment.OSVersion.VersionString + (System.Environment.Is64BitOperatingSystem ? " 64-bit" : ""));
+                line(".NET", System.Environment.Version);
+                line("Computer", System.Environment.MachineName);
+                line("Windows user", System.Environment.UserName);
+                NetworkCredential login = null;
+                try { login = CredentialStore.Read(); } catch (Exception exception) { line("Saved sign-in", "unreadable: " + exception.Message); }
+                line("CAD username", login?.UserName ?? "(not signed in)");
+                line("Robot folder", WorkspaceInfo.BaseFolder);
+                line("Server", WorkspaceInfo.Server);
+                if (login != null)
+                {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    try
+                    {
+                        var catalog = OperationDialog.Run("Checking the server…", () => Catalog.Fetch(login));
+                        line("Server reachable", "yes, " + clock.ElapsedMilliseconds + " ms");
+                        line("Active season", catalog.Active);
+                        line("This computer uses", catalog.Robot.Name + (Catalog.ChosenRobot != "" ? " (chosen with Choose Robot)" : ""));
+                        line("Team SOLIDWORKS", catalog.SolidWorks ?? "(not set)");
+                        line("Published add-in", catalog.Addin == null ? "(none)" : catalog.Addin.Version + (catalog.Addin.Required ? " (required)" : ""));
+                    }
+                    catch (Exception exception) { line("Server reachable", "NO after " + clock.ElapsedMilliseconds + " ms: " + exception.Message); }
+                }
+                line("Panel status error", paneError ?? "(none)");
+                line("Automatic update", working ?? (autoUpdateProblem != null ? "failed: " + autoUpdateProblem : "ok"));
+                line("Last status check", checkedAt == default(DateTime) ? "(none)" : checkedAt.ToString("HH:mm:ss"));
+                foreach (var snapshot in new[] { robotSnapshot, librarySnapshot }.Where(x => x != null))
+                {
+                    text.Append("\r\n[").Append(snapshot.Info.Label).Append("] ").Append(snapshot.Info.Root).Append("\r\n");
+                    line("  On this computer / on the server", snapshot.Local + " / " + snapshot.Head);
+                    line("  New changes on the server", snapshot.Incoming.Count + (snapshot.Incoming.Count > 0 ? ": " + String.Join(" | ", snapshot.Incoming.Take(5)) : ""));
+                    line("  Changed here, not submitted", snapshot.Changed.Count + ": " + String.Join(", ", snapshot.Changed.Take(15).Select(Path.GetFileName)));
+                    line("  New here, not submitted", snapshot.New.Count + ": " + String.Join(", ", snapshot.New.Take(15).Select(Path.GetFileName)));
+                    line("  Editing (locked by this computer)", snapshot.Mine.Count + ": " + String.Join(", ", snapshot.Mine.Take(15).Select(Path.GetFileName)));
+                    line("  Locked by anyone", snapshot.Locks.Count + ": " + String.Join(", ", snapshot.Locks.Take(15).Select(p => Path.GetFileName(p.Key) + " (" + p.Value + ")")));
+                    line("  Interrupted Submit waiting", snapshot.PendingSubmit ? "yes" : "no");
+                }
+                try
+                {
+                    var docs = OpenDocuments().Where(d => d.Visible).Select(d => Path.GetFileName(d.GetPathName()) + (d.IsOpenedReadOnly() ? " (read-only)" : "") + (d.GetSaveFlag() ? " (unsaved)" : "")).ToList();
+                    text.Append("\r\nOpen windows (").Append(docs.Count).Append("): ").Append(String.Join(", ", docs.Take(15))).Append("\r\n");
+                }
+                catch (Exception exception) { line("Open windows", "unreadable: " + exception.Message); }
+                foreach (var log in new[] { ErrorLog.FilePath, Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "upgrade.log") })
+                {
+                    text.Append("\r\n--- ").Append(Path.GetFileName(log)).Append(" (latest) ---\r\n");
+                    try
+                    {
+                        var lines = File.Exists(log) ? File.ReadAllLines(log) : new string[0];
+                        text.Append(lines.Length == 0 ? "(empty)" : String.Join("\r\n", lines.Skip(Math.Max(0, lines.Length - 80)))).Append("\r\n");
+                    }
+                    catch (Exception exception) { text.Append("unreadable: ").Append(exception.Message).Append("\r\n"); }
+                }
+                string report = Diagnostics.Sanitize(text.ToString());
+                string folder = Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "diagnostics");
+                Directory.CreateDirectory(folder);
+                string file = Path.Combine(folder, "JOCO-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
+                File.WriteAllText(file, report);
+                try { Clipboard.SetText(report); } catch (Exception exception) { ErrorLog.Write("diagnostics clipboard", exception); }
+                ShowFlash("✓ Diagnostics copied. Paste them to a mentor (also saved as a file).");
+                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\"");
+            });
         }
 
         public void ShowLibrary()
@@ -1290,9 +1438,11 @@ namespace JocoRobos.Cad
             if (login == null) return;
             var catalog = LoadCatalog(login);
             // No required-update check here: an outdated add-in can always finish (Submit) the work it already has.
+            // But never from a SOLIDWORKS version the rest of the team can't open.
+            RequireTeamSolidWorks(catalog);
             var workspaces = new[] { catalog.Robot, catalog.Library }
                 .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
-            if (workspaces.Count == 0) throw new InvalidOperationException("Click Update first to download the robot.");
+            if (workspaces.Count == 0) throw new InvalidOperationException("Click Open Robot first to download the robot.");
             var infos = workspaces.Select(w => w.Info).ToList();
             bool wasBusy = false;
             var host = new SubmitHost
@@ -1907,7 +2057,7 @@ namespace JocoRobos.Cad
                     try { OperationDialog.Run("Releasing unchanged files…", () => SvnWorkspace.Exclusive(svn.ReleaseUnchangedLocks)); }
                     catch (Exception exception) { ErrorLog.Write("upgrade: release", exception); }
                 }
-                Message("Converted and submitted " + submitted + " file(s)" + (revisions.Count > 0 ? " (revisions " + String.Join(", ", revisions) + ")" : "") + "." +
+                Message("Converted and submitted " + submitted + " file(s)" + (revisions.Count > 0 ? " (team changes #" + String.Join(", #", revisions) + ")" : "") + "." +
                     (failed.Count > 0 ? "\n\nThese couldn't be converted and were left as they were:\n" + String.Join("\n", failed.Take(12)) + (failed.Count > 12 ? "\n…" : "") : "") +
                     "\n\nTeammates get them with Update (close documents first).", failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });

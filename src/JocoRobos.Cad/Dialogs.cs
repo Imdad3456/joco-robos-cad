@@ -19,6 +19,7 @@ namespace JocoRobos.Cad
         internal static T Run<T>(string message, Func<T> action)
         {
             // Most operations finish in a moment: only show the window (which blocks SOLIDWORKS while files change) if one doesn't.
+            var clock = Stopwatch.StartNew();
             var quick = Task.Run(action);
             try
             {
@@ -28,7 +29,8 @@ namespace JocoRobos.Cad
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.GetBaseException()).Throw();
             }
-            return Show(message, quick);
+            try { return Show(message, quick); }
+            finally { ErrorLog.Slow("\"" + message + "\"", clock.ElapsedMilliseconds, 5000); }
         }
 
         private static T Show<T>(string message, Task<T> running)
@@ -286,6 +288,50 @@ namespace JocoRobos.Cad
             AcceptButton = ok;
             CancelButton = cancel;
             Shown += (s, e) => { if (askCode && username.Text.Length > 0) password.Focus(); };
+        }
+    }
+    /// <summary>File History: recent submits of one team file, and saving an older version as a separate copy.</summary>
+    internal sealed class HistoryDialog : Form
+    {
+        private readonly ListView list = new ListView { View = View.Details, FullRowSelect = true, MultiSelect = false, HeaderStyle = ColumnHeaderStyle.Nonclickable };
+
+        internal HistoryDialog(string file, IList<FileVersion> versions, Action<FileVersion> saveCopy)
+        {
+            Text = "JOCO ROBOS CAD — History of " + file;
+            Font = SystemFonts.MessageBoxFont;
+            ClientSize = new Size(640, 400);
+            MinimumSize = new Size(480, 300);
+            StartPosition = FormStartPosition.CenterParent;
+            MinimizeBox = false;
+            ShowInTaskbar = false;
+            var intro = new Label { Text = "Recent submits that changed " + file + ", newest first. To look at an older version, save it as a separate copy " +
+                "(outside the robot folder) and open that; the robot itself stays as it is.", Dock = DockStyle.Top, Height = 44, Padding = new Padding(12, 10, 12, 0) };
+            list.Columns.Add("When", 150);
+            list.Columns.Add("Who", 100);
+            list.Columns.Add("What changed", 300);
+            list.Columns.Add("#", 60);
+            foreach (var version in versions)
+                list.Items.Add(new ListViewItem(new[] { version.Time.ToString("ddd MMM d yyyy, h:mm tt"), version.Author,
+                    version.Comment.Split('\n')[0], version.Revision.ToString() }) { Tag = version });
+            var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 6, 12, 6) };
+            list.Dock = DockStyle.Fill;
+            panel.Controls.Add(list);
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 48, Padding = new Padding(8) };
+            var close = new Button { Text = "Close", Size = new Size(95, 30), DialogResult = DialogResult.Cancel };
+            var save = new Button { Text = "Save this version as a copy…", AutoSize = true, MinimumSize = new Size(0, 30), Enabled = false };
+            list.SelectedIndexChanged += (s, e) => save.Enabled = list.SelectedItems.Count == 1;
+            save.Click += (s, e) =>
+            {
+                if (list.SelectedItems.Count != 1) return;
+                try { saveCopy((FileVersion)list.SelectedItems[0].Tag); }
+                catch (Exception exception) { MessageBox.Show(this, exception.Message, "JOCO ROBOS CAD", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            };
+            buttons.Controls.Add(close);
+            buttons.Controls.Add(save);
+            Controls.Add(panel);
+            Controls.Add(buttons);
+            Controls.Add(intro);
+            CancelButton = close;
         }
     }
 }

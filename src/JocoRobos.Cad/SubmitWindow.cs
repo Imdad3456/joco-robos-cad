@@ -36,7 +36,7 @@ namespace JocoRobos.Cad
         {
             Files += items.Count(x => x.Kind != SubmitKind.ReleaseOnly);
             Released += items.Count(x => x.Kind == SubmitKind.ReleaseOnly);
-            if (result.Revision > 0) Revisions.Add((workspace.IsLibrary ? "Library " : "") + "r" + result.Revision);
+            if (result.Revision > 0) Revisions.Add(result.Revision + (workspace.IsLibrary ? " in the Library" : ""));
             Warnings.AddRange(result.Warnings);
             Done.AddRange(items.Select(x => x.Path));
         }
@@ -46,7 +46,7 @@ namespace JocoRobos.Cad
             get
             {
                 if (Files > 0)
-                    return "✓ Submitted " + Files + (Files == 1 ? " file" : " files") + (Revisions.Count > 0 ? " as " + String.Join(" and ", Revisions) : "");
+                    return "✓ Submitted " + Files + (Files == 1 ? " file" : " files") + (Revisions.Count > 0 ? " (#" + String.Join(", #", Revisions) + ")" : "");
                 return "✓ Released " + Released + (Released == 1 ? " lock" : " locks");
             }
         }

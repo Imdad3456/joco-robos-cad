@@ -47,7 +47,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{dotnet4064}\RegAsm.exe"; Parameters: """{app}\JocoRobos.Cad.dll"" /unregister"; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterAddin"
 
 [Messages]
-FinishedLabel=JOCO ROBOS CAD is installed.%n%nStart SOLIDWORKS and click Open Robot on the JOCO ROBOS CAD tab. You will sign in once with the CAD username and password a mentor gave you.%n%nYour robot files will be in C:\JOCO-ROBOS. Uninstalling never deletes them.
+FinishedLabel=JOCO ROBOS CAD is installed.%n%nStart SOLIDWORKS: it asks you to choose a username and password once, then a mentor gives you a code to finish. After that, click Open Robot on the JOCO ROBOS CAD tab.%n%nYour robot files will be in C:\JOCO-ROBOS. Updating or uninstalling never deletes them or your sign-in.
 
 [Code]
 function SolidWorksRunning(): Boolean;

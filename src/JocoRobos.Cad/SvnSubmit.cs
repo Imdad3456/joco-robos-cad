@@ -78,7 +78,7 @@ namespace JocoRobos.Cad
                         break; // Only on the server; Update downloads it.
                     case SvnStatus.Normal:
                         bool propsChanged = item.LocalPropertyStatus == SvnStatus.Modified;
-                        if (propsChanged) plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
+                        if (propsChanged) plan.Blocked.Add(relative + " — its team settings were changed on this computer; ask a mentor");
                         else if (owned) plan.Items.Add(Item(SubmitKind.ReleaseOnly, path));
                         break;
                     case SvnStatus.Added:
@@ -88,7 +88,7 @@ namespace JocoRobos.Cad
                         break;
                     case SvnStatus.Modified:
                         if (item.LocalPropertyStatus == SvnStatus.Modified)
-                            plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
+                            plan.Blocked.Add(relative + " — its team settings were changed on this computer; ask a mentor");
                         else if (!WorkspacePolicy.IsCad(path) || owned)
                             plan.Items.Add(Item(SubmitKind.Modified, path));
                         else if (item.RemoteLock != null && item.RemoteLock.Owner == login.UserName)
@@ -351,8 +351,8 @@ namespace JocoRobos.Cad
                 }
                 else pending.Add(path);
             }
-            if (landed.Count > 0 && pending.Count > 0)
-                throw new InvalidOperationException("An interrupted Submit left mixed results. Do not delete anything; ask a mentor.\n" + String.Join("\n", pending));
+            // A commit is all-or-nothing, so a mix means some files were saved again after the interrupted Submit reached the
+            // server. The landed ones match the server exactly (safe to settle); the others are newer work and stay as they are.
             if (landed.Count > 0)
             {
                 // The server already has these exact bytes, so reverting loses nothing; Update then downloads them.
@@ -372,9 +372,11 @@ namespace JocoRobos.Cad
                 }
             }
             File.Delete(JournalPath);
-            return landed.Count > 0
-                ? "Your previous Submit reached the server as revision " + revision + ". Close your documents and click Update to finish."
-                : null;
+            if (landed.Count == 0) return null;
+            string done = "Your earlier Submit did reach the team (" + landed.Count + (landed.Count == 1 ? " file" : " files") + "), so nothing was lost or sent twice.";
+            if (pending.Count == 0) return done + " Your computer finishes catching up at the next update (automatic when your robot documents are closed).";
+            return done + " You changed " + String.Join(", ", pending.Take(5).Select(System.IO.Path.GetFileName)) + (pending.Count > 5 ? ", …" : "") +
+                " again after that; those newer changes are kept. If Submit can't send them, use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep a copy, then Edit and redo them.";
         }
 
         private static bool SameContent(SvnClient client, string path, Uri url)

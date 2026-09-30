@@ -124,6 +124,14 @@ static class Program
             Check(shaft.CheckNumber("40", out typed) == "Length must be between 0 and 36 in." && typed == null, "Length over the maximum");
             Check(shaft.CheckNumber("abc", out typed) != null && shaft.CheckNumber("NaN", out typed) != null, "Non-number length");
             Check(new FrcChoice { Name = "Teeth", Integer = true, Min = "0", Max = "255" }.CheckNumber("3.5", out typed) != null, "Fractional whole number");
+            Check(WorkspacePolicy.SolidWorksYear("34.1.0") == 2026 && WorkspacePolicy.SolidWorksYear("x") == 0, "SOLIDWORKS year from revision number");
+            Check(WorkspacePolicy.SolidWorksProblem(2026, "2026") == null && WorkspacePolicy.SolidWorksProblem(2026, null) == null &&
+                WorkspacePolicy.SolidWorksProblem(2027, "2026").Contains("not edit") && WorkspacePolicy.SolidWorksProblem(2025, "2026").Contains("Update SOLIDWORKS"),
+                "Team SOLIDWORKS version rule");
+            string report = Diagnostics.Sanitize("Authorization: Basic c2FyYWg6c2VjcmV0MTIz\npassword=hunter2hunter2 ok\ncode K7QM-3XRP-9TDW here\n" +
+                "https://sarah:pw123@cad.imdad.stream/svn\nX-Joco-Token: abcdef0123456789\nr42 sarah: Added camera mount");
+            Check(!report.Contains("c2FyYWg6") && !report.Contains("hunter2") && !report.Contains("K7QM") && !report.Contains("pw123") &&
+                !report.Contains("abcdef0123456789") && report.Contains("Added camera mount") && report.Contains("cad.imdad.stream"), "Diagnostics keep no secrets: " + report);
             SubmitChecks(temp);
             PaneChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
@@ -150,8 +158,9 @@ static class Program
         s = PaneState.Describe("sam", snap, null, asm, true, null, now, robotOpen: true);
         Check(s.EditTarget == "", "Assembly: generic Edit (may lock the selected part)");
         snap.Locks[part] = "sarah";
+        snap.LockedSince[part] = now.AddMinutes(-5);
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
-        Check(s.EditTarget == null && s.ActiveStatus.Contains("sarah is editing") && s.ActiveTone == Tone.Bad, "Teammate's file: no button");
+        Check(s.EditTarget == null && s.ActiveStatus.Contains("sarah is editing this since") && s.ActiveTone == Tone.Bad, "Teammate's file: who and since when, no button");
         snap = fresh(); snap.Locks[part] = "sam"; snap.Mine.Add(part); snap.Changed.Add(part);
         s = PaneState.Describe("sam", snap, null, part, false, null, now, robotOpen: true);
         Check(s.EditTarget == null && s.SubmitCount == 1 && s.ActiveStatus.Contains("editing this (saved)") && s.Locks.Contains("ShooterPlate"), "Editing: Submit 1");
@@ -160,6 +169,10 @@ static class Program
         Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync.Contains("2 new changes"), "Teammate changes with robot open: Close & Update");
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(s.CanAutoUpdate && !s.ShowCloseAndUpdate, "Nothing open: teammate changes come in by themselves");
+        snap.PendingSubmit = true;
+        s = PaneState.Describe("sam", snap, null, null, false, null, now);
+        Check(s.InterruptedSubmit && s.Pending.Contains("interrupted"), "Interrupted Submit is shown with Submit to settle it");
+        snap.PendingSubmit = false;
         snap.New.Add(Path.Combine(season.Root, "New.SLDPRT"));
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(!s.CanAutoUpdate && !s.ShowCloseAndUpdate && s.Details.Contains("after you Submit") && s.SubmitCount == 1, "Own unsubmitted work: Submit first");
@@ -242,6 +255,15 @@ static class Program
             Check(issues.Count == 3, "Rebuilt read-only assembly or outside document reported");
             documents.Clear();
 
+            // A reference to a CAD file that exists nowhere is reported, never skipped silently; "Submit anyway" acknowledges it.
+            references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "Lost Bracket.SLDPRT") };
+            var lost = run(new[] { shooter, camera }).Single();
+            Check(lost.Blocking && lost.Key == "missing:" + shooter && lost.Title.Contains("isn't on this computer") && lost.Description.Contains("Lost Bracket"),
+                "Unresolved reference reported");
+            acknowledged.Add(lost.Key);
+            Check(run(new[] { shooter, camera }).Count == 0, "Acknowledged missing reference");
+            references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "table.xlsx") };
+            Check(run(new[] { shooter, camera }).Count == 0, "Non-CAD dependency is a documented limit, not an issue");
             // Imported-only parts need an explicit "Submit anyway"; missing files and mentor problems never block the rest.
             references[shooter] = new[] { camera, interconnect };
             var temporary = run(new[] { shooter, camera }).Single();

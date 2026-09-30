@@ -135,6 +135,9 @@ def publish(state):
         'library': {'name': LIBRARY, 'uuid': uuid(LIBRARY)} if LIBRARY in repositories() else None,
         # Newest published student installer; the add-in offers it when it is newer than itself.
         'addin': state.get('addin'),
+        # The team's SOLIDWORKS version (a year). A newer SOLIDWORKS would save files older ones can't open, so the add-in
+        # won't edit or submit team CAD from it.
+        'solidworks': state.get('solidworks'),
     }
     write_atomic(CATALOG, json.dumps(catalog, indent=2) + '\n', 0o644)
 
@@ -388,13 +391,15 @@ def age_hours(stamp):
         return None
 
 
-def record_heartbeat(user, version, computer):
+def record_heartbeat(user, version, computer, solidworks=''):
     if not re.match(r'^\d{1,4}\.\d{1,4}\.\d{1,4}$', version or ''):
         raise Refused('Bad version.')
     computer = re.sub(r'[^A-Za-z0-9._-]', '', computer or '')[:40]
     beats = read_json(HEARTBEATS) or {}
     entry = beats.get(user, {})
     entry.update(version=version, seen=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    if re.match(r'^(19|20)\d\d$', solidworks or ''):
+        entry['solidworks'] = solidworks
     if computer:
         computers = [c for c in entry.get('computers', []) if c != computer]
         entry['computers'] = ([computer] + computers)[:3]
@@ -615,8 +620,17 @@ def act(user, form):
             state['archived'] = [n for n in state['archived'] if n != name]
         save_state(state)
         return {'activate': 'Students now open ' + name + '.' + note, 'archive': name + ' is read-only.', 'unarchive': name + ' is editable again.'}[action]
+    if action == 'set-solidworks':
+        year = form.get('year', '').strip()
+        if year and not re.match(r'^20\d\d$', year):
+            raise Refused('Enter a year like 2026, or leave it empty to allow any version.')
+        state['solidworks'] = year or None
+        save_state(state)
+        return ('Approved SOLIDWORKS version: %s. Newer versions can look but not edit or submit.' % year) if year else 'Any SOLIDWORKS version may edit.'
     if action == 'release-lock':
         repo, path = form.get('repo', ''), form.get('path', '')
+        if not form.get('confirmed'):
+            raise Refused('Tick the box first: releasing does not keep that student\'s unsubmitted changes.')
         if repo not in repositories() or not any(l['path'] == path for l in locks(repo)):
             raise Refused('That lock no longer exists.')
         # rmlocks bypasses the student pre-unlock hook; unsubmitted edits on the owner's PC become stale.
@@ -987,7 +1001,7 @@ class Admin(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
             with Locked():
-                record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')))
+                record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')), str(body.get('solidworks', '')))
             self.reply(200, 'ok')
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
@@ -1117,7 +1131,8 @@ class Admin(BaseHTTPRequestHandler):
         def item(ok, text):
             items.append('<li class="%s">%s %s</li>' % ('ok' if ok else 'bad', '✓' if ok else '⚠', text))
         item(True, 'Server and SVN are responding')
-        for name, label, limit in (('backup.json', 'Deck backup', 36), ('offsite.json', 'Off-device backup', 72)):
+        for name, label, limit in (('backup.json', 'Deck backup', 36), ('offsite.json', 'Off-device backup', 72),
+                                   ('restore-test.json', 'Last restore drill (server/restore-drill.sh)', 24 * 200)):
             data = read_json(os.path.join(HEALTH, name)) or {}
             hours = age_hours(data.get('time'))
             if hours is None:
@@ -1158,9 +1173,11 @@ class Admin(BaseHTTPRequestHandler):
             for lock in locks(name):
                 rows += '<tr><td>%s</td><td><code>%s</code></td><td><b>%s</b></td><td class="muted">%s</td><td>%s</td></tr>' % (
                     esc(name), esc(lock['path']), esc(lock.get('owner', '?')), esc(lock.get('created', '')),
-                    self.form('release-lock', {'repo': name, 'path': lock['path']}, 'Release'))
-        return ('<section><h2>Locked files</h2><p class="muted">Release a lock only when its owner cannot Submit (lost laptop, left the team). '
-                'Any unsubmitted changes on their computer can then no longer be submitted.</p><div class="scroll"><table>'
+                    self.form('release-lock', {'repo': name, 'path': lock['path']}, 'Release',
+                              extra='<label class="muted"><input type="checkbox" name="confirmed" value="1" required> they\'re done</label> '))
+        return ('<section><h2>Locked files</h2><p><b>Releasing does not keep that student\'s unsubmitted changes on their computer.</b> '
+                'Only release a lock when they\'ve confirmed they\'re done, will use Set Aside My Changes to keep a copy, or can\'t Submit '
+                '(lost laptop, left the team). Locks never expire by themselves.</p><div class="scroll"><table>'
                 '<tr><th>Where</th><th>File</th><th>Locked by</th><th>Since</th><th></th></tr>%s</table></div></section>') % (
                     rows or '<tr><td colspan="5" class="muted">Nothing is locked.</td></tr>')
 
@@ -1196,8 +1213,15 @@ class Admin(BaseHTTPRequestHandler):
         if current and recent:
             on = sum(1 for b in recent.values() if version_key(b.get('version', '0.0.0')) >= version_key(current['version']))
             info += '<p>%d of %d students seen in the last 30 days have %s or newer. Details on the Accounts tab.</p>' % (on, len(recent), esc(current['version']))
-        return ('<section><h2>Student add-in</h2>%s</section><section><h2>Waiting from GitHub</h2>%s</section>'
-                '<section><h2>Upload manually</h2>%s</section>') % (info, staged_html, upload_form)
+        approved = state.get('solidworks')
+        sw_form = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="set-solidworks">'
+                   '<input name="year" value="%s" placeholder="e.g. 2026" size="8" pattern="20[0-9][0-9]" aria-label="Approved SOLIDWORKS year">'
+                   '<button class="primary">Save</button></form><p class="muted">%s A newer SOLIDWORKS saves files the rest of the team can\'t open, '
+                   'so the add-in lets it look but not edit or submit team CAD. Change this only when everyone has upgraded; then a mentor runs '
+                   'Tools → JOCO ROBOS CAD → Upgrade Robot Files once. Each student\'s version is on the Accounts tab.</p>') % (
+                       self.token(), esc(approved or ''), ('Approved: <b>SOLIDWORKS %s</b>.' % esc(approved)) if approved else '<span class="bad">Not set: any version can edit.</span>')
+        return ('<section><h2>Student add-in</h2>%s</section><section><h2>Team SOLIDWORKS version</h2>%s</section><section><h2>Waiting from GitHub</h2>%s</section>'
+                '<section><h2>Upload manually</h2>%s</section>') % (info, sw_form, staged_html, upload_form)
 
     def library_page(self, state):
         parts = files(LIBRARY) if LIBRARY in repositories() else []
@@ -1262,8 +1286,11 @@ class Admin(BaseHTTPRequestHandler):
                                                    self.form('delete-user', {'username': name}, 'Delete'))
             beat = beats.get(name) or {}
             hours = age_hours(beat.get('seen'))
-            seen = '<span class="muted">never</span>' if hours is None else '%s · %s%s' % (
-                esc(beat.get('version', '?')), 'today' if hours < 24 else '%d days ago' % (hours // 24),
+            approved = state.get('solidworks')
+            sw = beat.get('solidworks')
+            sw_html = '' if not sw else ' · <span class="%s">SOLIDWORKS %s</span>' % ('bad' if approved and sw != approved else 'muted', esc(sw))
+            seen = '<span class="muted">never</span>' if hours is None else '%s%s · %s%s' % (
+                esc(beat.get('version', '?')), sw_html, 'today' if hours < 24 else '%d days ago' % (hours // 24),
                 (' · ' + esc(', '.join(beat.get('computers', [])))) if beat.get('computers') else '')
             rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', seen, reset, tools)
         add = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="add-user">'

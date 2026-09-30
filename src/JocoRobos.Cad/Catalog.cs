@@ -144,6 +144,7 @@ namespace JocoRobos.Cad
             [DataMember(Name = "robots")] public List<Entry> Robots { get; set; }
             [DataMember(Name = "library")] public Entry Library { get; set; }
             [DataMember(Name = "addin")] public AddinRelease Addin { get; set; }
+            [DataMember(Name = "solidworks")] public string SolidWorks { get; set; }
         }
 
         private const string SettingsKey = @"Software\JOCO ROBOS\CAD";
@@ -151,6 +152,8 @@ namespace JocoRobos.Cad
         internal WorkspaceInfo Library;
         internal string Active;
         internal AddinRelease Addin;
+        // The team's approved SOLIDWORKS version as a year ("2026"), or null when mentors haven't set one.
+        internal string SolidWorks;
 
         internal static Catalog Fetch(NetworkCredential login)
         {
@@ -184,7 +187,7 @@ namespace JocoRobos.Cad
             catch (SerializationException) { document = null; }
             if (document == null || document.Version != 1 || document.Robots == null)
                 throw new InvalidOperationException("The server's robot list is not readable. Ask a mentor, or update the add-in.");
-            var catalog = new Catalog { Active = document.Active, Addin = document.Addin };
+            var catalog = new Catalog { Active = document.Active, Addin = document.Addin, SolidWorks = document.SolidWorks };
             foreach (var entry in document.Robots)
                 catalog.Robots.Add(new WorkspaceInfo(entry.Name, new Guid(entry.Uuid), entry.Archived, false, entry.Master));
             if (document.Library != null)

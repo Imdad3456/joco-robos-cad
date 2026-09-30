@@ -15,6 +15,18 @@ namespace JocoRobos.Cad
         internal readonly HashSet<string> Mine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         internal readonly HashSet<string> Changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         internal readonly HashSet<string> New = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal readonly Dictionary<string, DateTime> LockedSince = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        // A Submit was interrupted (connection lost, SOLIDWORKS closed): the next Submit settles it.
+        internal bool PendingSubmit;
+    }
+
+    /// <summary>One submit that changed a file (File History).</summary>
+    internal sealed class FileVersion
+    {
+        internal long Revision;
+        internal string Author;
+        internal DateTime Time;
+        internal string Comment;
     }
 
     internal enum Tone { Normal, Muted, Good, Warn, Bad, Info }
@@ -46,6 +58,17 @@ namespace JocoRobos.Cad
         internal string Update;
         internal string Flash;
         internal string Working;
+        // A problem that stops editing on this computer (for example the wrong SOLIDWORKS version).
+        internal string Warning;
+        internal bool ShowHistory;
+        internal bool InterruptedSubmit;
+
+        private static string Since(WorkspaceSnapshot owner, string path)
+        {
+            DateTime since;
+            if (!owner.LockedSince.TryGetValue(path, out since)) return "";
+            return " since " + (since.Date == DateTime.Now.Date ? since.ToString("h:mm tt") : since.ToString("ddd MMM d, h:mm tt"));
+        }
 
         internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
             string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false, bool robotOpen = false)
@@ -124,12 +147,12 @@ namespace JocoRobos.Cad
                 }
                 else if (owner.Locks.TryGetValue(activePath, out lockedBy) && lockedBy == user)
                 {
-                    state.ActiveStatus = "🔒 You're editing this on another computer.\nSubmit it there, or ask a mentor to release it.";
+                    state.ActiveStatus = "🔒 You're editing this on another computer" + Since(owner, activePath) + ".\nSubmit it there, or ask a mentor to release it.";
                     state.ActiveTone = Tone.Warn;
                 }
                 else if (owner.Locks.TryGetValue(activePath, out lockedBy))
                 {
-                    state.ActiveStatus = "🔒 " + lockedBy + " is editing this.\nYou can still look, measure, and reference it." +
+                    state.ActiveStatus = "🔒 " + lockedBy + " is editing this" + Since(owner, activePath) + ".\nYou can still look, measure, and reference it." +
                         (activeReadOnly && activeDirty ? "\nYour unsaved changes here can't be saved into the robot: undo them, or Save As a copy outside the robot folder." : "");
                     state.ActiveTone = activeDirty ? Tone.Warn : Tone.Bad;
                 }
@@ -154,9 +177,16 @@ namespace JocoRobos.Cad
                 }
             }
 
+            if (activePath != null) state.ShowHistory = snapshots.Any(x => x.Info.Contains(activePath) && !x.New.Contains(activePath));
             int unsubmitted = snapshots.Sum(x => x.Changed.Count + x.New.Count);
             state.SubmitCount = unsubmitted;
             if (unsubmitted > 0) state.Pending = unsubmitted + (unsubmitted == 1 ? " change" : " changes") + " waiting";
+            if (snapshots.Any(x => x.PendingSubmit))
+            {
+                state.InterruptedSubmit = true;
+                state.Pending = "An earlier Submit was interrupted. Click Submit: it checks what reached the team and finishes safely." +
+                    (state.Pending.Length > 0 ? "\n" + state.Pending : "");
+            }
             var mine = snapshots.SelectMany(x => x.Mine).ToList();
             state.HasLocks = mine.Count > 0;
             state.Locks = mine.Count == 0 ? "" : "You're editing " + (mine.Count == 1 ? Path.GetFileName(mine[0]) : mine.Count + " files: " +
