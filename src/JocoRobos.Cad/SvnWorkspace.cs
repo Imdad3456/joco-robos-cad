@@ -240,14 +240,21 @@ namespace JocoRobos.Cad
                 RequireIdentity(local);
                 var snapshot = new WorkspaceSnapshot { Info = Info, Local = local.Revision,
                     Head = GetInfo(client, new SvnUriTarget(Repository)).Revision };
+                // What this computer already has, file by file: a submit made here updates only its own files' revisions.
+                var here = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                var statuses = Status(client, Root, true, SvnDepth.Infinity);
+                foreach (var item in statuses)
+                    if (item.Versioned) here[Path.GetFullPath(item.FullPath).TrimEnd('\\')] = item.Revision;
                 if (snapshot.Head > snapshot.Local)
-                    client.Log(Repository, new SvnLogArgs { Range = new SvnRevisionRange(snapshot.Local + 1, snapshot.Head) }, (s, e) =>
+                    client.Log(Repository, new SvnLogArgs { Range = new SvnRevisionRange(snapshot.Local + 1, snapshot.Head), RetrieveChangedPaths = true }, (s, e) =>
                     {
-                        // Your own submits already are on this computer.
-                        if (e.Author != login.UserName)
-                            snapshot.Incoming.Add("r" + e.Revision + " " + e.Author + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
+                        // Incoming unless every file it changed is already at that revision here, whoever submitted it:
+                        // your own submit from another computer still has to come down to this one.
+                        if (e.ChangedPaths == null || e.ChangedPaths.Count == 0 || e.ChangedPaths.All(c => AlreadyHere(c, e.Revision, here))) return;
+                        string who = e.Author == login.UserName ? "you (another computer)" : e.Author;
+                        snapshot.Incoming.Add("r" + e.Revision + " " + who + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
                     });
-                foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+                foreach (var item in statuses)
                 {
                     string path = Path.GetFullPath(item.FullPath);
                     if (item.RemoteLock != null) snapshot.Locks[path] = item.RemoteLock.Owner;
@@ -319,6 +326,14 @@ namespace JocoRobos.Cad
                 }
                 ReconcileReadOnly(client);
             }
+        }
+
+        private bool AlreadyHere(SvnChangeItem change, long revision, IDictionary<string, long> here)
+        {
+            string local = Path.GetFullPath(Path.Combine(Root, change.Path.TrimStart('/').Replace('/', '\\'))).TrimEnd('\\');
+            if (change.Action == SvnChangeAction.Delete) return !File.Exists(local) && !Directory.Exists(local);
+            long have;
+            return here.TryGetValue(local, out have) && have >= revision;
         }
 
         /// <summary>Releases every lock this computer holds on a file that is unchanged; changed files keep theirs.</summary>

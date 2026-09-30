@@ -277,6 +277,15 @@ check(int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout) == bad + 1, 'un
 # refusals: file changed later, file locked, non-mentor revprop
 sh('cd /tmp/u && svn up -q' + AUTH + ' && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + ' && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf v3 > 10_Drivetrain/Gear.SLDPRT && svn ci -q -m "Good change"' + AUTH)
 s_, loc = post('/admin', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': str(bad)}); check('Later submits changed' in loc, 'undo refused when later changed ' + loc)
+# A submit landing between the safety check and the undo's commit: the mentor checks "Good change" (nothing newer yet),
+# sarah submits again, then the undo commits. Simulated by making the undo see the head it was checked at.
+checked = int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout)
+sh('cd /tmp/u && svn up -q' + AUTH + ' && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + ' && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf v4 > 10_Drivetrain/Gear.SLDPRT && svn ci -q -m "Raced"' + AUTH)
+race = sh("runuser -u www-data -- python3 -c \"import sys; sys.path.insert(0, '/opt/joco'); import joco; "
+          "joco.youngest = lambda repo: %d; joco.undo_plan = lambda repo, rev: joco.changed_paths(repo, rev)\n"
+          "try:\n    joco.undo_submit('mentor1', '2027-Robot', %d); print('UNDONE')\nexcept joco.Refused as e:\n    print('REFUSED', e)\"" % (checked, checked))
+check('REFUSED' in race.stdout and sh('svnlook cat /var/lib/svn/2027-Robot 10_Drivetrain/Gear.SLDPRT').stdout == 'v4',
+      'undo never overwrites a submit that raced it ' + race.stdout + race.stderr)
 sh('cd /tmp/u && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH)
 good = int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout)
 s_, loc = post('/admin', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': str(good)}); check('locked by sarah' in loc, 'undo refused while a student holds the lock ' + loc)

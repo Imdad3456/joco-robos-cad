@@ -157,7 +157,7 @@ static class Program
         Check(s.EditTarget == null && s.SubmitCount == 1 && s.ActiveStatus.Contains("editing this (saved)") && s.Locks.Contains("ShooterPlate"), "Editing: Submit 1");
         snap = fresh(); snap.Head = 12; snap.Incoming.Add("r11 sarah: intake"); snap.Incoming.Add("r12 sarah: arm");
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
-        Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync.Contains("2 teammate"), "Teammate changes with robot open: Close & Update");
+        Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync.Contains("2 new changes"), "Teammate changes with robot open: Close & Update");
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(s.CanAutoUpdate && !s.ShowCloseAndUpdate, "Nothing open: teammate changes come in by themselves");
         snap.New.Add(Path.Combine(season.Root, "New.SLDPRT"));

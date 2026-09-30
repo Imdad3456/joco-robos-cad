@@ -55,9 +55,9 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | 4.2 | B | Open `ABS_MotorCover_v2` | "🔒 imdad is editing this. You can still look, measure, and reference it", and no Edit button | ☐ |
 | 4.3 | B | Change something in it anyway | A warning right away that imdad is editing it. Close without saving | ☐ |
 | 4.4 | A | Change it, save, **Submit** | Submitted | ☐ |
-| 4.5 | B | Keep `Robot.SLDASM`, a sub-assembly and a part open in their own windows, part active. Wait up to 3 min (or **Check now**) | "⬇ 1 teammate change", A's comment, and **Close & Update** | ☐ |
+| 4.5 | B | Keep `Robot.SLDASM`, a sub-assembly and a part open in their own windows, part active. Wait up to 3 min (or **Check now**) | "⬇ 1 new change on the server", A's comment, and **Close & Update** | ☐ |
 | 4.6 | B | **Close & Update** | All three close, update, and reopen, with the part active again; "✓ Up to date" | ☐ |
-| 4.7 | A | Close **all** documents. B: change and **Submit** any small file | Within 3 min A's panel says "Getting 1 teammate change…" then "✓ Got 1 teammate change", with no clicks | ☐ |
+| 4.7 | A | Close **all** documents. B: change and **Submit** any small file | Within 3 min A's panel says "Getting 1 new change…" then "✓ Got 1 new change", with no clicks | ☐ |
 | 4.8 | B | **Edit** `TPU_MotorCover_v2`, change it, save, don't Submit | | ☐ |
 | 4.9 | A | Web **Locks** → **Release** B's `TPU_MotorCover_v2`, then **Edit** it in SOLIDWORKS | A holds it | ☐ |
 | 4.10 | B | **Submit** | A yellow note that TPU_MotorCover_v2 can't be submitted because imdad is editing it; nothing else blocked. **Cancel** | ☐ |
@@ -72,6 +72,7 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | 5.2 | B | Wi-Fi on → **Submit** again | Submitted. A: **Seasons** → Recent submits shows it **once** | ☐ |
 | 5.3 | A | **Edit** a part, then end SOLIDWORKS in Task Manager. Restart | Still yours; the panel's "Give back the ones I didn't change" releases it | ☐ |
 | 5.4 | Both | Save a change without submitting, then close SOLIDWORKS | Asks once "Submit now before exiting?" → **No** closes normally | ☐ |
+| 5.4b | A | Sign in as the same account on a second computer (or a second Windows user). Submit a small change on computer 1 | Computer 2's panel shows "⬇ 1 new change", from "you (another computer)", and gets it | ☐ |
 | 5.5 | Both | Wi-Fi off, then look at the panel and try **Edit** | "Can't reach the server" with a reason; nothing becomes writable. Wi-Fi back on | ☐ |
 
 ## 6. Finish (A)

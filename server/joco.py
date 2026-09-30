@@ -330,10 +330,13 @@ def undo_plan(repo, rev):
 
 
 def undo_submit(user, repo, rev):
+    # Pinned to the revision the checks looked at: if a student submits in between, the undo is out of date and
+    # fails instead of replacing their newer work.
+    head = youngest(repo)
     changes = undo_plan(repo, rev)
     url = 'file://' + os.path.join(REPOS, repo)
     args = ['svnmucc', '--non-interactive', '--username', user, '--with-revprop', 'joco:mentor-undo=%d' % rev,
-            '-m', 'Undo r%d (by %s from the admin page)' % (rev, user), '-U', url]
+            '-m', 'Undo r%d (by %s from the admin page)' % (rev, user), '-r', str(head), '-U', url]
     removed_dirs = []
     for action, path, is_dir in sorted(changes, key=lambda c: c[1]):
         if any(path.startswith(d + '/') for d in removed_dirs):
@@ -347,7 +350,12 @@ def undo_submit(user, repo, rev):
         elif not is_dir:
             # Content and properties exactly as they were before the submit, keeping history.
             args += ['rm', path, 'cp', str(rev - 1), path, path]
-    output = run(*args)
+    try:
+        output = run(*args)
+    except Refused as exc:
+        if youngest(repo) != head:
+            raise Refused('Someone submitted while you were undoing r%d, so nothing was changed. Look at Recent submits and try again.' % rev) from exc
+        raise
     match = re.search(r'r(\d+) committed', output)
     return 'Undid r%d in %s as new revision r%s. Students get the previous versions on their next Update.' % (rev, repo, match.group(1) if match else '?')
 

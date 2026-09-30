@@ -84,7 +84,7 @@ namespace JocoRobos.Cad
             else
             {
                 int count = robotSnapshot.Incoming.Count;
-                state.Sync = "⬇ " + count + (count == 1 ? " teammate change" : " teammate changes");
+                state.Sync = "⬇ " + count + (count == 1 ? " new change" : " new changes") + " on the server";
                 state.SyncTone = Tone.Info;
                 state.Details = String.Join("\n", robotSnapshot.Incoming.AsEnumerable().Reverse().Take(3)) + "\n";
                 if (localWork)

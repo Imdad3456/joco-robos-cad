@@ -945,7 +945,7 @@ namespace JocoRobos.Cad
                 autoUpdateTried = robotSnapshot.Head;
                 int count = robotSnapshot.Incoming.Count;
                 busy = true;
-                working = "Getting " + count + (count == 1 ? " teammate change…" : " teammate changes…");
+                working = "Getting " + count + (count == 1 ? " new change…" : " new changes…");
                 RenderStatus();
                 // The Library comes along only when it has news and no unsubmitted work of its own.
                 bool libraryToo = library != null && librarySnapshot != null && librarySnapshot.Incoming.Count > 0 &&
@@ -959,7 +959,7 @@ namespace JocoRobos.Cad
                     if (task.Status == TaskStatus.RanToCompletion)
                     {
                         autoUpdateProblem = null;
-                        ShowFlash("✓ Got " + count + (count == 1 ? " teammate change" : " teammate changes"));
+                        ShowFlash("✓ Got " + count + (count == 1 ? " new change" : " new changes"));
                     }
                     else
                     {
@@ -991,11 +991,19 @@ namespace JocoRobos.Cad
                 var unsaved = docs.Where(d => d.GetSaveFlag() && !d.IsOpenedReadOnly()).Select(d => Path.GetFileName(d.GetPathName())).ToList();
                 if (unsaved.Count > 0)
                     throw new InvalidOperationException("Save these first (they have changes you can keep):\n\n" + String.Join("\n", unsaved.Take(10)));
-                var lost = docs.Where(d => d.GetSaveFlag() && d.IsOpenedReadOnly() && d.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY)
-                    .Select(d => Path.GetFileName(d.GetPathName())).ToList();
-                if (lost.Count > 0 && MessageBox.Show(new SolidWorksWindow(), "These read-only files have unsaved changes that can't be kept:\n\n" +
-                    String.Join("\n", lost.Take(10)) + "\n\nClose them anyway and get teammates' changes?", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
-                    return;
+                // Read-only documents (assemblies too: an assembly edit can be real, not just a rebuild) can't be saved into the robot.
+                // Closing discards those changes, so warn, and keep a copy of each in Set Aside first.
+                var dirty = docs.Where(d => d.GetSaveFlag() && d.IsOpenedReadOnly()).ToList();
+                if (dirty.Count > 0)
+                {
+                    if (MessageBox.Show(new SolidWorksWindow(), "These read-only files have unsaved changes (for an assembly this can also be just a rebuild):\n\n" +
+                        String.Join("\n", dirty.Take(10).Select(d => Path.GetFileName(d.GetPathName()))) + (dirty.Count > 10 ? "\n…" : "") +
+                        "\n\nThey can't be saved into the robot, so a copy of each goes to " + Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside") +
+                        " before closing. Close them and get teammates' changes?", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                        return;
+                    foreach (var doc in dirty)
+                        SaveSafetyCopy(doc, mine.First(w => w.Contains(doc.GetPathName())));
+                }
                 // Reopen afterwards what had its own window (not the parts loaded inside an assembly), in the same order,
                 // and end on the one that was active.
                 var active = application.ActiveDoc as ModelDoc2;

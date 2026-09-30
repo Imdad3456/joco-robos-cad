@@ -73,6 +73,9 @@ namespace JocoRobos.Cad
         private List<SubmitIssue> issues = new List<SubmitIssue>();
         private string notice;
         private string note;
+        // Set while the last scan or check didn't finish: Submit stays blocked until one does, so a crash in a check
+        // can never skip it.
+        private string scanFailure, checkFailure;
         private IssueLevel noteLevel;
         private bool working, populating;
         private string workingText;
@@ -235,12 +238,13 @@ namespace JocoRobos.Cad
                 var fresh = await host.Scan();
                 if (fresh.Notice != null) notice = fresh.Notice;
                 plan = fresh;
+                scanFailure = null;
                 Populate();
             }
             catch (Exception exception)
             {
                 ErrorLog.Write("Submit scan", exception);
-                SetNote("Couldn't check your changes: " + exception.Message, IssueLevel.Blocking);
+                scanFailure = exception.Message;
             }
             finally { End(); }
             Recheck();
@@ -250,14 +254,22 @@ namespace JocoRobos.Cad
         {
             if (plan != null)
             {
-                try { issues = host.Check(plan, SelectedPaths, acknowledged); }
+                try
+                {
+                    issues = host.Check(plan, SelectedPaths, acknowledged);
+                    checkFailure = null;
+                }
                 catch (Exception exception)
                 {
                     ErrorLog.Write("Submit checks", exception);
                     issues = new List<SubmitIssue>();
-                    SetNote("Couldn't check your files: " + exception.Message, IssueLevel.Blocking);
+                    checkFailure = exception.Message;
                 }
             }
+            string failure = scanFailure != null ? "Couldn't check your changes: " + scanFailure : checkFailure != null ? "Couldn't check your files: " + checkFailure : null;
+            if (failure != null)
+                issues.Insert(0, new SubmitIssue { Level = IssueLevel.Blocking, Key = "check-failed", Title = "The checks didn't finish",
+                    Description = failure + "\nSubmit stays off until they do. Click Check again." });
             Render();
         }
 
