@@ -68,6 +68,16 @@ jobs:
         if: steps.sw.outputs.found == 'true'
         shell: pwsh
         run: ./scripts/Build-Installer.ps1 -SolidWorksInteropDir "$env:GITHUB_WORKSPACE\lib\solidworks"
+      - name: Built add-in reports the release version
+        if: steps.sw.outputs.found == 'true'
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/JocoRobos.Cad/JocoRobos.Cad.csproj
+          $version = ($project.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+          $info = (Get-Item src/JocoRobos.Cad/bin/Release/net48/JocoRobos.Cad.dll).VersionInfo
+          if ($info.ProductVersion -ne $version -or $info.FileVersion -ne "$version.0") {
+            throw "JocoRobos.Cad.dll reports $($info.ProductVersion) / $($info.FileVersion), expected $version. The updater would offer the same release forever."
+          }
       - name: Keep installer for download
         if: steps.sw.outputs.found == 'true'
         uses: actions/upload-artifact@v4

@@ -16,9 +16,11 @@ namespace JocoRobos.Cad
         {
             get
             {
-                var attribute = (AssemblyFileVersionAttribute)Attribute.GetCustomAttribute(typeof(Updater).Assembly, typeof(AssemblyFileVersionAttribute));
+                // The release version (<Version> in the .csproj). AssemblyVersion stays fixed for COM registration.
+                var attribute = (AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(typeof(Updater).Assembly, typeof(AssemblyInformationalVersionAttribute));
                 Version version;
-                return attribute != null && Version.TryParse(attribute.Version, out version) ? Normalize(version) : new Version(0, 0, 0);
+                string text = attribute?.InformationalVersion.Split('+')[0];
+                return text != null && Version.TryParse(text, out version) ? Normalize(version) : new Version(0, 0, 0);
             }
         }
 
