@@ -50,9 +50,11 @@ namespace JocoRobos.Cad
     {
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "JOCO ROBOS CAD";
-        private const int GroupId = 591902;
+        // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
+        private const int GroupId = 591903;
+        private static readonly int[] OldGroupIds = { 591901, 591902 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591912;
+        private const int LayoutVersion = 591913;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -107,7 +109,10 @@ namespace JocoRobos.Cad
             using (RegistryKey settings = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
             {
                 bool migrate = Convert.ToInt32(settings.GetValue("CommandLayout", 0)) != LayoutVersion;
-                if (migrate) commands.RemoveCommandGroup2(591901, false);
+                if (migrate)
+                    foreach (int old in OldGroupIds)
+                        try { commands.RemoveCommandGroup2(old, false); }
+                        catch (Exception exception) { ErrorLog.Write("remove old toolbar " + old, exception); }
                 int error = 0;
                 CommandGroup group = commands.CreateCommandGroup2(GroupId, Title,
                     "Robot CAD collaboration", Title, -1, migrate, ref error);
