@@ -72,7 +72,7 @@ namespace JocoRobos.Cad
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false;
             MinimizeBox = false;
-            Controls.Add(new Label { Text = "Server: cad.imdad.stream\nRobot: 2027-Robot", Location = new Point(20, 18), Size = new Size(435, 40) });
+            Controls.Add(new Label { Text = "Server: " + WorkspaceInfo.Server.Host, Location = new Point(20, 18), Size = new Size(435, 40) });
             Controls.Add(new Label { Text = "Username", Location = new Point(20, 78), AutoSize = true });
             username.SetBounds(125, 75, 325, 25);
             username.Text = currentUser ?? "";

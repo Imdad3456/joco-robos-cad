@@ -70,11 +70,26 @@ namespace JocoRobos.Cad
             WorkspacePolicy.RequireInside(Root, Root);
             if (!IsCheckedOut)
                 throw new InvalidOperationException("Click Open Robot first to download " + Info.Label + ".");
+            FollowServerMove(client);
             var info = GetInfo(client, new SvnPathTarget(Root));
             RequireIdentity(info);
             if (!SameUri(info.Uri, Repository) ||
                 !String.Equals(Path.GetFullPath(client.GetWorkingCopyRoot(Root)).TrimEnd('\\'), Root, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("This folder is linked to a different team robot, so JOCO won't touch it. Ask a mentor:\n" + Root);
+        }
+
+        // The server moved to a new address (same repository): point this copy there. SVN checks it's the same repository
+        // first, and nothing is downloaded again. Edits, locks, and unsubmitted work are untouched.
+        private void FollowServerMove(SvnClient client)
+        {
+            var info = GetInfo(client, new SvnPathTarget(Root));
+            if (SameUri(info.Uri, Repository) || !WorkspacePolicy.IsOldAddress(info.Uri, Repository, WorkspaceInfo.OldServerHosts)) return;
+            try { client.Relocate(Root, info.Uri, Repository); }
+            catch (SvnException failure)
+            {
+                throw new InvalidOperationException("The team server has a new address (" + WorkspaceInfo.Server.Host + "), but this computer couldn't reach it to switch " +
+                    Info.Label + " over. Nothing was changed; try again on another network, or Copy Diagnostics for a mentor.\n\n" + failure.Message, failure);
+            }
         }
 
         private static bool SameUri(Uri a, Uri b)

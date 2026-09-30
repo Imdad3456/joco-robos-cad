@@ -79,7 +79,9 @@ namespace JocoRobos.Cad
             Directory.CreateDirectory(path);
 #endif
         }
-        internal static readonly Uri Server = new Uri("https://cad.imdad.stream/");
+        internal static readonly Uri Server = new Uri("https://cad.team5919.org/");
+        // Earlier addresses of the same server: robot copies downloaded from them are moved to Server automatically.
+        internal static readonly string[] OldServerHosts = { "cad.imdad.stream" };
         internal readonly string Name;
         internal readonly Guid Id;
         internal readonly bool Archived;

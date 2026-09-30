@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace JocoRobos.Cad
@@ -148,6 +149,14 @@ namespace JocoRobos.Cad
                 ? "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Files saved here couldn't be opened by everyone else, " +
                   "so you can look at the robot but not edit or submit it. Use SOLIDWORKS " + team + ", or ask a mentor (the team upgrades together)."
                 : "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Update SOLIDWORKS to " + team + " to edit and submit.";
+        }
+
+        /// <summary>True when a robot copy points at an earlier address of this same server (same repository path).</summary>
+        internal static bool IsOldAddress(Uri current, Uri expected, IEnumerable<string> oldHosts)
+        {
+            if (current == null || expected == null || !String.Equals(current.Scheme, expected.Scheme, StringComparison.OrdinalIgnoreCase)) return false;
+            return oldHosts.Any(h => String.Equals(h, current.Host, StringComparison.OrdinalIgnoreCase)) &&
+                String.Equals(current.AbsolutePath.TrimEnd('/'), expected.AbsolutePath.TrimEnd('/'), StringComparison.Ordinal);
         }
 
         internal static bool OwnsLock(string user, string localToken, string remoteToken, string owner)

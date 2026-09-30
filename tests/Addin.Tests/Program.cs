@@ -76,7 +76,7 @@ static class Program
             var catalog = Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)));
             Check(catalog.Active == "2028-Robot" && catalog.Robots.Count == 2 && catalog.Robots[0].Archived && !catalog.Robots[1].Archived, "Catalog robots misread");
             Check(catalog.Library != null && catalog.Library.IsLibrary && catalog.Library.Id == new Guid("16dfa156-0828-4b34-a789-87ab9d9cff6b"), "Catalog library misread");
-            Check(catalog.Robots[1].Repository.AbsoluteUri == "https://cad.imdad.stream/svn/2028-Robot/", "Repository URL wrong");
+            Check(catalog.Robots[1].Repository.AbsoluteUri == "https://cad.team5919.org/svn/2028-Robot/", "Repository URL wrong");
             Denied(() => Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"version\": 1, \"active\": \"x\", \"robots\": [{\"name\": \"../evil\", \"uuid\": \"b8f359f6-f382-4c21-998e-c00f2827aa38\"}]}"))), "Unsafe robot name accepted");
             Denied(() => Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("not json"))), "Garbage catalog accepted");
             string sha = new string('a', 64);
@@ -133,6 +133,10 @@ static class Program
                 "https://sarah:pw123@cad.imdad.stream/svn\nX-Joco-Token: abcdef0123456789\nr42 sarah: Added camera mount");
             Check(!report.Contains("c2FyYWg6") && !report.Contains("hunter2") && !report.Contains("K7QM") && !report.Contains("pw123") &&
                 !report.Contains("abcdef0123456789") && report.Contains("Added camera mount") && report.Contains("cad.imdad.stream"), "Diagnostics keep no secrets: " + report);
+            Check(WorkspacePolicy.IsOldAddress(new Uri("https://cad.imdad.stream/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/2026-Robot/"), WorkspaceInfo.OldServerHosts) &&
+                !WorkspacePolicy.IsOldAddress(new Uri("https://cad.imdad.stream/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/Library/"), WorkspaceInfo.OldServerHosts) &&
+                !WorkspacePolicy.IsOldAddress(new Uri("https://evil.example/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/2026-Robot/"), WorkspaceInfo.OldServerHosts),
+                "Robot copies move only from this server's old address, same repository");
             SubmitChecks(temp);
             PaneChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
