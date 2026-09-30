@@ -164,6 +164,9 @@ namespace JocoRobos.Cad
                 var remote = GetInfo(client, new SvnUriTarget(expected));
                 if (WorkspacePolicy.OwnsLock(login.UserName, local.Lock?.Token, remote.Lock?.Token, remote.Lock?.Owner))
                     return login.UserName;
+                if (remote.Lock != null && remote.Lock.Owner == login.UserName)
+                    throw new InvalidOperationException("You already locked this file from another computer (or before reinstalling).\n\n" +
+                        "Submit or Release Edit it there. If that computer isn't available, ask a mentor to release the lock on the Locks page.");
                 if (remote.Lock != null)
                     throw new InvalidOperationException("Locked by " + remote.Lock.Owner + ". You can inspect this file, but cannot edit it.");
                 RequireClean(status);
@@ -182,6 +185,34 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("The server changed during locking. Your lock is retained; close documents and Update before Edit.");
                 return login.UserName;
             }
+        }
+
+        /// <summary>Unsubmitted work in this folder, checked locally (no network): changed, new, missing files and held locks.</summary>
+        internal List<string> LocalWork()
+        {
+            var work = new List<string>();
+            if (!IsCheckedOut) return work;
+            using (var client = Client())
+                foreach (var item in Status(client, Root, false, SvnDepth.Infinity))
+                {
+                    string path = Path.GetFullPath(item.FullPath);
+                    if (path.TrimEnd('\\').Equals(Root, StringComparison.OrdinalIgnoreCase)) continue;
+                    string name = path.Substring(Root.Length + 1);
+                    switch (item.LocalNodeStatus)
+                    {
+                        case SvnStatus.Modified: case SvnStatus.Added: case SvnStatus.Replaced: work.Add(name + " (changed)"); break;
+                        case SvnStatus.Missing: case SvnStatus.Deleted: work.Add(name + " (missing)"); break;
+                        case SvnStatus.NotVersioned:
+                            if (Directory.Exists(path) ? Directory.EnumerateFiles(path, "*.sld*", SearchOption.AllDirectories).Any(WorkspacePolicy.IsSubmittableCad)
+                                                       : WorkspacePolicy.IsSubmittableCad(path))
+                                work.Add(name + " (new)");
+                            break;
+                        default:
+                            if (item.LocalLock != null) work.Add(name + " (locked by you)");
+                            break;
+                    }
+                }
+            return work;
         }
 
         // Read-only view for the status pane: never changes files, never takes the operation lock.

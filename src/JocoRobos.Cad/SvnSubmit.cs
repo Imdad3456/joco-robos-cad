@@ -30,6 +30,8 @@ namespace JocoRobos.Cad
         internal readonly List<string> Blocked = new List<string>();
         // Changed files that can't be submitted (someone else's lock, or a newer server version): Set Aside can move them out of the way.
         internal readonly List<SubmitItem> SetAside = new List<SubmitItem>();
+        // Deleted or missing team files that Restore Deleted Files can bring back.
+        internal readonly List<SubmitItem> Restore = new List<SubmitItem>();
         internal string Notice;
     }
 
@@ -110,6 +112,11 @@ namespace JocoRobos.Cad
                             plan.Blocked.Add(relative + " — SVN settings changed locally; ask a mentor");
                         else if (!WorkspacePolicy.IsCad(path) || owned)
                             plan.Items.Add(Item(SubmitKind.Modified, path));
+                        else if (item.RemoteLock != null && item.RemoteLock.Owner == login.UserName)
+                        {
+                            plan.Blocked.Add(relative + " — changed, but you locked it from another computer. Submit it there, or ask a mentor to release that lock");
+                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
+                        }
                         else if (item.RemoteLock != null)
                         {
                             plan.Blocked.Add(relative + " — changed, but " + item.RemoteLock.Owner + " is editing it. Use Set Aside My Changes to keep your version separately");
@@ -129,7 +136,8 @@ namespace JocoRobos.Cad
                         break;
                     case SvnStatus.Missing:
                     case SvnStatus.Deleted:
-                        plan.Blocked.Add(relative + " — missing or renamed. Deleting/renaming CAD is not supported yet; ask a mentor");
+                        plan.Blocked.Add(relative + " — missing. If it was deleted by accident, use Tools → JOCO ROBOS CAD → Restore Deleted Files. Renaming or removing team CAD is a mentor task");
+                        plan.Restore.Add(Item(SubmitKind.Modified, path));
                         break;
                     default:
                         plan.Blocked.Add(relative + " — " + local.ToString().ToLowerInvariant() + "; ask a mentor");
@@ -228,6 +236,26 @@ namespace JocoRobos.Cad
                 try { ReconcileReadOnly(client); }
                 catch (Exception failure) { result.Warnings.Add("Could not refresh read-only files; click Update later. " + failure.Message); }
                 return result;
+            }
+        }
+
+        /// <summary>Brings back the team's copy of files deleted or missing on this computer. Never touches other files.</summary>
+        internal int RestoreDeleted(IList<SubmitItem> items)
+        {
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                int restored = 0;
+                foreach (var item in items.Where(x => x.Workspace.Name == Info.Name))
+                {
+                    string path = WorkspacePolicy.RequireInside(Root, item.Path);
+                    var status = Status(client, path, false, SvnDepth.Empty).SingleOrDefault();
+                    if (status == null || (status.LocalNodeStatus != SvnStatus.Missing && status.LocalNodeStatus != SvnStatus.Deleted)) continue;
+                    client.Revert(path, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                    restored++;
+                }
+                ReconcileReadOnly(client);
+                return restored;
             }
         }
 

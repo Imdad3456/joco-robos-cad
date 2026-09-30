@@ -77,6 +77,21 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 - 🧑 Edit a part, don't change it, close it. Within a few seconds the pane's "Your locked files" no longer lists it, and 🌐 Locks doesn't show it.
 - 🧑 Open the whole robot and just look around (rotate, zoom, open subassemblies). You should **not** get any lock questions. Tell me if you do.
 
+## I. New in 0.7
+
+- 🧑 **Unsubmitted reminder:** change and save a locked part. The panel shows "⚠ 1 saved change not submitted". Close SOLIDWORKS: it asks once whether to Submit first. "No" closes normally, and the lock stays.
+- 🧑 **Read-only warning:** change a part without Edit and answer **No** to "Lock it now?". The panel shows "⚠ Unsaved changes in a read-only file".
+- 🧑 **Other computer:** Edit a part on the VM, then try Edit on the same part while signed in as imdad on another PC (or after deleting and re-downloading the robot folder). Expect "You already locked this file from another computer".
+- 🧑 **Duplicate names:** save a new part as `C:\JOCO-ROBOS\2027-Robot\20_Intake\coxa.SLDPRT` (same name as an existing part), then Submit. Expect a "same name" refusal.
+- 🧑 **Lightweight:** set the robot to open lightweight (Tools → Options → Performance), select a component, and click Edit. It resolves and locks.
+- 🧑 **Restore:** close SOLIDWORKS, delete a part in Explorer, then **Tools → Restore Deleted Files**. It comes back read-only.
+- 🧑 **External parts:** download any vendor STEP/SLDPRT (for example a REV part) → **Tools → Insert External Part**. It lands in `90_COTS\Imported\<name>` and inserts. Then insert a Desktop part the normal way → Submit refuses → **Tools → Import Outside References** fixes it.
+- 🌐 **Undo:** on Recent submits, click **Undo…** on a test submit → **Undo rN**. After Update, students have the previous versions. Undo is refused while someone has one of those files locked.
+- 🌐 **Health:** the Seasons tab shows Deck backup, off-device backup (both today), and disk space.
+- 🌐 **Versions:** the Accounts tab shows your add-in version, last seen, and computer name. The Add-in tab says how many students run the published version.
+- 🌐 **Season change with work outstanding:** with a saved-but-unsubmitted change in 2027, create and activate `2028-Robot`. The page notes your lock. 🧑 Open Robot keeps you on 2027 with an explanation → Submit → the next Open Robot switches you to 2028. Then 🌐 re-activate 2027 and delete 2028.
+- 🧑 **Shared PC:** sign in to Windows as a second user and install. That user's robot goes to `C:\Users\<them>\JOCO-ROBOS`, and they can't open the first user's `C:\JOCO-ROBOS`.
+
 ## H. Failure cases
 
 27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.

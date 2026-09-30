@@ -33,6 +33,9 @@ namespace JocoRobos.Cad
         [DispId(11)] void InstallUpdate();
         [DispId(12)] void OpenOldRobot();
         [DispId(13)] void SetAsideChanges();
+        [DispId(14)] void RestoreDeletedFiles();
+        [DispId(15)] void InsertExternalPart();
+        [DispId(16)] void ImportOutsideReferences();
     }
 
     [ComVisible(true)]
@@ -46,7 +49,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591907;
+        private const int LayoutVersion = 591908;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -62,6 +65,7 @@ namespace JocoRobos.Cad
         private Catalog.AddinRelease offeredUpdate;
         private string promptedVersion;
         private bool updateChecked;
+        private volatile bool heartbeatSent;
         private DocumentWatcher watcher;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
@@ -73,6 +77,7 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("SOLIDWORKS could not register the callbacks.");
                 commands = application.GetCommandManager(Cookie);
                 CreateCommands();
+                application.DestroyNotify += OnSolidWorksClosing;
                 // The pane is a convenience; the toolbar must still work if it cannot be created.
                 try { CreatePane(); }
                 catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
@@ -109,6 +114,9 @@ namespace JocoRobos.Cad
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu);
                 Add(group, "Set Aside My Changes", "Save your version of changed files separately and restore the team's", nameof(SetAsideChanges), 12, menu);
+                Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu);
+                Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu);
+                Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
                 group.HasToolbar = true;
@@ -212,7 +220,8 @@ namespace JocoRobos.Cad
             {
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
-                var state = StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt);
+                var state = StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
+                    doc != null && doc.GetSaveFlag());
                 var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
                 if (season != null && !season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name)
                 {
@@ -240,6 +249,7 @@ namespace JocoRobos.Cad
             Task.Run(() =>
             {
                 var catalog = cached ?? Catalog.Fetch(login);
+                if (!heartbeatSent) heartbeatSent = SendHeartbeat(login);
                 var robot = new SvnWorkspace(login, catalog.Robot).Snapshot();
                 var library = catalog.Library == null ? null : new SvnWorkspace(login, catalog.Library).Snapshot();
                 return Tuple.Create(catalog, robot, library);
@@ -281,6 +291,32 @@ namespace JocoRobos.Cad
                     }
                 }));
             });
+        }
+
+        // Lets mentors see which add-in version each student runs (Accounts tab). Best effort, once per session.
+        private static bool SendHeartbeat(NetworkCredential login)
+        {
+            try
+            {
+                var request = (HttpWebRequest)WebRequest.Create(new Uri(WorkspaceInfo.Server, "admin/api/heartbeat"));
+                request.Method = "POST";
+                request.Timeout = 15000;
+                request.ContentType = "application/json";
+                request.UserAgent = "JOCO-ROBOS-CAD";
+                request.Headers["X-Joco-Client"] = "addin";
+                request.Headers[HttpRequestHeader.Authorization] = "Basic " +
+                    Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
+                byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"version\": \"" + Updater.Current + "\", \"computer\": \"" +
+                    System.Text.RegularExpressions.Regex.Replace(System.Environment.MachineName, "[^A-Za-z0-9._-]", "") + "\"}");
+                using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
+                using (request.GetResponse()) { }
+                return true;
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Trace.WriteLine("JOCO heartbeat: " + exception.Message);
+                return false;
+            }
         }
 
         // ---------- add-in updates ----------
@@ -334,6 +370,21 @@ namespace JocoRobos.Cad
             {
                 if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
                 NetworkCredential login = dialog.Login;
+                // Lock tokens and unsubmitted edits belong to the account that made them.
+                if (saved != null && !String.Equals(saved.UserName, login.UserName, StringComparison.OrdinalIgnoreCase))
+                {
+                    var work = new List<string>();
+                    OperationDialog.Run("Checking this computer's unsubmitted work…", () =>
+                    {
+                        var catalog = Catalog.Fetch(saved);
+                        foreach (var workspace in catalog.All) work.AddRange(new SvnWorkspace(saved, workspace).LocalWork());
+                        return true;
+                    });
+                    if (work.Count > 0)
+                        throw new InvalidOperationException("This Windows account has unsubmitted work from the CAD account '" + saved.UserName + "':\n\n" +
+                            String.Join("\n", work.Take(8)) + "\n\nSubmit or Set Aside it while signed in as " + saved.UserName + " before switching accounts. " +
+                            "Each student should use their own Windows account; on a shared PC each gets a separate robot folder.");
+                }
                 OperationDialog.Run("Checking your CAD account…", () =>
                 {
                     var catalog = Catalog.Fetch(login);
@@ -345,9 +396,52 @@ namespace JocoRobos.Cad
             }
         }
 
-        private static Catalog LoadCatalog(NetworkCredential login)
+        private Catalog LoadCatalog(NetworkCredential login)
         {
-            return OperationDialog.Run("Contacting the CAD server…", () => Catalog.Fetch(login));
+            var catalog = OperationDialog.Run("Contacting the CAD server…", () => Catalog.Fetch(login));
+            KeepUnfinishedSeason(login, catalog);
+            return catalog;
+        }
+
+        // Mentors made a new season active, but this student still has unsubmitted work in the old one:
+        // stay on the old season until it's submitted or set aside, so nothing is stranded.
+        private void KeepUnfinishedSeason(NetworkCredential login, Catalog catalog)
+        {
+            if (Catalog.ChosenRobot != "") return;
+            string previous;
+            using (var key = Registry.CurrentUser.OpenSubKey(@"Software\JOCO ROBOS\CAD"))
+                previous = key?.GetValue("LastRobot") as string;
+            var old = catalog.Robots.FirstOrDefault(r => r.Name == previous);
+            if (old == null || old.Name == catalog.Robot.Name) return;
+            var work = new SvnWorkspace(login, old).LocalWork();
+            if (work.Count == 0) return;
+            if (old.Archived)
+            {
+                // Can't be submitted any more; the files stay on disk untouched.
+                Message(old.Name + " is archived, but this computer still has unsubmitted work in it:\n\n" + String.Join("\n", work.Take(8)) +
+                    "\n\nThose files stay in " + old.Root + ". Ask a mentor to unarchive " + old.Name + " briefly so you can Submit them, " +
+                    "or copy what you need into " + catalog.Active + ".", MessageBoxIcon.Warning);
+                return;
+            }
+            Catalog.ChosenRobot = old.Name;
+            using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
+                key.SetValue("AutoPinned", 1, RegistryValueKind.DWord);
+            Message("Mentors started " + catalog.Active + ", but you still have unfinished work in " + old.Name + ":\n\n" +
+                String.Join("\n", work.Take(8)) + (work.Count > 8 ? "\n…" : "") + "\n\nYou'll stay on " + old.Name + " until you Submit or Set Aside it. " +
+                "After that, Open Robot switches you to " + catalog.Active + " automatically.", MessageBoxIcon.Warning);
+        }
+
+        // After an automatic hold on an old season: once its work is done, follow the active season again.
+        private void ReleaseSeasonHold(NetworkCredential login, Catalog catalog)
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(@"Software\JOCO ROBOS\CAD"))
+                if (key == null || Convert.ToInt32(key.GetValue("AutoPinned", 0)) == 0) return;
+            if (catalog.Robot.Name == catalog.Active || new SvnWorkspace(login, catalog.Robot).LocalWork().Count > 0) return;
+            string finished = catalog.Robot.Name;
+            Catalog.ChosenRobot = "";
+            using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
+                key.DeleteValue("AutoPinned", false);
+            Message("Everything in " + finished + " is done. Open Robot will now switch you to " + catalog.Active + ".");
         }
 
         public void SignIn()
@@ -528,10 +622,18 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("Select just one component, or clear the selection to use the whole assembly.");
                 if (components.Count == 1)
                 {
-                    var part = components[0].GetModelDoc2() as ModelDoc2;
+                    var component = components[0];
+                    if (component.IsSuppressed())
+                        throw new InvalidOperationException(Path.GetFileName(component.GetPathName()) + " is suppressed. Unsuppress it (or open the file), then click Edit.");
+                    var part = component.GetModelDoc2() as ModelDoc2;
                     if (part == null)
-                        throw new InvalidOperationException(Path.GetFileName(components[0].GetPathName()) +
-                            " is lightweight or suppressed. Right-click it → Set to Resolved, then try again.");
+                    {
+                        // Lightweight: load it fully so it can be locked. This only changes what's loaded in memory.
+                        component.SetSuppression2((int)swComponentSuppressionState_e.swComponentFullyResolved);
+                        part = component.GetModelDoc2() as ModelDoc2;
+                    }
+                    if (part == null)
+                        throw new InvalidOperationException("SOLIDWORKS couldn't load " + Path.GetFileName(component.GetPathName()) + ". Open the file itself, then click Edit.");
                     doc = part;
                 }
             }
@@ -618,6 +720,13 @@ namespace JocoRobos.Cad
             string owner = new[] { robotSnapshot, librarySnapshot }
                 .Where(x => x != null && !x.Mine.Contains(path) && x.Locks.ContainsKey(path))
                 .Select(x => x.Locks[path]).FirstOrDefault();
+            RenderStatus();
+            if (owner != null && owner == paneUser)
+            {
+                Message("You locked " + name + " from another computer, so changes here can't be saved into the robot.\n\n" +
+                    "Submit it from that computer, or ask a mentor to release the lock.", MessageBoxIcon.Warning);
+                return;
+            }
             if (owner != null)
             {
                 Message(owner + " is editing " + name + ", so your changes can't be saved into the robot.\n\n" +
@@ -627,6 +736,8 @@ namespace JocoRobos.Cad
             if (MessageBox.Show(new SolidWorksWindow(), "You're changing " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
                 "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
                 Execute(() => EditDocument(doc));
+            else
+                RenderStatus(); // The pane keeps showing the unsaved changes until they lock or undo.
         }
 
         // Closing a locked file without saving changes gives it back, so forgotten locks don't block teammates.
@@ -688,7 +799,9 @@ namespace JocoRobos.Cad
                 }));
                 if (candidates.Count == 0) { Message("You have no changed files to set aside."); return; }
                 List<SubmitItem> chosen;
-                using (var dialog = new SetAsideDialog(candidates))
+                using (var dialog = new ChecklistDialog("Set Aside My Changes",
+                    "Checked files are copied to " + Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside") + ", then replaced with the team's version.\n" +
+                    "Use this when someone else is editing a file you changed, or to undo changes while keeping a copy.", "Set aside", candidates, false))
                 {
                     if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
                     chosen = dialog.Selected;
@@ -701,7 +814,59 @@ namespace JocoRobos.Cad
                     folders.Add(OperationDialog.Run("Saving your versions and restoring the team's…", () => SvnWorkspace.Exclusive(() => svn.SetAside(chosen))));
                 Message("Your versions are saved in:\n" + String.Join("\n", folders) + "\n\nThe team's versions are back in the robot. Click Update to get the newest, " +
                     "then Edit when the file is free. Open your saved copy side by side to redo or copy your changes.");
+                ReleaseSeasonHold(login, catalog);
             });
+        }
+
+        public void RestoreDeletedFiles()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var workspaces = new[] { catalog.Robot, catalog.Library }
+                    .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
+                var missing = new List<SubmitItem>();
+                OperationDialog.Run("Looking for deleted files…", () => SvnWorkspace.Exclusive(() =>
+                {
+                    foreach (var plan in workspaces.Select(w => w.PrepareSubmit())) missing.AddRange(plan.Restore);
+                    return true;
+                }));
+                if (missing.Count == 0) { Message("No team files are missing on this computer."); return; }
+                List<SubmitItem> chosen;
+                using (var dialog = new ChecklistDialog("Restore Deleted Files",
+                    "These team files are missing or deleted on this computer. Checked files are restored from the server.\n" +
+                    "Renaming or removing team CAD on purpose is a mentor task.", "Restore", missing, true))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    chosen = dialog.Selected;
+                }
+                int restored = 0;
+                foreach (var svn in workspaces.Where(w => chosen.Any(c => c.Workspace.Name == w.Info.Name)))
+                    restored += OperationDialog.Run("Restoring…", () => SvnWorkspace.Exclusive(() => svn.RestoreDeleted(chosen)));
+                Message("Restored " + restored + " file(s) from the server.");
+            });
+        }
+
+        // One reminder when SOLIDWORKS closes with unsubmitted work. Never submits by itself.
+        private int OnSolidWorksClosing()
+        {
+            try
+            {
+                var login = CredentialStore.Read();
+                var catalog = paneCatalog;
+                if (busy || login == null || catalog == null) return 0;
+                var work = new[] { catalog.Robot, catalog.Library }.Where(w => w != null && !w.Archived)
+                    .SelectMany(w => new SvnWorkspace(login, w).LocalWork().Where(x => !x.EndsWith("(missing)")).Select(x => w.Label + ": " + x)).ToList();
+                if (work.Count == 0) return 0;
+                if (MessageBox.Show(new SolidWorksWindow(), "You still have unsubmitted team CAD:\n\n" + String.Join("\n", work.Take(10)) +
+                    (work.Count > 10 ? "\n…" : "") + "\n\nYour locks stay until you Submit, which can block teammates.\n\nSubmit now before exiting?",
+                    Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
+                    Submit();
+            }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO closing check: " + exception); }
+            return 0;
         }
 
         public void ReleaseEdit()
@@ -771,6 +936,7 @@ namespace JocoRobos.Cad
                     comment = dialog.Comment;
                 }
                 if (!RequireReferencesIncluded(selected, plan, catalog)) return;
+                RequireUniqueNames(selected);
                 // One revision per repository. The library goes last so a robot failure stops before it.
                 var lines = new List<string>();
                 bool warned = false;
@@ -796,7 +962,25 @@ namespace JocoRobos.Cad
                     warned |= result.Warnings.Count > 0;
                 }
                 Message(String.Join("\n\n", lines), warned ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                ReleaseSeasonHold(login, catalog);
             });
+        }
+
+        // SOLIDWORKS mixes up different files with the same name (even in different folders), so new files need unique names.
+        private static void RequireUniqueNames(List<SubmitItem> selected)
+        {
+            var problems = new List<string>();
+            foreach (var group in selected.Where(x => x.Kind == SubmitKind.New).GroupBy(x => x.Workspace.Name))
+            {
+                var index = CadByName(group.First().Workspace.Root);
+                foreach (var item in group)
+                    foreach (string other in index[Path.GetFileName(item.Path)].Where(p => !p.Equals(item.Path, StringComparison.OrdinalIgnoreCase)))
+                        problems.Add(item.Relative + "  has the same name as  " + other.Substring(item.Workspace.Root.Length + 1));
+            }
+            if (problems.Count > 0)
+                throw new InvalidOperationException("SOLIDWORKS can't tell apart different files with the same name, even in different folders:\n\n" +
+                    String.Join("\n", problems.Distinct().Take(8)) + "\n\nRename your new file with File → Save As (for example Intake_Plate.SLDPRT), " +
+                    "replace it in the assembly, save, and Submit again. Nothing was submitted.");
         }
 
         // Teammates must be able to open what is submitted: every reference inside the same robot
@@ -840,7 +1024,7 @@ namespace JocoRobos.Cad
             if (problems.Count > 0)
                 throw new InvalidOperationException("Teammates would not be able to open this submission:\n\n" +
                     String.Join("\n\n", problems.Take(5)) + (problems.Count > 5 ? "\n\n…and " + (problems.Count - 5) + " more files" : "") +
-                    "\n\nSave a copy of each outside part into the robot folder, replace the component, save, and Submit again. Nothing was submitted.");
+                    "\n\nFix it automatically: open the assembly, click Edit, then Tools → JOCO ROBOS CAD → Import Outside References. Nothing was submitted.");
             if (temporary.Count == 0) return true;
             string examples = String.Join(", ", temporary.Take(4)) + (temporary.Count > 4 ? ", …" : "");
             return MessageBox.Show(new SolidWorksWindow(),
@@ -923,31 +1107,65 @@ namespace JocoRobos.Cad
             var missing = files.Where(f => !File.Exists(f)).ToList();
             if (missing.Count > 0)
                 throw new InvalidOperationException("The Library is missing files this part needs:\n" + String.Join("\n", missing) + "\n\nClick Update and try again.");
+            var map = CopyAndRepoint(robot, files, f => WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f), index, reuseAny: true);
+            return map[source];
+        }
 
+        // Where an outside file goes: 90_COTS\Imported\<name of what was imported>\..., keeping its folder layout when it's under the source's folder.
+        private static Func<string, string> ImportTarget(WorkspaceInfo robot, string sourceRoot, string label)
+        {
+            string folder = Path.Combine(robot.Root, "90_COTS", "Imported", System.Text.RegularExpressions.Regex.Replace(label, @"[^A-Za-z0-9 _().&+,-]", "_").Trim());
+            string root = Path.GetFullPath(sourceRoot).TrimEnd('\\') + "\\";
+            return file => file.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+                ? Path.Combine(folder, file.Substring(root.Length))
+                : Path.Combine(folder, Path.GetFileName(file));
+        }
+
+        /// <summary>
+        /// Copies each file to targetFor(file) and points copied assemblies and drawings at the copies.
+        /// reuseAny: an existing target is kept as is (Library rule). Otherwise an existing target is reused only if identical.
+        /// Refuses names that already exist elsewhere in the robot. On failure, removes everything this call created.
+        /// </summary>
+        private Dictionary<string, string> CopyAndRepoint(WorkspaceInfo robot, IList<string> files, Func<string, string> targetFor,
+            ILookup<string, string> index, bool reuseAny)
+        {
+            var map = files.ToDictionary(f => f, targetFor, StringComparer.OrdinalIgnoreCase);
+            var robotIndex = CadByName(robot.Root);
+            var clashes = map.Values.SelectMany(t => robotIndex[Path.GetFileName(t)].Where(p => !p.Equals(t, StringComparison.OrdinalIgnoreCase))
+                .Select(p => Path.GetFileName(t) + " already exists at " + p)).ToList();
+            clashes.AddRange(map.Values.GroupBy(t => Path.GetFileName(t), StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1)
+                .Select(g => "two different files are named " + g.Key));
+            if (clashes.Count > 0)
+                throw new InvalidOperationException("SOLIDWORKS can't tell apart different files with the same name, so nothing was copied:\n\n" +
+                    String.Join("\n", clashes.Distinct().Take(8)) + "\n\nRename the file you're importing (File → Save As with a more specific name), then try again.");
             var created = new List<string>();
             try
             {
-                foreach (string file in files)
+                foreach (var pair in map)
                 {
-                    string target = WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, file);
-                    if (File.Exists(target)) continue;
-                    Directory.CreateDirectory(Path.GetDirectoryName(target));
-                    File.Copy(file, target);
-                    File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
-                    created.Add(target);
-                }
-                foreach (string target in created.Where(t => !t.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase)))
-                {
-                    string original = files.First(f => WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f).Equals(target, StringComparison.OrdinalIgnoreCase));
-                    foreach (string reference in Dependencies(original))
+                    if (File.Exists(pair.Value))
                     {
-                        string resolved = Resolve(reference, original, index);
-                        if (resolved != null && library.Contains(resolved))
-                            application.ReplaceReferencedDocument(target, reference, WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, resolved));
+                        if (reuseAny || File.ReadAllBytes(pair.Value).SequenceEqual(File.ReadAllBytes(pair.Key))) continue;
+                        throw new InvalidOperationException("A different " + Path.GetFileName(pair.Value) + " was already imported at\n" + pair.Value +
+                            "\n\nRename one of them, then try again.");
                     }
-                    var stillLinked = Dependencies(target).Where(library.Contains).ToList();
+                    Directory.CreateDirectory(Path.GetDirectoryName(pair.Value));
+                    File.Copy(pair.Key, pair.Value);
+                    File.SetAttributes(pair.Value, File.GetAttributes(pair.Value) & ~FileAttributes.ReadOnly);
+                    created.Add(pair.Value);
+                }
+                foreach (var pair in map.Where(p => created.Contains(p.Value) && !p.Value.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase)))
+                {
+                    foreach (string reference in Dependencies(pair.Key))
+                    {
+                        string resolved = Resolve(reference, pair.Key, index);
+                        string copy;
+                        if (resolved != null && map.TryGetValue(resolved, out copy))
+                            application.ReplaceReferencedDocument(pair.Value, reference, copy);
+                    }
+                    var stillLinked = Dependencies(pair.Value).Where(d => map.ContainsKey(d)).ToList();
                     if (stillLinked.Count > 0)
-                        throw new InvalidOperationException("Could not point " + Path.GetFileName(target) + " at the robot copies of:\n" + String.Join("\n", stillLinked));
+                        throw new InvalidOperationException("Could not point " + Path.GetFileName(pair.Value) + " at the robot copies of:\n" + String.Join("\n", stillLinked));
                 }
             }
             catch
@@ -956,7 +1174,105 @@ namespace JocoRobos.Cad
                 foreach (string target in created) { try { File.Delete(target); } catch (IOException) { } }
                 throw;
             }
-            return WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, source);
+            return map;
+        }
+
+        // Everything a file needs that SOLIDWORKS can find on this computer (including 3D Interconnect temp copies while they exist).
+        private List<string> WithDependencies(string source)
+        {
+            var index = CadByName(Path.GetDirectoryName(source));
+            return new[] { source }.Concat(Dependencies(source).Select(r => File.Exists(r) ? Path.GetFullPath(r) : Resolve(r, source, index)).Where(r => r != null))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public void InsertExternalPart()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
+                var assemblyDoc = WritableRobotAssembly(catalog);
+                string source;
+                using (var dialog = new OpenFileDialog { Title = "Insert External Part (vendor download, Desktop, USB…)",
+                    InitialDirectory = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "\\Downloads",
+                    Filter = "SOLIDWORKS parts and assemblies (*.sldprt;*.sldasm)|*.sldprt;*.sldasm", RestoreDirectory = true })
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    source = Path.GetFullPath(dialog.FileName);
+                }
+                var owner = catalog.Owning(source);
+                if (owner != null && owner.IsLibrary) throw new InvalidOperationException("That's a Library part: use Insert from Library instead.");
+                if (owner != null) throw new InvalidOperationException("That file is already in " + owner.Name + ". Drag it into the assembly instead.");
+                var files = WithDependencies(source);
+                var map = CopyAndRepoint(catalog.Robot, files, ImportTarget(catalog.Robot, Path.GetDirectoryName(source), Path.GetFileNameWithoutExtension(source)),
+                    CadByName(Path.GetDirectoryName(source)), reuseAny: false);
+                AddToAssembly(assemblyDoc, map[source]);
+                Message("Inserted " + Path.GetFileName(source) + ". It and " + (files.Count - 1) + " file(s) it needs were copied into:\n" +
+                    Path.GetDirectoryName(map[source]) + "\n\nMate it, save, and Submit. The original download isn't needed anymore.");
+            });
+        }
+
+        // Fixes "uses a file outside the robot": copies every outside file the active assembly uses into the robot and repoints it.
+        public void ImportOutsideReferences()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
+                var robot = catalog.Robot;
+                var assemblyDoc = WritableRobotAssembly(catalog);
+                if (assemblyDoc.GetSaveFlag()) throw new InvalidOperationException("Save the assembly first, then try again.");
+                string assembly = Path.GetFullPath(assemblyDoc.GetPathName());
+                var robotIndex = CadByName(robot.Root);
+                var outside = Dependencies(assembly).Select(r => File.Exists(r) ? Path.GetFullPath(r) : Resolve(r, assembly, robotIndex))
+                    .Where(r => r != null && !robot.Contains(r) && File.Exists(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (outside.Count == 0) { Message("Everything " + Path.GetFileName(assembly) + " uses is already inside " + robot.Name + "."); return; }
+                var files = outside.SelectMany(WithDependencies).Where(f => !robot.Contains(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                var library = catalog.Library;
+                var importTarget = ImportTarget(robot, Path.GetDirectoryName(outside[0]), Path.GetFileNameWithoutExtension(assembly) + " imports");
+                Func<string, string> target = f => library != null && library.Contains(f) ? WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f) : importTarget(Path.Combine(Path.GetDirectoryName(outside[0]), Path.GetFileName(f)));
+                var map = CopyAndRepoint(robot, files, target, CadByName(Path.GetDirectoryName(outside[0])), reuseAny: false);
+                // SOLIDWORKS can only repoint a closed file: close, repoint this assembly and its writable sub-assemblies, reopen.
+                var writable = new[] { assembly }.Concat(Dependencies(assembly).Where(d => robot.Contains(d) && File.Exists(d) && d.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase)
+                    && (File.GetAttributes(d) & FileAttributes.ReadOnly) == 0)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                application.CloseDoc(assemblyDoc.GetTitle());
+                var notFixed = new List<string>();
+                try
+                {
+                    foreach (string file in writable)
+                        foreach (string reference in Dependencies(file))
+                        {
+                            string resolved = File.Exists(reference) ? Path.GetFullPath(reference) : Resolve(reference, file, robotIndex);
+                            string copy;
+                            if (resolved != null && map.TryGetValue(resolved, out copy))
+                                application.ReplaceReferencedDocument(file, reference, copy);
+                        }
+                    notFixed = Dependencies(assembly).Where(d => File.Exists(d) && !robot.Contains(Path.GetFullPath(d)) && !WorkspacePolicy.IsTemporary(d, Path.GetTempPath())).ToList();
+                }
+                finally
+                {
+                    int errors = 0, warnings = 0;
+                    application.OpenDoc6(assembly, (int)swDocumentTypes_e.swDocASSEMBLY, 0, "", ref errors, ref warnings);
+                }
+                Message("Copied " + map.Count + " outside file(s) into " + robot.Name + "\\90_COTS and pointed " + Path.GetFileName(assembly) + " at them." +
+                    (notFixed.Count > 0 ? "\n\nStill outside (inside a sub-assembly you haven't locked — Edit it and run this again):\n" + String.Join("\n", notFixed.Take(6)) : "") +
+                    "\n\nCheck the assembly looks right, save, then Submit.");
+            });
+        }
+
+        private ModelDoc2 WritableRobotAssembly(Catalog catalog)
+        {
+            var doc = application.ActiveDoc as ModelDoc2;
+            var owner = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : catalog.Owning(doc.GetPathName());
+            if (owner == null || owner.IsLibrary || owner.Name != catalog.Robot.Name || doc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY)
+                throw new InvalidOperationException("Open the " + catalog.Robot.Name + " assembly you're working on, and click Edit on it first.");
+            if (doc.IsOpenedReadOnly())
+                throw new InvalidOperationException("Click Edit on " + Path.GetFileName(doc.GetPathName()) + " first, so it can be changed.");
+            return doc;
         }
 
         private void AddToAssembly(ModelDoc2 assemblyDoc, string path)
@@ -1018,6 +1334,7 @@ namespace JocoRobos.Cad
             {
                 watcher?.Dispose();
                 watcher = null;
+                if (application != null) application.DestroyNotify -= OnSolidWorksClosing;
                 statusTimer?.Stop();
                 statusTimer?.Dispose();
                 if (application != null && pane != null) application.ActiveModelDocChangeNotify -= OnActiveDocumentChanged;

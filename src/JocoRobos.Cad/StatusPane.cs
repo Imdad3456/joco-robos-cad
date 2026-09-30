@@ -19,6 +19,7 @@ namespace JocoRobos.Cad
         internal Color ActiveColor = SystemColors.ControlText;
         internal string Locks = "";
         internal string Update;
+        internal string Pending = "";
     }
 
     internal sealed class StatusPane : UserControl
@@ -29,6 +30,7 @@ namespace JocoRobos.Cad
         private readonly Label activeFile = Caption(9.5f, FontStyle.Bold);
         private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
         private readonly Label locks = Caption(8.5f, FontStyle.Regular);
+        private readonly Label pending = Caption(9.5f, FontStyle.Bold, "", Color.DarkOrange);
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
         private readonly Button install = new Button { Text = "Install update", Width = 200, Height = 30, FlatStyle = FlatStyle.System };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
@@ -44,6 +46,7 @@ namespace JocoRobos.Cad
             layout.Controls.Add(robot);
             layout.Controls.Add(sync);
             layout.Controls.Add(details);
+            layout.Controls.Add(pending);
             layout.Controls.Add(Spacer());
             layout.Controls.Add(activeFile);
             layout.Controls.Add(activeStatus);
@@ -83,13 +86,15 @@ namespace JocoRobos.Cad
             activeStatus.Text = state.ActiveStatus;
             activeStatus.ForeColor = state.ActiveColor;
             locks.Text = state.Locks;
+            pending.Text = state.Pending;
+            pending.Visible = state.Pending.Length > 0;
             update.Text = state.Update ?? "";
             update.Visible = install.Visible = state.Update != null;
         }
 
         /// <summary>Plain-language status for the pane. Pure so it can be reasoned about without SOLIDWORKS.</summary>
         internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
-            string activePath, bool activeReadOnly, string error, DateTime checkedAt)
+            string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false)
         {
             var state = new PaneState();
             if (user == null)
@@ -150,6 +155,19 @@ namespace JocoRobos.Cad
                         (activeReadOnly ? "\nStill read-only in SOLIDWORKS: click Edit again." : "");
                     state.ActiveColor = Color.ForestGreen;
                 }
+                else if (owner.Locks.TryGetValue(activePath, out lockedBy) && lockedBy == user)
+                {
+                    state.ActiveStatus = "🔒 Locked by you on another computer.\nSubmit it there, or ask a mentor to release it.";
+                    state.ActiveColor = Color.DarkOrange;
+                }
+                else if (activeReadOnly && activeDirty)
+                {
+                    // Changes the student can't save yet: stay visible until they lock or undo.
+                    state.ActiveStatus = owner.Locks.TryGetValue(activePath, out lockedBy)
+                        ? "⚠ Unsaved changes, but " + lockedBy + " is editing this file.\nUndo them, or Save As a copy outside the robot folder."
+                        : "⚠ Unsaved changes in a read-only file.\nClick Edit to lock it and keep them.";
+                    state.ActiveColor = Color.DarkOrange;
+                }
                 else if (owner.Locks.TryGetValue(activePath, out lockedBy))
                 {
                     state.ActiveStatus = "🔒 Locked by " + lockedBy + "\nYou can look, measure, and reference it.";
@@ -166,6 +184,9 @@ namespace JocoRobos.Cad
                         (owner.Info.IsLibrary ? " in the Library." : ".");
                 }
             }
+            int unsubmitted = snapshots.Sum(x => x.Changed.Count + x.New.Count);
+            if (unsubmitted > 0)
+                state.Pending = "⚠ " + unsubmitted + (unsubmitted == 1 ? " saved change" : " saved changes") + " not submitted.\nClick Submit so teammates get them.";
             var mine = snapshots.SelectMany(x => x.Mine).ToList();
             state.Locks = mine.Count == 0 ? "You have no files locked." :
                 "Your locked files (" + mine.Count + "):\n" + String.Join("\n", mine.Take(8).Select(Path.GetFileName)) +

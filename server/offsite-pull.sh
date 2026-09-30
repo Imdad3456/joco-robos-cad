@@ -21,6 +21,10 @@ for name in $(ssh -o BatchMode=yes -o ConnectTimeout=20 "$deck" \
 done
 latest=$(ls -1d "$store"/2*/COMPLETE 2>/dev/null | tail -1)
 [ -n "$latest" ] || { echo 'No off-device backup exists yet' >&2; exit 1; }
+# Report to the mentor page's Health panel (best effort).
+printf '{"time": "%s", "latest": "%s", "host": "%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$(dirname "$latest")")" "$(hostname)" |
+    ssh -o BatchMode=yes -o ConnectTimeout=20 "$deck" \
+    "podman exec -i joco-svn sh -c 'mkdir -p /etc/joco/health && cat > /etc/joco/health/offsite.json && chmod 644 /etc/joco/health/offsite.json'" || true
 # Keep 90 days here, but never delete the newest backup.
 find "$store" -mindepth 2 -maxdepth 2 -name COMPLETE -mtime +"$keep_days" -print | while IFS= read -r marker; do
     [ "$marker" = "$latest" ] || rm -rf "${marker%/COMPLETE}"

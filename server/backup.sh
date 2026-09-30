@@ -21,6 +21,9 @@ podman exec joco-svn tar -C /etc/joco -cf - . | tar -xf - -C "$destination/confi
 cp -a "$HOME/server/joco-cad/source" "$destination/source"
 touch "$destination/COMPLETE"
 printf 'Verified backup: %s\n' "$destination"
+# Shown on the mentor page's Health panel; only written after a verified backup.
+printf '{"time": "%s", "folder": "%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$stamp" |
+    podman exec -i joco-svn sh -c 'mkdir -p /etc/joco/health && cat > /etc/joco/health/backup.json && chmod 644 /etc/joco/health/backup.json' || true
 # Keep completed daily backups for 14 days; leave failed/incomplete backups for review.
 find "$backup_root" -mindepth 2 -maxdepth 2 -name COMPLETE -mtime +14 -print | while IFS= read -r marker; do
     rm -rf "${marker%/COMPLETE}"

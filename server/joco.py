@@ -5,6 +5,7 @@
 listening only inside the container; Apache authenticates users and forwards
 /admin with the verified username. Students never need this page.
 """
+import calendar
 import fcntl
 import hashlib
 import hmac
@@ -34,6 +35,8 @@ AUTHZ = os.path.join(CONFIG, 'authz')
 CATALOG = os.path.join(CONFIG, 'public', 'catalog.json')
 SECRET = os.path.join(CONFIG, 'admin-secret')
 UPDATES = os.path.join(CONFIG, 'public', 'updates')
+HEALTH = os.path.join(CONFIG, 'health')
+HEARTBEATS = os.path.join(CONFIG, 'heartbeats.json')
 INSTALLER = re.compile(r'^JOCO-ROBOS-CAD-Setup-(\d{1,4})\.(\d{1,4})\.(\d{1,4})\.exe$')
 LIBRARY = 'Library'
 # GitHub Actions account: may only stage installers, never touch CAD or the admin pages.
@@ -232,6 +235,113 @@ def add_to_library(entries, author, message):
     run(*args)
 
 
+# ---------- undo a submit ----------
+
+def changed_paths(repo, rev):
+    """[(action letter, path, is_dir)] for one revision, from svnlook."""
+    result = []
+    for line in run('svnlook', 'changed', '-r', str(rev), os.path.join(REPOS, repo)).splitlines():
+        if len(line) > 4:
+            path = line[4:]
+            result.append((line[0], path.rstrip('/'), path.endswith('/')))
+    return result
+
+
+def undo_plan(repo, rev):
+    """Checks a revision can be undone safely; returns its changes. Never touches files changed again later."""
+    if repo not in repositories():
+        raise Refused('Unknown repository.')
+    if rev < 2 or rev > youngest(repo):
+        raise Refused('That revision cannot be undone.')
+    changes = changed_paths(repo, rev)
+    if not changes:
+        raise Refused('r%d changed no files (only properties or nothing).' % rev)
+    repo_path = os.path.join(REPOS, repo)
+    later = []
+    for action, path, is_dir in changes:
+        if action == 'D':
+            continue
+        try:
+            history = run('svnlook', 'history', '--limit', '1', repo_path, '/' + path).splitlines()
+        except Refused:
+            later.append(path)  # Gone now, so something later removed it.
+            continue
+        latest = next((int(line.split()[0]) for line in history if line.strip() and line.split()[0].isdigit()), rev)
+        if latest != rev:
+            later.append(path)
+    if later:
+        raise Refused('Later submits changed %s. Undo those first (newest first), or ask the student to fix it with Edit/Submit.' % ', '.join(later[:5]))
+    held = [l for l in locks(repo) if any(l['path'].lstrip('/') == p or l['path'].lstrip('/').startswith(p + '/') for _, p, _ in changes)]
+    if held:
+        raise Refused('%s is locked by %s. Ask them to Submit or release it first.' % (held[0]['path'], held[0].get('owner', '?')))
+    return changes
+
+
+def undo_submit(user, repo, rev):
+    changes = undo_plan(repo, rev)
+    url = 'file://' + os.path.join(REPOS, repo)
+    args = ['svnmucc', '--non-interactive', '--username', user, '--with-revprop', 'joco:mentor-undo=%d' % rev,
+            '-m', 'Undo r%d (by %s from the admin page)' % (rev, user), '-U', url]
+    removed_dirs = []
+    for action, path, is_dir in sorted(changes, key=lambda c: c[1]):
+        if any(path.startswith(d + '/') for d in removed_dirs):
+            continue  # Goes away with its added parent folder.
+        if action == 'A':
+            args += ['rm', path]
+            if is_dir:
+                removed_dirs.append(path)
+        elif action == 'D':
+            args += ['cp', str(rev - 1), path, path]
+        elif not is_dir:
+            # Content and properties exactly as they were before the submit, keeping history.
+            args += ['rm', path, 'cp', str(rev - 1), path, path]
+    output = run(*args)
+    match = re.search(r'r(\d+) committed', output)
+    return 'Undid r%d in %s as new revision r%s. Students get the previous versions on their next Update.' % (rev, repo, match.group(1) if match else '?')
+
+
+# ---------- health and add-in check-ins ----------
+
+def read_json(path):
+    try:
+        with open(path) as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def folder_size(path):
+    total = 0
+    for root, _, names in os.walk(path):
+        for name in names:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def age_hours(stamp):
+    try:
+        return (time.time() - calendar.timegm(time.strptime(stamp, '%Y-%m-%dT%H:%M:%SZ'))) / 3600
+    except (TypeError, ValueError):
+        return None
+
+
+def record_heartbeat(user, version, computer):
+    if not re.match(r'^\d{1,4}\.\d{1,4}\.\d{1,4}$', version or ''):
+        raise Refused('Bad version.')
+    computer = re.sub(r'[^A-Za-z0-9._-]', '', computer or '')[:40]
+    beats = read_json(HEARTBEATS) or {}
+    entry = beats.get(user, {})
+    entry.update(version=version, seen=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    if computer:
+        computers = [c for c in entry.get('computers', []) if c != computer]
+        entry['computers'] = ([computer] + computers)[:3]
+    beats[user] = entry
+    write_atomic(HEARTBEATS, json.dumps(beats, indent=2) + '\n')
+
+
 # ---------- actions (all run under Locked) ----------
 
 def act(user, form):
@@ -264,9 +374,16 @@ def act(user, form):
         name = form.get('name', '')
         if name not in repositories() or not SEASON.match(name):
             raise Refused('Unknown season.')
+        note = ''
         if action == 'activate':
             if name in state['archived']:
                 raise Refused('Unarchive ' + name + ' before making it active.')
+            previous = state['active']
+            held = locks(previous) if previous in repositories() and previous != name else []
+            if held:
+                # Not refused: the add-in keeps those students on the old season until their work is submitted.
+                note = ' Note: %s still has %d locked file(s) (%s); those students stay on %s until they Submit or Set Aside.' % (
+                    previous, len(held), ', '.join(sorted({l.get('owner', '?') for l in held})), previous)
             state['active'] = name
         elif action == 'archive':
             if name == state['active']:
@@ -277,7 +394,7 @@ def act(user, form):
         else:
             state['archived'] = [n for n in state['archived'] if n != name]
         save_state(state)
-        return {'activate': 'Students now open ' + name + '.', 'archive': name + ' is read-only.', 'unarchive': name + ' is editable again.'}[action]
+        return {'activate': 'Students now open ' + name + '.' + note, 'archive': name + ' is read-only.', 'unarchive': name + ' is editable again.'}[action]
     if action == 'release-lock':
         repo, path = form.get('repo', ''), form.get('path', '')
         if repo not in repositories() or not any(l['path'] == path for l in locks(repo)):
@@ -333,6 +450,12 @@ def act(user, form):
         if hashlib.sha256(data).hexdigest() != staged['sha256']:
             raise Refused('The staged file changed on the server. Discard it and re-run the GitHub release.')
         return release_addin(staged['file'], data, form.get('required'))
+    if action == 'undo-submit':
+        try:
+            rev = int(form.get('rev', ''))
+        except ValueError:
+            raise Refused('Unknown revision.')
+        return undo_submit(user, form.get('repo', ''), rev)
     if action == 'addin-required':
         if not state.get('addin'):
             raise Refused('No add-in has been published yet.')
@@ -491,7 +614,9 @@ class Admin(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         notice = query.get('ok', [''])[0]
         error = query.get('error', [''])[0]
-        pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page, '/admin/addin': self.addin_page}
+        self.query = query
+        pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page,
+                 '/admin/addin': self.addin_page, '/admin/undo': self.undo_page}
         if path not in pages:
             self.send_error(404)
             return
@@ -504,11 +629,14 @@ class Admin(BaseHTTPRequestHandler):
             banner = '<div class="notice ok">' + esc(notice) + '</div>'
         if error:
             banner = '<div class="notice bad">' + esc(error) + '</div>'
-        self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts', '/admin/addin': 'Add-in'}[path], banner + body, path)
+        self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts', '/admin/addin': 'Add-in',
+                   '/admin/undo': 'Undo a submit'}[path], banner + body, path)
 
     def do_POST(self):
         if urlsplit(self.path).path == '/admin/api/stage-addin':
             return self.stage()
+        if urlsplit(self.path).path == '/admin/api/heartbeat':
+            return self.heartbeat()
         state = self.guard()
         if state is None:
             return
@@ -555,6 +683,18 @@ class Admin(BaseHTTPRequestHandler):
                 message = stage_addin(os.path.basename(self.headers.get('X-Joco-File', '')), data, self.headers.get('X-Joco-Sha256', ''))
             self.reply(200, message)
         except Refused as exc:
+            self.reply(400, str(exc))
+
+    def heartbeat(self):
+        # Any student's add-in reports its version. The custom header can't be sent cross-site without CORS approval.
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
+            with Locked():
+                record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')))
+            self.reply(200, 'ok')
+        except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
 
     def reply(self, status, text):
@@ -627,13 +767,56 @@ class Admin(BaseHTTPRequestHandler):
                   '<p class="muted">Creates the standard subsystem folders with lock rules and daily backups. Students switch automatically the next time they click Open Robot or Update. '
                   'Reuse parts by adding them to the Library; students insert them with “Insert from Library”.</p>') % (self.token(), next_year)
         recent = activity(seasons[-2:] + [LIBRARY])
-        log = ''.join('<tr><td>%s</td><td class="muted">%s r%d</td><td>%s</td><td>%s<div class="muted">%s</div></td></tr>' % (
+        log = ''.join('<tr><td>%s</td><td class="muted">%s r%d</td><td>%s</td><td>%s<div class="muted">%s</div></td><td>%s</td></tr>' % (
             esc(e['date']), esc(e['repo']), e['rev'], esc(e['author']), esc(e['msg']),
-            esc(', '.join(f.rsplit('/', 1)[-1] for f in e['files'][:6]) + (' …' if len(e['files']) > 6 else ''))) for e in recent)
-        return ('<section><h2>Robot seasons</h2><div class="scroll"><table><tr><th>Season</th><th>Revision</th><th>Locks</th><th>Status</th><th></th></tr>%s</table></div></section>'
+            esc(', '.join(f.rsplit('/', 1)[-1] for f in e['files'][:6]) + (' …' if len(e['files']) > 6 else '')),
+            '<a href="/admin/undo?repo=%s&amp;rev=%d">Undo…</a>' % (quote(e['repo']), e['rev']) if e['rev'] > 1 and e['files'] else '') for e in recent)
+        return (self.health() + '<section><h2>Robot seasons</h2><div class="scroll"><table><tr><th>Season</th><th>Revision</th><th>Locks</th><th>Status</th><th></th></tr>%s</table></div></section>'
                 '<section><h2>Start a new season</h2>%s</section>'
-                '<section><h2>Recent submits</h2><div class="scroll"><table><tr><th>When (UTC)</th><th>Where</th><th>Who</th><th>What</th></tr>%s</table></div></section>') % (
-                    rows or '<tr><td colspan="5" class="muted">No seasons yet.</td></tr>', create, log or '<tr><td colspan="4" class="muted">Nothing yet.</td></tr>')
+                '<section><h2>Recent submits</h2><div class="scroll"><table><tr><th>When (UTC)</th><th>Where</th><th>Who</th><th>What</th><th></th></tr>%s</table></div></section>') % (
+                    rows or '<tr><td colspan="5" class="muted">No seasons yet.</td></tr>', create, log or '<tr><td colspan="5" class="muted">Nothing yet.</td></tr>')
+
+    def health(self):
+        disk = os.statvfs(REPOS)
+        free, total = disk.f_bavail * disk.f_frsize, disk.f_blocks * disk.f_frsize
+        items = []
+        def item(ok, text):
+            items.append('<li class="%s">%s %s</li>' % ('ok' if ok else 'bad', '✓' if ok else '⚠', text))
+        item(True, 'Server and SVN are responding')
+        for name, label, limit in (('backup.json', 'Deck backup', 36), ('offsite.json', 'Off-device backup', 72)):
+            data = read_json(os.path.join(HEALTH, name)) or {}
+            hours = age_hours(data.get('time'))
+            if hours is None:
+                item(False, label + ': no record yet')
+            else:
+                item(hours <= limit, '%s: %s (%s)' % (label, esc(data.get('time', '').replace('T', ' ').replace('Z', ' UTC')),
+                                                     'today' if hours < 24 else '%d days ago' % (hours // 24)))
+        item(free / float(total) > 0.15, 'Disk: %.1f GB free of %.1f GB' % (free / 1e9, total / 1e9))
+        sizes = ', '.join('%s %.1f MB' % (esc(n), folder_size(os.path.join(REPOS, n)) / 1e6) for n in repositories())
+        return '<section><h2>Health</h2><ul style="margin:0;padding-left:18px">%s</ul><p class="muted">Repositories: %s</p></section>' % (''.join(items), sizes)
+
+    def undo_page(self, state):
+        repo = self.query.get('repo', [''])[0]
+        try:
+            rev = int(self.query.get('rev', [''])[0])
+        except ValueError:
+            raise Refused('Unknown revision.')
+        entry = next((e for e in activity([repo], 200) if e['rev'] == rev), None) if repo in repositories() else None
+        if entry is None:
+            raise Refused('Unknown submit.')
+        described = {'A': 'added → will be removed', 'M': 'changed → previous version restored', 'U': 'changed → previous version restored',
+                     'D': 'deleted → restored', 'R': 'replaced → previous version restored'}
+        try:
+            changes = undo_plan(repo, rev)
+            problem = None
+        except Refused as exc:
+            changes, problem = changed_paths(repo, rev), str(exc)
+        rows = ''.join('<tr><td><code>%s</code></td><td class="muted">%s</td></tr>' % (esc(p + ('/' if d else '')), described.get(a, a)) for a, p, d in changes)
+        action = ('<p class="bad">%s</p>' % esc(problem)) if problem else (
+            '<p>This creates a <b>new</b> revision that puts these files back the way they were before r%d. History is kept, and the undo can itself be undone.</p>%s'
+            % (rev, self.form('undo-submit', {'repo': repo, 'rev': str(rev)}, 'Undo r%d' % rev, primary=True)))
+        return ('<section><h2>Undo %s r%d</h2><p>%s by <b>%s</b>: %s</p><div class="scroll"><table><tr><th>File</th><th>Undo will</th></tr>%s</table></div>%s'
+                '<p><a href="/admin">Back</a></p></section>') % (esc(repo), rev, esc(entry['date']), esc(entry['author']), esc(entry['msg']), rows, action)
 
     def locks_page(self, state):
         rows = ''
@@ -674,6 +857,11 @@ class Admin(BaseHTTPRequestHandler):
                        '<code>scripts\\Build-Installer.ps1</code>, and upload <code>installer\\Output\\JOCO-ROBOS-CAD-Setup-x.y.z.exe</code>. '
                        'Students get a prompt in SOLIDWORKS; after they save and close SOLIDWORKS it installs and reopens. '
                        'Use <b>Required</b> when the server or file format changed and older add-ins must not submit.</p>') % self.token()
+        beats = read_json(HEARTBEATS) or {}
+        recent = {u: b for u, b in beats.items() if (age_hours(b.get('seen')) or 1e9) < 30 * 24}
+        if current and recent:
+            on = sum(1 for b in recent.values() if version_key(b.get('version', '0.0.0')) >= version_key(current['version']))
+            info += '<p>%d of %d students seen in the last 30 days have %s or newer. Details on the Accounts tab.</p>' % (on, len(recent), esc(current['version']))
         return ('<section><h2>Student add-in</h2>%s</section><section><h2>Waiting from GitHub</h2>%s</section>'
                 '<section><h2>Upload manually</h2>%s</section>') % (info, staged_html, upload_form)
 
@@ -708,20 +896,26 @@ class Admin(BaseHTTPRequestHandler):
 
     def users_page(self, state):
         rows = ''
+        beats = read_json(HEARTBEATS) or {}
         for name in users():
             mentor = name in state['mentors']
             reset = self.form('reset-password', {'username': name}, 'Reset password',
                               '<input type="password" name="password" minlength="10" placeholder="New password" required autocomplete="new-password" aria-label="New password for %s"> ' % esc(name))
             tools = '' if name == self.user else (self.form('toggle-mentor', {'username': name}, 'Remove mentor' if mentor else 'Make mentor') + ' ' +
                                                    self.form('delete-user', {'username': name}, 'Delete'))
-            rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', reset, tools)
+            beat = beats.get(name) or {}
+            hours = age_hours(beat.get('seen'))
+            seen = '<span class="muted">never</span>' if hours is None else '%s · %s%s' % (
+                esc(beat.get('version', '?')), 'today' if hours < 24 else '%d days ago' % (hours // 24),
+                (' · ' + esc(', '.join(beat.get('computers', [])))) if beat.get('computers') else '')
+            rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', seen, reset, tools)
         add = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="add-user">'
                '<input name="username" placeholder="username (e.g. sarah)" pattern="[a-z0-9][a-z0-9._\\-]{1,31}" required aria-label="Username">'
                '<input type="password" name="password" minlength="10" placeholder="Starting password" required autocomplete="new-password" aria-label="Starting password">'
                '<label><input type="checkbox" name="mentor" value="1"> Mentor</label><button class="primary">Add account</button></form>'
                '<p class="muted">Give the student their username and password privately. They sign in once from SOLIDWORKS; it is saved in Windows.</p>') % self.token()
         return ('<section><h2>Add an account</h2>%s</section><section><h2>Accounts</h2><div class="scroll"><table>'
-                '<tr><th>User</th><th>Password</th><th></th></tr>%s</table></div></section>') % (add, rows)
+                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Password</th><th></th></tr>%s</table></div></section>') % (add, rows)
 
 
 def serve():

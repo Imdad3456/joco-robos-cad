@@ -13,7 +13,72 @@ namespace JocoRobos.Cad
     /// <summary>One SVN repository and its local folder: a robot season or the parts library.</summary>
     internal sealed class WorkspaceInfo
     {
-        internal const string BaseFolder = @"C:\JOCO-ROBOS";
+        private const string SharedFolder = @"C:\JOCO-ROBOS";
+        private static readonly Lazy<string> baseFolder = new Lazy<string>(ResolveBaseFolder);
+
+        /// <summary>
+        /// C:\JOCO-ROBOS for the Windows user who owns it (normally the only user). On a shared PC, every other
+        /// Windows user gets a private %USERPROFILE%\JOCO-ROBOS, so students never share a working copy,
+        /// lock tokens, or see each other's unsubmitted edits.
+        /// </summary>
+        internal static string BaseFolder { get { return baseFolder.Value; } }
+
+        private static string ResolveBaseFolder()
+        {
+            try
+            {
+                var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+                string personal = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "JOCO-ROBOS");
+                string marker = Path.Combine(SharedFolder, ".joco-owner");
+                if (File.Exists(marker))
+                    return File.ReadAllText(marker).Trim() == me.Value ? SharedFolder : personal;
+                if (Directory.Exists(personal) && Directory.EnumerateFileSystemEntries(personal).Any())
+                    return personal;
+                if (Directory.Exists(SharedFolder) && Directory.EnumerateFileSystemEntries(SharedFolder).Any())
+                {
+                    // Created before owners were recorded: it belongs to whoever created it.
+                    if (!OwnedBy(SharedFolder, me)) return personal;
+                }
+                else
+                    CreatePrivate(SharedFolder, me);
+                File.WriteAllText(marker, me.Value);
+                File.SetAttributes(marker, FileAttributes.Hidden);
+                return SharedFolder;
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Trace.WriteLine("JOCO base folder: " + exception);
+                return SharedFolder;
+            }
+        }
+
+        private static bool OwnedBy(string path, System.Security.Principal.SecurityIdentifier me)
+        {
+#if NETFRAMEWORK
+            var owner = Directory.GetAccessControl(path).GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) as System.Security.Principal.SecurityIdentifier;
+            return owner != null && (owner == me || owner.IsWellKnown(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid));
+#else
+            return true;
+#endif
+        }
+
+        private static void CreatePrivate(string path, System.Security.Principal.SecurityIdentifier owner)
+        {
+#if NETFRAMEWORK
+            // Only this student, Administrators, and SYSTEM can read it: other Windows users can't see unsubmitted work.
+            var security = new System.Security.AccessControl.DirectorySecurity();
+            security.SetAccessRuleProtection(true, false);
+            foreach (var sid in new[] { owner,
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null),
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null) })
+                security.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(sid, System.Security.AccessControl.FileSystemRights.FullControl,
+                    System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+                    System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+            Directory.CreateDirectory(path, security);
+#else
+            Directory.CreateDirectory(path);
+#endif
+        }
         internal static readonly Uri Server = new Uri("https://cad.imdad.stream/");
         internal readonly string Name;
         internal readonly Guid Id;

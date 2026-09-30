@@ -177,4 +177,54 @@ def publish_sha(name, data, sha):
             f'--{bnd}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() + data + f'\r\n--{bnd}--\r\n'.encode()
     return urllib.parse.unquote(req('/admin/addin', *M, data=body, ctype='multipart/form-data; boundary=' + bnd)[1]['Location'])
 check('probably incomplete' in publish_sha('JOCO-ROBOS-CAD-Setup-0.12.0.exe', exe2[:5000], hashlib.sha256(exe2).hexdigest()), 'manual truncated upload refused')
+# Undo a submit (2027-Robot is active again here)
+def sh(cmd):
+    return subprocess.run(['docker', 'exec', 'joco-test', 'sh', '-c', cmd], capture_output=True, text=True)
+AUTH = ' --non-interactive --no-auth-cache --username sarah --password sarahpass123'
+sh('rm -rf /tmp/u && svn co -q http://localhost/svn/2027-Robot /tmp/u' + AUTH)
+sh('cd /tmp/u && printf v1 > 10_Drivetrain/Gear.SLDPRT && svn add -q 10_Drivetrain/Gear.SLDPRT && svn ps -q svn:needs-lock "*" 10_Drivetrain/Gear.SLDPRT && svn ps -q svn:mime-type application/octet-stream 10_Drivetrain/Gear.SLDPRT && svn ci -q -m "Add gear"' + AUTH)
+sh('cd /tmp/u && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + ' && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf v2-bad > 10_Drivetrain/Gear.SLDPRT && mkdir 10_Drivetrain/Junk && printf x > 10_Drivetrain/Junk/Bad.SLDPRT && svn add -q 10_Drivetrain/Junk && svn ps -q svn:needs-lock "*" 10_Drivetrain/Junk/Bad.SLDPRT && svn ps -q svn:mime-type application/octet-stream 10_Drivetrain/Junk/Bad.SLDPRT && svn ci -q -m "Terrible submit"' + AUTH)
+bad = int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout)
+s_, _, page = req(f'/admin/undo?repo=2027-Robot&rev={bad}', *M); check(s_ == 200 and 'Terrible submit' in page and 'will be removed' in page and 'previous version restored' in page, 'undo preview')
+check('Undo…' in req('/admin', *M)[2], 'undo links on recent submits')
+s_, loc = post(f'/admin/undo?repo=2027-Robot&rev={bad}', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': str(bad)}); check('ok=Undid r%d' % bad in loc, 'undo ' + loc)
+check(sh('svnlook cat /var/lib/svn/2027-Robot 10_Drivetrain/Gear.SLDPRT').stdout == 'v1', 'undo restored previous content')
+check(sh('svnlook tree /var/lib/svn/2027-Robot 10_Drivetrain/Junk').returncode != 0, 'undo removed added folder')
+check(sh('svnlook propget /var/lib/svn/2027-Robot svn:needs-lock 10_Drivetrain/Gear.SLDPRT').stdout.strip() == '*', 'restored file keeps lock policy')
+check(int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout) == bad + 1, 'undo is a new revision, history kept')
+# refusals: file changed later, file locked, non-mentor revprop
+sh('cd /tmp/u && svn up -q' + AUTH + ' && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + ' && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf v3 > 10_Drivetrain/Gear.SLDPRT && svn ci -q -m "Good change"' + AUTH)
+s_, loc = post('/admin', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': str(bad)}); check('Later submits changed' in loc, 'undo refused when later changed ' + loc)
+sh('cd /tmp/u && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH)
+good = int(sh('svnlook youngest /var/lib/svn/2027-Robot').stdout)
+s_, loc = post('/admin', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': str(good)}); check('locked by sarah' in loc, 'undo refused while a student holds the lock ' + loc)
+out = sh('cd /tmp/u && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf sneaky > 10_Drivetrain/Gear.SLDPRT && svn unlock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + '; svn ci -m sneaky --with-revprop joco:mentor-undo=1' + AUTH)
+check(out.returncode != 0, 'students cannot use the undo exception')
+sh('cd /tmp/u && svn revert -q 10_Drivetrain/Gear.SLDPRT')
+# Heartbeats
+def beat(user, body, client='addin'):
+    r = urllib.request.Request(BASE + '/admin/api/heartbeat', data=json.dumps(body).encode(), method='POST')
+    r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
+    r.add_header('Content-Type', 'application/json')
+    if client: r.add_header('X-Joco-Client', client)
+    try:
+        return urllib.request.urlopen(r).status
+    except urllib.error.HTTPError as e:
+        return e.code
+check(beat(U, {'version': '0.11.0', 'computer': 'SARAH-LAPTOP'}) == 200, 'student heartbeat')
+check(beat(U, {'version': '0.11.0'}, client=None) == 403, 'heartbeat needs add-in header')
+check(beat(P, {'version': '0.11.0'}) == 403, 'publisher cannot heartbeat')
+check(beat(U, {'version': '<script>'}) == 400, 'bad heartbeat version refused')
+page = req('/admin/users', *M)[2]; check('0.11.0' in page and 'SARAH-LAPTOP' in page, 'accounts page shows add-in version and computer')
+check('of 1 students' in req('/admin/addin', *M)[2], 'add-in adoption summary')
+# Health
+home = req('/admin', *M)[2]
+check('Health' in home and 'Disk:' in home and 'Deck backup: no record yet' in home, 'health panel')
+sh("mkdir -p /etc/joco/health && printf '{\"time\": \"%s\"}' $(date -u +%Y-%m-%dT%H:%M:%SZ) > /etc/joco/health/backup.json")
+check('✓ Deck backup' in req('/admin', *M)[2], 'fresh backup shown healthy')
+# Season-change warning with locks outstanding
+sh('cd /tmp/u && svn up -q' + AUTH + ' && svn lock -q 10_Drivetrain/Gear.SLDPRT' + AUTH)
+s_, loc = post('/admin', {'action': 'create-season', 'name': '2030-Robot'})
+s_, loc = post('/admin', {'action': 'activate', 'name': '2030-Robot'}); check('still has 1 locked file' in loc and 'sarah' in loc, 'activate warns about outstanding locks ' + loc)
+post('/admin', {'action': 'activate', 'name': '2027-Robot'})
 print(f'PASS: {n} server/admin checks')
