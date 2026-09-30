@@ -137,7 +137,8 @@ namespace JocoRobos.Cad
                 {
                     RequireWorkspace(client);
                     ReconcilePendingSubmit(client);
-                    foreach (var item in Status(client, Root, false, SvnDepth.Infinity)) RequireClean(item);
+                    foreach (var item in Status(client, Root, false, SvnDepth.Infinity))
+                        if (!WorkspacePolicy.IsOwnerFile(item.FullPath) || item.Versioned) RequireClean(item);
                     client.Update(Root, new SvnUpdateArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
                 }
                 RequireWorkspace(client);

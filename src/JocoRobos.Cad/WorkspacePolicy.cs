@@ -60,7 +60,13 @@ namespace JocoRobos.Cad
         // SOLIDWORKS owner/lock files ("~$Part.SLDPRT") share CAD extensions but are never submitted.
         internal static bool IsSubmittableCad(string path)
         {
-            return IsCad(path) && !Path.GetFileName(path).StartsWith("~$", StringComparison.Ordinal);
+            return IsCad(path) && !IsOwnerFile(path);
+        }
+
+        // Left behind when SOLIDWORKS closes unexpectedly; never team work, so Update steps around them.
+        internal static bool IsOwnerFile(string path)
+        {
+            return Path.GetFileName(path ?? "").StartsWith("~$", StringComparison.Ordinal);
         }
 
         // Unversioned folders between the file and the nearest versioned folder, outermost first.
