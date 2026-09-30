@@ -51,7 +51,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591910;
+        private const int LayoutVersion = 591911;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -103,13 +103,17 @@ namespace JocoRobos.Cad
                 CommandGroup group = commands.CreateCommandGroup2(GroupId, Title,
                     "Robot CAD collaboration", Title, -1, migrate, ref error);
                 if (group == null) throw new InvalidOperationException("Could not create toolbar. API code: " + error);
+                // One strip per size; each command's image index picks its icon (see tools/make-icons.py).
+                string[] strips = IconFiles("toolbar"), mains = IconFiles("main");
+                if (strips != null) group.IconList = strips;
+                if (mains != null) group.MainIconList = mains;
                 int both = (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem;
                 int menu = (int)swCommandItemType_e.swMenuItem;
-                int open = Add(group, "Open Robot", "Update the workspace and open the robot", nameof(OpenRobot), 1, both);
-                int update = Add(group, "Update", "Download the latest robot and library files", nameof(UpdateRobot), 2, both);
-                int edit = Add(group, "Edit", "Lock the active CAD document for editing", nameof(Edit), 3, both);
-                int submit = Add(group, "Submit", "Upload your changed and new CAD files", nameof(Submit), 7, both);
-                int insert = Add(group, "Insert from Library", "Copy a reusable part into the robot and insert it", nameof(InsertFromLibrary), 8, both);
+                int open = Add(group, "Open Robot", "Update the workspace and open the robot", nameof(OpenRobot), 1, both, 0);
+                int update = Add(group, "Update", "Download the latest robot and library files", nameof(UpdateRobot), 2, both, 1);
+                int edit = Add(group, "Edit", "Lock the active CAD document for editing", nameof(Edit), 3, both, 2);
+                int submit = Add(group, "Submit", "Upload your changed and new CAD files", nameof(Submit), 7, both, 3);
+                int insert = Add(group, "Insert from Library", "Copy a reusable part into the robot and insert it", nameof(InsertFromLibrary), 8, both, 4);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu);
                 Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu);
@@ -145,11 +149,23 @@ namespace JocoRobos.Cad
             }
         }
 
-        private int Add(CommandGroup group, string name, string hint, string callback, int id, int options)
+        private int Add(CommandGroup group, string name, string hint, string callback, int id, int options, int image = -1)
         {
-            int index = group.AddCommandItem2(name, -1, hint, name, -1, callback, nameof(CanRun), id, options);
+            int index = group.AddCommandItem2(name, -1, hint, name, image, callback, nameof(CanRun), id, options);
             if (index < 0) throw new InvalidOperationException("Could not add " + name + ".");
             return index;
+        }
+
+        internal static string IconFolder
+        {
+            get { return Path.Combine(Path.GetDirectoryName(typeof(Addin).Assembly.Location), "Icons"); }
+        }
+
+        // SOLIDWORKS picks the size it needs from 20, 32, 40, 64, 96, and 128 px files; null if they're missing.
+        private static string[] IconFiles(string prefix)
+        {
+            var files = new[] { 20, 32, 40, 64, 96, 128 }.Select(size => Path.Combine(IconFolder, prefix + "_" + size + ".png")).ToArray();
+            return files.All(File.Exists) ? files : null;
         }
 
         public int CanRun() { return application != null && !busy ? 1 : 0; }
@@ -177,17 +193,23 @@ namespace JocoRobos.Cad
 
         private void CreatePane()
         {
-            string icon = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pane.bmp");
-            Directory.CreateDirectory(Path.GetDirectoryName(icon));
-            using (var bitmap = new System.Drawing.Bitmap(16, 18))
-            using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
-            using (var font = new System.Drawing.Font("Segoe UI", 8f, System.Drawing.FontStyle.Bold))
+            // The task pane tab uses the Open Robot icon; the plain "J" is only a fallback if the icon files are missing.
+            string[] mains = IconFiles("main");
+            if (mains != null) taskpane = application.CreateTaskpaneView3(mains, Title);
+            if (taskpane == null)
             {
-                graphics.Clear(System.Drawing.Color.FromArgb(31, 95, 191));
-                graphics.DrawString("J", font, System.Drawing.Brushes.White, 2, 1);
-                bitmap.Save(icon, System.Drawing.Imaging.ImageFormat.Bmp);
+                string icon = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "pane.bmp");
+                Directory.CreateDirectory(Path.GetDirectoryName(icon));
+                using (var bitmap = new System.Drawing.Bitmap(16, 18))
+                using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+                using (var font = new System.Drawing.Font("Segoe UI", 8f, System.Drawing.FontStyle.Bold))
+                {
+                    graphics.Clear(System.Drawing.Color.FromArgb(31, 95, 191));
+                    graphics.DrawString("J", font, System.Drawing.Brushes.White, 2, 1);
+                    bitmap.Save(icon, System.Drawing.Imaging.ImageFormat.Bmp);
+                }
+                taskpane = application.CreateTaskpaneView2(icon, Title);
             }
-            taskpane = application.CreateTaskpaneView2(icon, Title);
             if (taskpane == null) throw new InvalidOperationException("SOLIDWORKS did not create the task pane.");
             pane = new StatusPane(new[]
             {

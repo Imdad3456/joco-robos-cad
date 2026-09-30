@@ -54,7 +54,9 @@ namespace JocoRobos.Cad
             layout.Controls.Add(Spacer());
             foreach (var pair in buttons)
             {
-                var button = new Button { Text = pair.Key, Width = 200, Height = 30, Margin = new Padding(0, 2, 0, 2), FlatStyle = FlatStyle.System };
+                var button = new Button { Text = "  " + pair.Key, Width = 200, Height = 36, Margin = new Padding(0, 2, 0, 2),
+                    Image = ButtonIcon(pair.Key), ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText,
+                    TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) };
                 Action action = pair.Value;
                 button.Click += (s, e) => action();
                 layout.Controls.Add(button);
@@ -90,6 +92,15 @@ namespace JocoRobos.Cad
         {
             return new Label { AutoSize = true, MaximumSize = new Size(230, 0), Text = text, Margin = new Padding(0, 2, 0, 2),
                 Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size, style), ForeColor = color ?? SystemColors.ControlText };
+        }
+
+        // Same artwork as the toolbar (Icons\button_*.png); buttons without a file just show text.
+        internal static Image ButtonIcon(string label)
+        {
+            string name = label.ToLowerInvariant().Replace("insert from library", "insert-library").Replace("team library…", "insert-library").Replace(' ', '-');
+            string path = System.IO.Path.Combine(Addin.IconFolder, "button_" + name + ".png");
+            try { return File.Exists(path) ? Image.FromFile(path) : null; }
+            catch (OutOfMemoryException) { return null; } // Unreadable image file.
         }
 
         private static Control Spacer() { return new Panel { Height = 8, Width = 10 }; }

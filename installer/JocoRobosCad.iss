@@ -29,6 +29,7 @@ UninstallDisplayName=JOCO ROBOS CAD
 [Files]
 Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\*.pdb"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\Icons\*.png"; DestDir: "{app}\Icons"; Flags: ignoreversion
 Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Registry]

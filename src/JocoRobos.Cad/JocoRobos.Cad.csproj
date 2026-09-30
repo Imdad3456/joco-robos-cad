@@ -5,7 +5,7 @@
     <LangVersion>7.3</LangVersion>
     <AssemblyName>JocoRobos.Cad</AssemblyName>
     <RootNamespace>JocoRobos.Cad</RootNamespace>
-    <Version>0.9.0</Version>
+    <Version>0.9.1</Version>
     <!-- Keep COM registration identity stable across these milestone updates. -->
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <!-- Without these, .NET copies AssemblyVersion (0.1.0.0) into the file version and the updater can't tell releases apart. -->
@@ -19,6 +19,10 @@
     <RegisterForComInterop>false</RegisterForComInterop>
     <SolidWorksInteropDir Condition="'$(SolidWorksInteropDir)' == ''">$(ProgramW6432)\SOLIDWORKS Corp\SOLIDWORKS\api\redist</SolidWorksInteropDir>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Toolbar, task pane, and button icons, loaded from the Icons folder next to the DLL. Rebuild them with tools/make-icons.py. -->
+    <None Include="Icons\*.png" CopyToOutputDirectory="PreserveNewest" LinkBase="Icons" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SharpSvn" Version="1.14005.390" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

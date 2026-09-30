@@ -44,7 +44,7 @@ To **release a new add-in version**: bump `<Version>` in `src/JocoRobos.Cad/Joco
 | `tests/Addin.Tests/` | Add-in checks that run without SOLIDWORKS. |
 | `server/tests/` | Server checks: the mentor page and APIs, plus lock rules with a real SVN client. |
 | `lib/solidworks/` | SOLIDWORKS' redistributable API files, so GitHub can build without SOLIDWORKS. |
-| `tools/` | One-off helpers (for example the script that sorted the 2026 robot into folders). |
+| `tools/` | Helpers: `make-icons.py` rebuilds the toolbar icons from `src/JocoRobos.Cad/Icons/source`, and the script that sorted the 2026 robot into folders. |
 | `docs/` | [How it works](docs/HOW-IT-WORKS.md), [developer setup](docs/DEVELOPING.md), and [the original design notes](docs/history/ORIGINAL-DESIGN.md). |
 | `.github/workflows/build.yml` | On every push: build and test everything and build the installer. On `v*` tags: publish a Release and stage it on the server. |
 | [`TESTING.md`](TESTING.md) | The hands-on test sheet for two people. |

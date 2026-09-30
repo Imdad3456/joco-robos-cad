@@ -42,7 +42,8 @@ namespace JocoRobos.Cad
             this.login = login;
             this.insert = insert;
             BackColor = SystemColors.Window;
-            var team = new Button { Text = "Team Library…", Dock = DockStyle.Fill, Height = 30, FlatStyle = FlatStyle.System };
+            var team = new Button { Text = "  Team Library…", Dock = DockStyle.Fill, Height = 36, Image = StatusPane.ButtonIcon("Team Library…"),
+                ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText, TextAlign = ContentAlignment.MiddleLeft };
             team.Click += (s, e) => jocoLibrary();
             var heading = new Label { Text = "FRCDesignLib", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 8, 0, 2) };
             var hint = new Label { Text = "The first time anyone on the team uses a part (and configuration), it's prepared for the team Library. That takes a little longer.",
