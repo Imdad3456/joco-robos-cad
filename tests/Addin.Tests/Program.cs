@@ -170,6 +170,18 @@ static class Program
         Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync.Contains("2 new changes"), "Teammate changes with robot open: Close & Update");
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(s.CanAutoUpdate && !s.ShowCloseAndUpdate, "Nothing open: teammate changes come in by themselves");
+        // A new Library part (mentor upload) with nothing new in the robot still comes down.
+        var librarySeason = new WorkspaceInfo("Library", Guid.NewGuid(), false, true);
+        var lib = new WorkspaceSnapshot { Info = librarySeason, Local = 5, Head = 6 };
+        lib.Incoming.Add("#6 mentor1: Add bracket");
+        var robotNow = fresh();
+        s = PaneState.Describe("sam", robotNow, lib, null, false, null, now);
+        Check(s.CanAutoUpdate && s.Sync.Contains("1 new change") && s.Details.Contains("Library #6"), "Library-only news is fetched too");
+        s = PaneState.Describe("sam", robotNow, lib, part, true, null, now, robotOpen: true);
+        Check(s.ShowCloseAndUpdate, "Library-only news with the robot open: Close & Update");
+        lib.New.Add(Path.Combine(librarySeason.Root, "Mine.SLDPRT"));
+        s = PaneState.Describe("sam", robotNow, lib, null, false, null, now);
+        Check(!s.CanAutoUpdate && s.Details.Contains("the Library's after you Submit"), "Library news waits for the Library's own unsubmitted work");
         snap.PendingSubmit = true;
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(s.InterruptedSubmit && s.Pending.Contains("interrupted"), "Interrupted Submit is shown with Submit to settle it");

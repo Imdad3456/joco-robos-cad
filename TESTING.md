@@ -1,10 +1,10 @@
-# Test sheet: the 1.0 release gate (two people about 1 hour, plus a 20-minute uncoached student)
+# Test sheet: the 1.0 release gate (two people about 1 hour, a 20-minute uncoached student, then a one-week pilot)
 
 **A** = mentor (Imdad). **B** = a teammate on their own Windows PC with SOLIDWORKS 2026. **Both** = each of you on your own computer.
 
 Already confirmed in real use, so not repeated here: installing and automatic add-in updates, signing in, Open Robot, Edit/Release Edit, Submit and the Submit window, FRCDesignLib inserts (including custom lengths), inserting into the right assembly, and Upgrade Robot Files.
 
-This sheet covers what's **new in 0.13** and the **safety paths nobody has needed yet**. Tests use low-risk files (motor covers, `80_Unsorted`); at the end A undoes every test submit from the web page. Tick ☐ → ☑. If anything doesn't match "Expect", write the step and the exact message under [Problems found](#problems-found) and keep going.
+This sheet covers what's **new since 0.13** and the **safety paths nobody has needed yet**. Everything runs in **2099-Robot, a disposable full copy of the 2026 robot** (same files and history, no locks), so nothing you do can touch the real robot, and the copy is removed at the end. Tick ☐ → ☑. If anything doesn't match "Expect", write the step and the exact message under [Problems found](#problems-found) and keep going. **Freeze features while testing**: only fix what this sheet finds.
 
 ---
 
@@ -13,7 +13,8 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 0.1 | A | https://cad.imdad.stream/admin → **Add-in** → **Release to students** for the newest version. Both: install it when SOLIDWORKS offers it | The panel header shows the same version on both computers | ☐ |
-| 0.2 | A | **Seasons** → write down 2026-Robot's revision: **r____** | Everything after it is a test submit, undone in section 8 | ☐ |
+| 0.2 | A | Create the test season (ask Claude, or on the Linux PC: `ssh deck@100.97.7.84 podman exec -u www-data joco-svn python3 /opt/joco/joco.py test-season create 2099-Robot 2026-Robot`) | "Created 2099-Robot as a copy of 2026-Robot … without locks" | ☐ |
+| 0.3 | Both | Close all documents → **Tools → JOCO ROBOS CAD → Choose Robot** → **2099-Robot** → **Open Robot** | It downloads the copy (a few minutes) and opens it; the panel header says 2099-Robot. Every file named below is in `C:\JOCO-ROBOS\2099-Robot` | ☐ |
 
 ## 1. New account (a third person, or B on a spare Windows user)
 
@@ -35,13 +36,13 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | 2.4 | Both | Save | "1 change waiting" and a **Submit 1** button | ☐ |
 | 2.5 | Both | Open your assembly (A: `50_Electrical\battery holder`, B: `motor cover asssewmbly`) read-only and drag a component | Assemblies still ask "Lock it for editing now?" → **No**. Close it without saving | ☐ |
 | 2.5b | Both | Open your assembly read-only, change a mate right away (first 5 seconds), and click **No** if asked to lock. Then Submit something else | The panel keeps warning about the unsaved assembly changes; you can't easily forget them (write down anything that felt too quiet) | ☐ |
-| 2.6 | Both | Close the part without submitting, reopen it, click **Edit** → change nothing → close it | Within a few seconds it's no longer listed under "You're editing" (unchanged → given back) | ☐ |
+| 2.6 | Both | Close the part from 2.3 (it stays yours: it has a saved change). Open `80_Unsorted\id2_1.SLDPRT`, click **Edit**, change nothing, close it | id2_1 is no longer listed under "You're editing" within a few seconds (unchanged → given back); the part from 2.3 still is | ☐ |
 
 ## 3. Library tab
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 3.1 | A | Mentor page → **Library** → upload any small part (e.g. a bracket) | Uploaded | ☐ |
+| 3.1 | A | Mentor page → **Library** → upload a small part you'd want in the team Library anyway (the Library is shared, not part of the test season) | Uploaded | ☐ |
 | 3.2 | A | SOLIDWORKS toolbar → **Library** | The panel jumps to the Library tab with the cursor in the search box | ☐ |
 | 3.3 | A | Search the bracket's name | It's listed first, marked "Team Library", then FRCDesignLib results | ☐ |
 | 3.4 | A | With **no document open**, pick it → **Insert** | It opens by itself; the panel says it's in your robot (90_COTS). Close it | ☐ |
@@ -73,6 +74,7 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | 5.1 | B | Change and save a part you're editing. Turn Wi-Fi off → **Submit** | The window says it didn't complete; edits and locks are kept | ☐ |
 | 5.2 | B | Wi-Fi on → **Submit** again | Submitted. A: **Seasons** → Recent submits shows it **once** | ☐ |
 | 5.2b | B | Change and save a part. Click **Submit** in the window, and the moment it says "Submitting…" end SOLIDWORKS in Task Manager. Restart | The panel says "An earlier Submit was interrupted" with a **Submit** button → it explains whether it reached the team; nothing is lost or sent twice | ☐ |
+| 5.2d | B | Change and save a part, open **Submit**, type a comment, click **Submit**, and while it says "Checking file references…" close the window with **X** | The window closes. A: **Seasons** → Recent submits in 2099-Robot shows **nothing new** (closing never commits). B: Submit again normally → submitted once | ☐ |
 | 5.2c | B | Edit an assembly, insert a part from a USB stick or Desktop, save it, then delete or rename that original file in Explorer → **Submit** | "…uses a file that isn't on this computer", naming it; Submit is off until you fix it or click **Submit anyway** | ☐ |
 | 5.3 | A | **Edit** a part, then end SOLIDWORKS in Task Manager. Restart | Still yours; the panel's "Give back the ones I didn't change" releases it | ☐ |
 | 5.4 | Both | Save a change without submitting, then close SOLIDWORKS | Asks once "Submit now before exiting?" → **No** closes normally | ☐ |
@@ -94,6 +96,8 @@ Write the times down; anything that makes SOLIDWORKS look stuck for more than a 
 | 6.4 | **Close & Update** with Robot.SLDASM open | |
 | 6.5 | Library tab: type `kraken` until results appear; insert one already in the Library | |
 | 6.6 | Switch between two open documents: does the panel update instantly? | |
+| 6.7 | **Edit** `00_Master\Robot.SLDASM`, move one component, save → **Submit**: seconds of "Checking file references" | |
+| 6.8 | During 6.7, click in SOLIDWORKS (rotate the model): does it respond, or freeze? | yes / no |
 
 ## 7. Uncoached student (a teammate who hasn't seen JOCO)
 
@@ -113,10 +117,19 @@ Give them only the installer link and one sentence: "Install this, then use SOLI
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 8.1 | Both | Submit or Set Aside anything left; give back anything still locked | The panel shows no changes waiting and nothing you're editing | ☐ |
-| 8.2 | A | Web **Seasons** → Recent submits → **Undo…** each test submit after r____ (step 0.2), **newest first** | Each says "Undid rN as new revision" | ☐ |
-| 8.3 | Both | Close documents and wait for the automatic update (or **Tools → Update**) | The test changes are gone from both computers | ☐ |
-| 8.4 | A | Web **Locks** | No test locks left | ☐ |
+| 8.1 | A | Web **Seasons** → Recent submits → **Undo…** on the **newest** 2099-Robot submit → **Undo** | "Undid … as new revision". B: close documents; the automatic update brings the undone version back | ☐ |
+| 8.2 | Both | Submit or Set Aside anything left; give back anything still locked | The panel shows no changes waiting and nothing you're editing | ☐ |
+| 8.3 | Both | Close all documents → **Choose Robot** → **Current season** → **Open Robot** | Back on 2026-Robot, which nothing in this sheet touched | ☐ |
+| 8.4 | A | Remove the test season (ask Claude, or: `ssh deck@100.97.7.84 podman exec -u www-data joco-svn python3 /opt/joco/joco.py test-season remove 2099-Robot`). Both: delete `C:\JOCO-ROBOS\2099-Robot` | Gone from Choose Robot; 2026-Robot unchanged | ☐ |
+
+## 9. Pilot (a week, 2–3 students, features frozen)
+
+After this sheet passes, 2–3 students use 0.14.x on the real robot for normal work for about a week. Nobody adds features. Write down every problem and every "why did I have to click that?" below; fix only what could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing. Then tag 1.0.0.
+
+| Date | Who | What happened |
+|---|---|---|
+| | | |
+| | | |
 
 ---
 

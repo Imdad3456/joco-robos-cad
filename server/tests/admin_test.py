@@ -297,6 +297,16 @@ s_, loc = post('/admin', {'action': 'undo-submit', 'repo': '2027-Robot', 'rev': 
 out = sh('cd /tmp/u && chmod u+w 10_Drivetrain/Gear.SLDPRT && printf sneaky > 10_Drivetrain/Gear.SLDPRT && svn unlock -q 10_Drivetrain/Gear.SLDPRT' + AUTH + '; svn ci -m sneaky --with-revprop joco:mentor-undo=1' + AUTH)
 check(out.returncode != 0, 'students cannot use the undo exception')
 sh('cd /tmp/u && svn revert -q 10_Drivetrain/Gear.SLDPRT')
+# A disposable copy of a season for release testing: same files and history, own identity, no locks; removable.
+out = sh('runuser -u www-data -- python3 /opt/joco/joco.py test-season create 2099-Robot 2027-Robot')
+check(out.returncode == 0 and '2099-Robot' in out.stdout, 'test season created ' + out.stdout + out.stderr)
+check(sh('svnlook youngest /var/lib/svn/2099-Robot').stdout == sh('svnlook youngest /var/lib/svn/2027-Robot').stdout, 'test season has the same history')
+check(sh('svnlook uuid /var/lib/svn/2099-Robot').stdout != sh('svnlook uuid /var/lib/svn/2027-Robot').stdout, 'test season has its own identity')
+check(sh('svnadmin lslocks /var/lib/svn/2099-Robot').stdout.strip() == '', 'test season starts without locks')
+check('2099-Robot' in req('/catalog.json', *U)[2], 'students can choose the test season')
+check(sh('runuser -u www-data -- python3 /opt/joco/joco.py test-season remove 2027-Robot').returncode != 0, 'a real season is never removed as a test season')
+out = sh('runuser -u www-data -- python3 /opt/joco/joco.py test-season remove 2099-Robot')
+check(out.returncode == 0 and '2099-Robot' not in req('/catalog.json', *U)[2], 'test season removed ' + out.stdout + out.stderr)
 # Heartbeats
 def beat(user, body, client='addin'):
     r = urllib.request.Request(BASE + '/admin/api/heartbeat', data=json.dumps(body).encode(), method='POST')

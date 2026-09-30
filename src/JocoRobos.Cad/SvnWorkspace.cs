@@ -205,9 +205,21 @@ namespace JocoRobos.Cad
         internal void SaveVersion(string path, long revision, string target)
         {
             path = WorkspacePolicy.RequireInside(Root, path);
-            using (var client = Client())
-            using (var output = File.Create(target))
-                client.Write(new SvnUriTarget(UrlFor(path), revision), output);
+            // Downloaded next to the target first: a failed download never damages a copy that's already there.
+            string partial = target + ".joco-download";
+            try
+            {
+                using (var client = Client())
+                using (var output = File.Create(partial))
+                    client.Write(new SvnUriTarget(UrlFor(path), revision), output);
+                if (File.Exists(target))
+                {
+                    File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
+                    File.Replace(partial, target, null);
+                }
+                else File.Move(partial, target);
+            }
+            finally { if (File.Exists(partial)) File.Delete(partial); }
             File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
         }
 

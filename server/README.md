@@ -90,7 +90,7 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v21`; earlier tags (`v20` … `initial`) are rollback images.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v22`; earlier tags (`v21` … `initial`) are rollback images.
 
 ## Restore drill (prove the backups work)
 
@@ -102,3 +102,12 @@ sh server/restore-drill.sh "$(ls -1d ~/Backups/joco-cad/2*/ | tail -1)" --report
 ```
 
 It copies the backup to a temporary folder, starts a throwaway server from it on a spare local port, verifies every repository, reads every file back, checks history, locks, accounts and settings, then deletes the copy. The live server is never touched. `--report` shows the result on the mentor page's Health panel.
+
+## Test season (release testing without touching the real robot)
+
+```sh
+podman exec -u www-data joco-svn python3 /opt/joco/joco.py test-season create 2099-Robot 2026-Robot
+podman exec -u www-data joco-svn python3 /opt/joco/joco.py test-season remove 2099-Robot
+```
+
+`create` makes a full copy of a season (files and history) with its own identity and no locks; students pick it with Tools → Choose Robot. `remove` only works on seasons made this way, and keeps the folder as `.deleted-…` on the server.

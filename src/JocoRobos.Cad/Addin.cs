@@ -83,8 +83,10 @@ namespace JocoRobos.Cad
         private readonly HashSet<string> warnedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // Background work the panel shows as a line of text instead of a window (automatic update).
         private string working, autoUpdateProblem;
-        private long autoUpdateTried;
         private DateTime nextAutoUpdateRetry;
+        // Set by an automatic update, cleared by the next status check: the old snapshot must not trigger it again.
+        private bool awaitingFreshStatus;
+        private DateTime autoUpdateEnded = DateTime.MinValue;
         private readonly List<ModelDoc2> pendingLockOffers = new List<ModelDoc2>();
 
         // Lock offers that arrived while JOCO was busy, handled once it isn't: only files still read-only with unsaved changes.
@@ -365,6 +367,7 @@ namespace JocoRobos.Cad
             refreshing = true;
             var cached = DateTime.UtcNow - paneCatalogAt < TimeSpan.FromMinutes(10) ? paneCatalog : null;
             int year = SolidWorksYear; // SOLIDWORKS is only asked on its own thread.
+            var started = DateTime.UtcNow;
             Task.Run(() =>
             {
                 var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -380,6 +383,8 @@ namespace JocoRobos.Cad
                 OnUi("status refresh", () =>
                 {
                     refreshing = false;
+                    // Only a check that started after the last automatic update ended knows what's still new.
+                    if (started > autoUpdateEnded) awaitingFreshStatus = false;
                     if (task.Status == TaskStatus.RanToCompletion)
                     {
                         if (task.Result.Item1 != paneCatalog) { paneCatalog = task.Result.Item1; paneCatalogAt = DateTime.UtcNow; }
@@ -1009,27 +1014,31 @@ namespace JocoRobos.Cad
             try
             {
                 if (busy || application == null || robotSnapshot == null || paneCatalog == null) return;
+                // After an update (worked or not), wait for a fresh status check before deciding again: the old one still
+                // lists what just came down. A failure is also retried at most once a minute.
+                if (awaitingFreshStatus || DateTime.UtcNow < nextAutoUpdateRetry) return;
                 var robot = robotSnapshot.Info;
-                // A failed try (a Wi-Fi hiccup) is retried after a minute, not given up on for this revision.
-                if (robotSnapshot.Head == autoUpdateTried && DateTime.UtcNow < nextAutoUpdateRetry) return;
                 var library = paneCatalog.Library;
                 if (RobotDocuments(robot).Any() || (library != null && RobotDocuments(library).Any())) return;
                 var login = CredentialStore.Read();
                 if (login == null) return;
-                autoUpdateTried = robotSnapshot.Head;
-                int count = robotSnapshot.Incoming.Count;
+                // Each one only when it has news and no unsubmitted work of its own (Update never merges into work).
+                bool robotToo = robotSnapshot.Incoming.Count > 0 && robotSnapshot.Changed.Count + robotSnapshot.New.Count == 0;
+                bool libraryToo = library != null && librarySnapshot != null && librarySnapshot.Local > 0 && librarySnapshot.Incoming.Count > 0 &&
+                    librarySnapshot.Changed.Count + librarySnapshot.New.Count == 0;
+                if (!robotToo && !libraryToo) return;
+                int count = (robotToo ? robotSnapshot.Incoming.Count : 0) + (libraryToo ? librarySnapshot.Incoming.Count : 0);
+                awaitingFreshStatus = true;
                 busy = true;
                 working = "Getting " + count + (count == 1 ? " new change…" : " new changes…");
                 RenderStatus();
-                // The Library comes along only when it has news and no unsubmitted work of its own.
-                bool libraryToo = library != null && librarySnapshot != null && librarySnapshot.Incoming.Count > 0 &&
-                    librarySnapshot.Changed.Count + librarySnapshot.New.Count == 0;
-                var workspaces = new[] { robot, libraryToo ? library : null }.Where(w => w != null && !w.Archived)
+                var workspaces = new[] { robotToo ? robot : null, libraryToo ? library : null }.Where(w => w != null && !w.Archived)
                     .Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
                 Task.Run(() => SvnWorkspace.Exclusive(() => { foreach (var svn in workspaces) svn.Update(); return true; })).ContinueWith(task => OnUi("auto update", () =>
                 {
                     busy = false;
                     working = null;
+                    autoUpdateEnded = DateTime.UtcNow;
                     if (task.Status == TaskStatus.RanToCompletion)
                     {
                         autoUpdateProblem = null;
@@ -1049,6 +1058,7 @@ namespace JocoRobos.Cad
             {
                 busy = false;
                 working = null;
+                awaitingFreshStatus = false;
                 ErrorLog.Write("auto update start", exception);
             }
         }

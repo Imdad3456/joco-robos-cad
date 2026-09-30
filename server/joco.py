@@ -163,6 +163,40 @@ def create_repository(name, folders, author, message):
     run(*args)
 
 
+def create_test_season(name, source):
+    """A full copy of a season (files and history, no locks) for release testing; removable afterwards."""
+    if not SEASON.match(name) or name in repositories():
+        raise Refused(name + ' must be a new name like 2099-Robot.')
+    if source not in repositories() or not SEASON.match(source):
+        raise Refused('Unknown season ' + source + '.')
+    path = os.path.join(REPOS, name)
+    run('svnadmin', 'hotcopy', os.path.join(REPOS, source), path)
+    run('svnadmin', 'setuuid', path)  # Its own identity: add-ins never mistake it for the real season.
+    for lock in locks(name):
+        run('svnadmin', 'rmlocks', path, lock['path'])
+    install_hooks(name)
+    state = load_state()
+    state.setdefault('test_seasons', []).append(name)
+    if source in state.get('masters', {}):
+        state['masters'][name] = state['masters'][source]
+    save_state(state)
+    return youngest(name)
+
+
+def remove_test_season(name):
+    state = load_state()
+    if name not in state.get('test_seasons', []):
+        raise Refused(name + ' is not a test season, so it is never removed this way.')
+    if name == state['active']:
+        raise Refused('Make another season active first.')
+    stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
+    os.rename(os.path.join(REPOS, name), os.path.join(REPOS, '.deleted-%s-%s' % (name, stamp)))
+    state['test_seasons'].remove(name)
+    state.get('masters', {}).pop(name, None)
+    state['archived'] = [n for n in state['archived'] if n != name]
+    save_state(state)
+
+
 def has_files(name):
     """True once a season holds any file. Only file-less seasons may be deleted."""
     return any(line and not line.endswith('/') for line in run('svnlook', 'tree', '--full-paths', os.path.join(REPOS, name)).splitlines())
@@ -1347,5 +1381,19 @@ if __name__ == '__main__':
             state['mentors'] = sorted((set(state['mentors']) | {sys.argv[3]}) if sys.argv[2] == 'add' else (set(state['mentors']) - {sys.argv[3]}))
             save_state(state)
         print('Mentors: ' + ', '.join(state['mentors']))
+    elif command == ['test-season'] and len(sys.argv) in (4, 5) and sys.argv[2] in ('create', 'remove'):
+        # joco.py test-season create 2099-Robot 2026-Robot   |   joco.py test-season remove 2099-Robot
+        with Locked():
+            try:
+                if sys.argv[2] == 'create' and len(sys.argv) == 5:
+                    print('Created %s as a copy of %s (r%d), without locks. Students pick it with Tools → Choose Robot.' % (
+                        sys.argv[3], sys.argv[4], create_test_season(sys.argv[3], sys.argv[4])))
+                elif sys.argv[2] == 'remove' and len(sys.argv) == 4:
+                    remove_test_season(sys.argv[3])
+                    print('Removed test season %s (kept as a .deleted- folder on the server).' % sys.argv[3])
+                else:
+                    sys.exit('usage: joco.py test-season create NAME FROM | test-season remove NAME')
+            except Refused as exc:
+                sys.exit(str(exc))
     else:
-        sys.exit('usage: joco.py ensure | serve | mentor add|remove USER')
+        sys.exit('usage: joco.py ensure | serve | mentor add|remove USER | test-season create NAME FROM | test-season remove NAME')

@@ -92,6 +92,10 @@ namespace JocoRobos.Cad
             state.Robot = info.Name + (info.Archived ? " (archived, read-only)" : "");
             var snapshots = new[] { robotSnapshot, librarySnapshot }.Where(x => x != null).ToList();
             bool localWork = robotSnapshot.Changed.Count + robotSnapshot.New.Count > 0;
+            // The robot and the Library each get news on their own: a mentor's new Library part must come down too.
+            var library = librarySnapshot != null && librarySnapshot.Local > 0 ? librarySnapshot : null;
+            bool libraryWork = library != null && library.Changed.Count + library.New.Count > 0;
+            int robotNews = robotSnapshot.Local == 0 ? 0 : robotSnapshot.Incoming.Count, libraryNews = library == null ? 0 : library.Incoming.Count;
             if (robotSnapshot.Local == 0)
             {
                 state.Sync = "Not downloaded yet";
@@ -99,28 +103,33 @@ namespace JocoRobos.Cad
                 state.Details = "Open Robot downloads it (the first time takes a few minutes).";
                 state.ShowOpen = true;
             }
-            else if (robotSnapshot.Incoming.Count == 0)
+            else if (robotNews + libraryNews == 0)
             {
                 state.Sync = "✓ Up to date";
                 state.SyncTone = Tone.Good;
             }
             else
             {
-                int count = robotSnapshot.Incoming.Count;
+                int count = robotNews + libraryNews;
                 state.Sync = "⬇ " + count + (count == 1 ? " new change" : " new changes") + " on the server";
                 state.SyncTone = Tone.Info;
-                state.Details = String.Join("\n", robotSnapshot.Incoming.AsEnumerable().Reverse().Take(3)) + "\n";
-                if (localWork)
-                    state.Details += "You'll get them after you Submit your own changes.";
-                else if (robotOpen)
+                state.Details = String.Join("\n", robotSnapshot.Incoming.AsEnumerable().Reverse().Take(3)
+                    .Concat(library == null ? Enumerable.Empty<string>() : library.Incoming.AsEnumerable().Reverse().Take(2).Select(x => "Library " + x))) + "\n";
+                bool robotBlocked = robotNews > 0 && localWork, libraryBlocked = libraryNews > 0 && libraryWork;
+                if (robotBlocked || libraryBlocked)
+                    state.Details += "You'll get " + (robotBlocked && libraryBlocked ? "them" : robotBlocked ? "the robot's" : "the Library's") + " after you Submit your own changes.";
+                if ((robotNews > 0 && !robotBlocked) || (libraryNews > 0 && !libraryBlocked))
                 {
-                    state.Details += "Close your robot documents to get them.";
-                    state.ShowCloseAndUpdate = true;
-                }
-                else
-                {
-                    state.Details += "Getting them now…";
-                    state.CanAutoUpdate = true;
+                    if (robotOpen)
+                    {
+                        state.Details += (robotBlocked || libraryBlocked ? "\n" : "") + "Close your robot documents to get " + (robotBlocked || libraryBlocked ? "the rest." : "them.");
+                        state.ShowCloseAndUpdate = true;
+                    }
+                    else
+                    {
+                        state.Details += (robotBlocked || libraryBlocked ? "\n" : "") + "Getting them now…";
+                        state.CanAutoUpdate = true;
+                    }
                 }
             }
             state.Details += (state.Details.Length > 0 && !state.Details.EndsWith("\n") ? "\n" : "") + "Checked " + checkedAt.ToString("h:mm tt") +

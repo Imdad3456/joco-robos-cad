@@ -553,7 +553,9 @@ namespace JocoRobos.Cad
             var before = new HashSet<string>(Selected.Select(x => x.Kind + "|" + x.Path), StringComparer.OrdinalIgnoreCase);
             // The last preflight runs right before committing; SvnWorkspace.Submit then rechecks locks and status itself.
             await Rescan();
-            if (plan == null || issues.Any(x => x.Blocking)) return;
+            // Closed while that ran (or its reference reading was stopped): never commit afterwards.
+            if (IsDisposed || Disposing || !Visible) return;
+            if (plan == null || scanFailure != null || checkFailure != null || issues.Any(x => x.Blocking)) return;
             var chosen = Selected;
             if (!before.SetEquals(chosen.Select(x => x.Kind + "|" + x.Path)))
             {
