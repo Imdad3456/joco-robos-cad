@@ -84,9 +84,17 @@ namespace JocoRobos.Cad
         internal readonly Guid Id;
         internal readonly bool Archived;
         internal readonly bool IsLibrary;
+        /// <summary>Mentor-set master assembly inside the season (for imported robots), or null for the automatic choice.</summary>
+        internal readonly string Master;
 
-        internal WorkspaceInfo(string name, Guid id, bool archived, bool library)
+        internal WorkspaceInfo(string name, Guid id, bool archived, bool library, string master = null)
         {
+            if (!String.IsNullOrEmpty(master))
+            {
+                string candidate = Path.Combine(BaseFolder, name, master.Replace('/', '\\'));
+                try { WorkspacePolicy.RequireInside(Path.Combine(BaseFolder, name), candidate); Master = candidate; }
+                catch (InvalidOperationException) { } // Ignore a bad server value instead of opening something outside the season.
+            }
             if (!WorkspacePolicy.IsRepositoryName(name)) throw new InvalidOperationException("The server listed an invalid robot name.");
             Name = name;
             Id = id;
@@ -115,6 +123,7 @@ namespace JocoRobos.Cad
             [DataMember(Name = "name")] public string Name { get; set; }
             [DataMember(Name = "uuid")] public string Uuid { get; set; }
             [DataMember(Name = "archived")] public bool Archived { get; set; }
+            [DataMember(Name = "master")] public string Master { get; set; }
         }
 
         [DataContract]
@@ -173,7 +182,7 @@ namespace JocoRobos.Cad
                 throw new InvalidOperationException("The server's robot list is not readable. Ask a mentor, or update the add-in.");
             var catalog = new Catalog { Active = document.Active, Addin = document.Addin };
             foreach (var entry in document.Robots)
-                catalog.Robots.Add(new WorkspaceInfo(entry.Name, new Guid(entry.Uuid), entry.Archived, false));
+                catalog.Robots.Add(new WorkspaceInfo(entry.Name, new Guid(entry.Uuid), entry.Archived, false, entry.Master));
             if (document.Library != null)
                 catalog.Library = new WorkspaceInfo(document.Library.Name, new Guid(document.Library.Uuid), false, true);
             return catalog;

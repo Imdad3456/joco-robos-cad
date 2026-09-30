@@ -36,6 +36,7 @@ namespace JocoRobos.Cad
         [DispId(14)] void RestoreDeletedFiles();
         [DispId(15)] void InsertExternalPart();
         [DispId(16)] void ImportOutsideReferences();
+        [DispId(17)] void RepairMovedReferences();
     }
 
     [ComVisible(true)]
@@ -49,7 +50,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591908;
+        private const int LayoutVersion = 591909;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -117,6 +118,7 @@ namespace JocoRobos.Cad
                 Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu);
                 Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu);
                 Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu);
+                Add(group, "Repair Moved References", "After reorganizing folders: repoint every file's links to the same-named file in the folder", nameof(RepairMovedReferences), 16, menu);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
                 group.HasToolbar = true;
@@ -1359,6 +1361,60 @@ namespace JocoRobos.Cad
             });
         }
 
+        // For reorganizing an old robot before import: file names are unique, so every link that points outside the
+        // chosen folder (or to a file that moved) is repointed to the one file with that name inside it. Works on closed files.
+        public void RepairMovedReferences()
+        {
+            Execute(() =>
+            {
+                string folder;
+                using (var dialog = new FolderBrowserDialog { Description = "Choose the reorganized robot folder (for example C:\\JOCO-ROBOS\\2026-Robot)", ShowNewFolderButton = false,
+                    SelectedPath = WorkspaceInfo.BaseFolder })
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    folder = Path.GetFullPath(dialog.SelectedPath).TrimEnd('\\');
+                }
+                if (OpenDocuments().Any())
+                    throw new InvalidOperationException("Close all SOLIDWORKS documents first. Links can only be repaired in closed files.");
+                var index = CadByName(folder);
+                var duplicates = index.Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+                if (duplicates.Count > 0)
+                    throw new InvalidOperationException("These names appear more than once in the folder, so links to them would be ambiguous:\n\n" +
+                        String.Join("\n", duplicates.Take(10)) + "\n\nRename one of each first. Nothing was changed.");
+                string inside = folder + "\\";
+                int repaired = 0, files = 0;
+                var readOnly = new List<string>();
+                var missing = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                var all = index.SelectMany(g => g).ToList();
+                foreach (string file in all)
+                {
+                    var raw = application.GetDocumentDependencies2(file, false, false, false) as object[];
+                    if (raw == null) continue;
+                    bool changed = false;
+                    for (int i = 1; i < raw.Length; i += 2)
+                    {
+                        string reference = raw[i] as string;
+                        if (String.IsNullOrEmpty(reference)) continue;
+                        bool stillGood = reference.StartsWith(inside, StringComparison.OrdinalIgnoreCase) && File.Exists(reference);
+                        if (stillGood) continue;
+                        var match = index[Path.GetFileName(reference)].FirstOrDefault();
+                        if (match == null)
+                        {
+                            if (!WorkspacePolicy.IsTemporary(reference, Path.GetTempPath())) missing.Add(Path.GetFileName(reference));
+                            continue;
+                        }
+                        if ((File.GetAttributes(file) & FileAttributes.ReadOnly) != 0) { readOnly.Add(file); break; }
+                        if (application.ReplaceReferencedDocument(file, reference, match)) { repaired++; changed = true; }
+                    }
+                    if (changed) files++;
+                }
+                Message("Repaired " + repaired + " link(s) in " + files + " file(s) under\n" + folder + "." +
+                    (readOnly.Count > 0 ? "\n\nSkipped read-only files (use Edit, or work on an unzipped copy):\n" + String.Join("\n", readOnly.Distinct().Take(8).Select(Path.GetFileName)) : "") +
+                    (missing.Count > 0 ? "\n\nThese referenced files aren't in the folder at all, so SOLIDWORKS will ask for them:\n" + String.Join("\n", missing.Take(12)) + (missing.Count > 12 ? "\n…" : "") : "") +
+                    "\n\nNow open the top assembly and check it.");
+            });
+        }
+
         private ModelDoc2 WritableRobotAssembly(Catalog catalog)
         {
             var doc = application.ActiveDoc as ModelDoc2;
@@ -1391,6 +1447,7 @@ namespace JocoRobos.Cad
         // Robot.SLDASM when present; otherwise the only 00_Master assembly that no other assembly there references.
         private string FindMaster(WorkspaceInfo robot)
         {
+            if (robot.Master != null && File.Exists(robot.Master)) return robot.Master;
             if (File.Exists(robot.RobotPath)) return robot.RobotPath;
             if (!Directory.Exists(robot.MasterFolder)) return null;
             string[] assemblies = Directory.GetFiles(robot.MasterFolder, "*.sldasm")

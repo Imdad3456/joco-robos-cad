@@ -125,7 +125,7 @@ def publish(state):
     catalog = {
         'version': 1,
         'active': state['active'],
-        'robots': [{'name': n, 'uuid': uuid(n), 'archived': n in state['archived']} for n in seasons],
+        'robots': [{'name': n, 'uuid': uuid(n), 'archived': n in state['archived'], 'master': state.get('masters', {}).get(n)} for n in seasons],
         'library': {'name': LIBRARY, 'uuid': uuid(LIBRARY)} if LIBRARY in repositories() else None,
         # Newest published student installer; the add-in offers it when it is newer than itself.
         'addin': state.get('addin'),
@@ -146,10 +146,54 @@ def create_repository(name, folders, author, message):
         raise Refused(name + ' already exists.')
     run('svnadmin', 'create', path)
     install_hooks(name)
+    if not folders:
+        return
     args = ['svnmucc', '--non-interactive', '--username', author, '-m', message, '-U', 'file://' + path]
     for folder in folders:
         args += ['mkdir', folder]
     run(*args)
+
+
+def has_files(name):
+    """True once a season holds any file. Only file-less seasons may be deleted."""
+    return any(line and not line.endswith('/') for line in run('svnlook', 'tree', '--full-paths', os.path.join(REPOS, name)).splitlines())
+
+
+CAD_PATTERNS = ('[Ss][Ll][Dd][Pp][Rr][Tt]', '[Ss][Ll][Dd][Aa][Ss][Mm]', '[Ss][Ll][Dd][Dd][Rr][Ww]')
+
+
+def import_season(name, directory, author, message):
+    """Creates a season from an existing folder tree exactly as it is, with lock properties on every CAD file."""
+    if not SEASON.match(name):
+        raise Refused('Season names look like 2026-Robot.')
+    if not os.path.isdir(directory) or not any(files for _, _, files in os.walk(directory)):
+        raise Refused('Nothing to import in ' + directory)
+    create_repository(name, [], author, message)
+    options = ['--config-option', 'config:miscellany:enable-auto-props=yes', '--config-option', 'config:miscellany:global-ignores=']
+    for pattern in CAD_PATTERNS:
+        options += ['--config-option', 'config:auto-props:*.%s=svn:needs-lock=*;svn:mime-type=application/octet-stream' % pattern]
+    run('svn', 'import', '--non-interactive', '--no-auth-cache', '--username', author, '-m', message, *options,
+        directory, 'file://' + os.path.join(REPOS, name))
+    return verify_import(name, directory)
+
+
+def verify_import(name, directory):
+    """Every file byte-identical in the repository, and every CAD file carries the lock properties."""
+    repo = os.path.join(REPOS, name)
+    count = 0
+    for root, _, names in os.walk(directory):
+        for filename in names:
+            local = os.path.join(root, filename)
+            relative = os.path.relpath(local, directory).replace(os.sep, '/')
+            stored = subprocess.run(['svnlook', 'cat', repo, relative], capture_output=True)
+            with open(local, 'rb') as handle:
+                if stored.returncode != 0 or stored.stdout != handle.read():
+                    raise Refused('Imported copy of %s does not match. The season was left in place for inspection.' % relative)
+            if relative.lower().endswith(CAD):
+                if run('svnlook', 'propget', repo, 'svn:needs-lock', relative).strip() != '*':
+                    raise Refused('%s is missing its lock property.' % relative)
+            count += 1
+    return count
 
 
 def ensure():
@@ -358,6 +402,18 @@ def act(user, form):
             state['active'] = name
         save_state(state)
         return 'Created ' + name + '.'
+    if action == 'set-master':
+        name, master = form.get('name', ''), form.get('master', '').strip().strip('/').replace('\\', '/')
+        if name not in repositories() or not SEASON.match(name):
+            raise Refused('Unknown season.')
+        if master:
+            if not master.lower().endswith('.sldasm') or subprocess.run(['svnlook', 'filesize', os.path.join(REPOS, name), master], capture_output=True).returncode != 0:
+                raise Refused(master + ' is not an assembly in ' + name + '. Use the path inside the season, like Clean Robot CAD/2026ASSembly4.SLDASM.')
+            state.setdefault('masters', {})[name] = master
+        else:
+            state.setdefault('masters', {}).pop(name, None)
+        save_state(state)
+        return 'Open Robot in %s now opens %s.' % (name, master or 'the automatic choice (00_Master/Robot.SLDASM)')
     if action == 'delete-season':
         name = form.get('name', '')
         if name not in repositories() or not SEASON.match(name):
@@ -365,8 +421,8 @@ def act(user, form):
         if name == state['active']:
             raise Refused('Make another season active before deleting ' + name + '.')
         # Only a season nobody has submitted to: revision 1 is the folder creation.
-        if youngest(name) > 1 or locks(name):
-            raise Refused(name + ' has CAD history, so it cannot be deleted. Archive it instead.')
+        if has_files(name) or youngest(name) > 1 or locks(name):
+            raise Refused(name + ' has files or history, so it cannot be deleted. Archive it instead.')
         stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
         os.rename(os.path.join(REPOS, name), os.path.join(REPOS, '.deleted-%s-%s' % (name, stamp)))
         state['archived'] = [n for n in state['archived'] if n != name]
@@ -809,9 +865,14 @@ class Admin(BaseHTTPRequestHandler):
             else:
                 status = '<span class="warn">Editable, not active</span>'
                 actions = self.form('activate', {'name': name}, 'Make active') + ' ' + self.form('archive', {'name': name}, 'Archive')
-                if youngest(name) <= 1 and not held:
+                if youngest(name) <= 1 and not held and not has_files(name):
                     actions += ' ' + self.form('delete-season', {'name': name}, 'Delete (empty)')
-            rows += '<tr><td><b>%s</b></td><td>r%d</td><td>%d</td><td>%s</td><td>%s</td></tr>' % (esc(name), youngest(name), len(held), status, actions)
+            master = state.get('masters', {}).get(name, '')
+            master_form = ('<form class="inline" method="post"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="set-master">'
+                           '<input type="hidden" name="name" value="%s"><input name="master" value="%s" placeholder="00_Master/Robot.SLDASM (automatic)" size="34" '
+                           'aria-label="Master assembly for %s"> <button>Set</button></form>') % (self.token(), esc(name), esc(master), esc(name))
+            rows += '<tr><td><b>%s</b></td><td>r%d</td><td>%d</td><td>%s</td><td>%s<div class="muted" style="margin-top:6px">Open Robot opens: %s</div></td></tr>' % (
+                esc(name), youngest(name), len(held), status, actions, master_form)
         next_year = (int(seasons[-1][:4]) + 1) if seasons else 2027
         create = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="create-season">'
                   '<input name="name" value="%d-Robot" pattern="(19|20)[0-9]{2}-Robot" required aria-label="Season name">'
@@ -1000,6 +1061,15 @@ if __name__ == '__main__':
         ensure()
     elif command == ['serve']:
         serve()
+    elif command == ['import-season'] and len(sys.argv) in (5, 6):
+        # joco.py import-season 2026-Robot /tmp/import imdad ["Clean Robot CAD/2026ASSembly4.SLDASM"]
+        with Locked():
+            count = import_season(sys.argv[2], sys.argv[3], sys.argv[4], 'Import %s from existing CAD' % sys.argv[2])
+            state = load_state()
+            if len(sys.argv) == 6:
+                state.setdefault('masters', {})[sys.argv[2]] = sys.argv[5]
+            save_state(state)
+        print('Imported and verified %d files into %s.' % (count, sys.argv[2]))
     elif command == ['mentor'] and len(sys.argv) == 4 and sys.argv[2] in ('add', 'remove'):
         with Locked():
             state = load_state()
