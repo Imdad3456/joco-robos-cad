@@ -1628,13 +1628,14 @@ namespace JocoRobos.Cad
                 var robot = catalog.Robot;
                 if (robot.Archived) throw new InvalidOperationException(robot.Name + " is archived and read-only.");
                 if (OpenDocuments().Any()) throw new InvalidOperationException("Close all SOLIDWORKS documents first.");
+                var svn = new SvnWorkspace(login, robot);
+                if (svn.IsCheckedOut && !FinishInterruptedUpgrade(svn)) return;
                 var files = SubmitCheck.CadByName(robot.Root).SelectMany(g => g)
                     // Parts first, then assemblies, then drawings: each file finds what it uses already converted.
                     .OrderBy(f => f.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? 0 : f.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
                     .ThenBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
                 if (files.Count == 0) { Message(robot.Name + " has no CAD files yet."); return; }
                 UpdateWorkspace(login, robot);
-                var svn = new SvnWorkspace(login, robot);
                 // Resumes an interrupted upgrade: files an earlier conversion submit already covered are skipped.
                 var done = OperationDialog.Run("Checking which files are already converted…", () => svn.ConvertedFiles());
                 int total = files.Count;
@@ -1642,97 +1643,156 @@ namespace JocoRobos.Cad
                 if (files.Count == 0) { Message("All " + total + " files in " + robot.Name + " are already converted."); return; }
                 if (MessageBox.Show(new SolidWorksWindow(), "Convert " + (files.Count == total ? "all " + total : files.Count + " remaining (of " + total + ")") +
                     " files in " + robot.Name + " to this SOLIDWORKS version?\n\n" +
-                    "This locks every file (it stops if anyone is editing one), opens and saves each one, and submits them as one change. " +
-                    "It can take several minutes, and SOLIDWORKS is busy until it finishes. Everyone downloads the converted files at their next Update.\n\n" +
-                    "Do it once, when nobody else is working on the robot. If it's interrupted, Submit what it finished and run it again: it continues where it stopped.",
+                    "This locks the files (it stops if anyone is editing one), opens and saves each one without showing it, and submits them " + UpgradeBatch +
+                    " at a time. It can take a while, and SOLIDWORKS is busy until it finishes. Everyone downloads the converted files at their next Update.\n\n" +
+                    "Do it when nobody else is working on the robot. If SOLIDWORKS stops, run it again: it continues where it stopped.",
                     Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
-                OperationDialog.Run("Locking all " + files.Count + " robot files…", () => SvnWorkspace.Exclusive(() => { svn.LockAll(files); return true; }));
-                bool submitted = false;
+                OperationDialog.Run("Locking " + files.Count + " robot files…", () => SvnWorkspace.Exclusive(() => { svn.LockAll(files); return true; }));
+                int submitted = 0;
+                var revisions = new List<long>();
+                var failed = new List<string>();
                 try
                 {
-                    var failed = ConvertFiles(files);
-                    var plan = OperationDialog.Run("Checking the converted files…", () => SvnWorkspace.Exclusive(svn.PrepareSubmit));
-                    var mine = plan.Items.Where(x => x.Kind != SubmitKind.New).ToList();
-                    int changed = mine.Count(x => x.Kind == SubmitKind.Modified);
-                    var result = OperationDialog.Run("Submitting " + changed + " converted files…", () => SvnWorkspace.Exclusive(() =>
-                        svn.Submit(mine, "Convert all files to the current SOLIDWORKS format (Upgrade Robot Files)")));
-                    submitted = true;
-                    Message("Converted and submitted " + changed + " file(s)" + (result.Revision > 0 ? " as revision " + result.Revision : "") + "." +
-                        (failed.Count > 0 ? "\n\nThese couldn't be converted and were left as they were:\n" + String.Join("\n", failed.Take(12)) + (failed.Count > 12 ? "\n…" : "") : "") +
-                        (result.Warnings.Count > 0 ? "\n\n" + String.Join("\n", result.Warnings) : "") +
-                        "\n\nTeammates get them with Update (close documents first).", failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                    Action<List<string>> commit = batch =>
+                    {
+                        var result = SubmitConverted(svn, batch);
+                        submitted += result.Item1;
+                        if (result.Item2 > 0) revisions.Add(result.Item2);
+                    };
+                    ConvertFiles(files, failed, commit);
                 }
                 finally
                 {
-                    // Stopped partway: give back the locks on files that didn't change. Converted files stay locked, ready to Submit.
-                    if (!submitted)
-                        try { OperationDialog.Run("Releasing unchanged files…", () => SvnWorkspace.Exclusive(svn.ReleaseUnchangedLocks)); }
-                        catch (Exception exception) { ErrorLog.Write("upgrade: release", exception); }
+                    // Files that failed (or weren't reached) are unchanged: give their locks back.
+                    try { OperationDialog.Run("Releasing unchanged files…", () => SvnWorkspace.Exclusive(svn.ReleaseUnchangedLocks)); }
+                    catch (Exception exception) { ErrorLog.Write("upgrade: release", exception); }
                 }
+                Message("Converted and submitted " + submitted + " file(s)" + (revisions.Count > 0 ? " (revisions " + String.Join(", ", revisions) + ")" : "") + "." +
+                    (failed.Count > 0 ? "\n\nThese couldn't be converted and were left as they were:\n" + String.Join("\n", failed.Take(12)) + (failed.Count > 12 ? "\n…" : "") : "") +
+                    "\n\nTeammates get them with Update (close documents first).", failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
             });
+        }
+
+        private const int UpgradeBatch = 40;
+        private const string ConversionComment = "Convert files to the current SOLIDWORKS format (Upgrade Robot Files)";
+
+        private static string UpgradeMarker
+        {
+            get { return Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "upgrade-current.txt"); }
+        }
+
+        // Submits the converted (changed, locked) files among these paths. Returns how many, and the revision.
+        private static Tuple<int, long> SubmitConverted(SvnWorkspace svn, IEnumerable<string> paths)
+        {
+            var wanted = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            var plan = OperationDialog.Run("Checking the converted files…", () => SvnWorkspace.Exclusive(svn.PrepareSubmit));
+            var converted = plan.Items.Where(x => x.Kind == SubmitKind.Modified && !x.NeedsLock && wanted.Contains(x.Path)).ToList();
+            if (converted.Count == 0) return Tuple.Create(0, 0L);
+            var result = OperationDialog.Run("Submitting " + converted.Count + " converted files…",
+                () => SvnWorkspace.Exclusive(() => svn.Submit(converted, ConversionComment)));
+            return Tuple.Create(converted.Count, result.Revision);
+        }
+
+        // After SOLIDWORKS crashed during an upgrade: the files it finished are changed and locked here. The one it was
+        // working on may be half-written, so it's set aside (copy kept, team version back); the rest are submitted.
+        // Returns false if the student chose to stop.
+        private bool FinishInterruptedUpgrade(SvnWorkspace svn)
+        {
+            var plan = OperationDialog.Run("Checking for an interrupted upgrade…", () => SvnWorkspace.Exclusive(svn.PrepareSubmit));
+            var changed = plan.Items.Where(x => x.Kind == SubmitKind.Modified && !x.NeedsLock && WorkspacePolicy.IsCad(x.Path)).ToList();
+            if (changed.Count == 0) { TryDelete(UpgradeMarker); return true; }
+            string suspect = null;
+            try { if (File.Exists(UpgradeMarker)) suspect = Path.GetFullPath(File.ReadAllText(UpgradeMarker).Trim()); }
+            catch (Exception exception) { ErrorLog.Write("upgrade marker", exception); }
+            var halfDone = changed.Where(x => String.Equals(x.Path, suspect, StringComparison.OrdinalIgnoreCase)).ToList();
+            var finished = changed.Except(halfDone).ToList();
+            if (MessageBox.Show(new SolidWorksWindow(), changed.Count + " files are changed and locked by you, probably from an upgrade that stopped partway.\n\n" +
+                "Submit them now as converted files, then continue the upgrade?" +
+                (halfDone.Count > 0 ? "\n\n" + halfDone[0].Name + " was being saved when it stopped, so it's set aside (a copy is kept) and converted again." : "") +
+                "\n\nChoose No if some of these are your own edits: Submit those yourself first.",
+                Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return false;
+            if (halfDone.Count > 0) OperationDialog.Run("Setting aside " + halfDone[0].Name + "…", () => SvnWorkspace.Exclusive(() => svn.SetAside(halfDone)));
+            if (finished.Count > 0) SubmitConverted(svn, finished.Select(x => x.Path));
+            TryDelete(UpgradeMarker);
+            return true;
+        }
+
+        private static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (Exception exception) { ErrorLog.Write("delete " + path, exception); }
         }
 
         [DllImport("user32.dll")] private static extern bool EnableWindow(IntPtr window, bool enable);
 
-        // Opens and saves each file silently, one at a time, with a small progress window. Returns the files that failed.
-        // SOLIDWORKS' own window is disabled meanwhile, so the progress window can keep Windows from calling it "Not Responding"
-        // without anyone opening documents in the middle. Each finished file is written to upgrade.log.
-        private List<string> ConvertFiles(List<string> files)
+        // Opens and saves each file without showing it (much lighter on graphics memory, which a long run in a VM runs out of),
+        // submitting every UpgradeBatch files so a crash loses little. SOLIDWORKS' own window is disabled meanwhile; the progress
+        // window keeps processing messages. The file being worked on is written to a marker file, and each finished one to upgrade.log.
+        private void ConvertFiles(List<string> files, List<string> failed, Action<List<string>> commit)
         {
-            var failed = new List<string>();
             string log = Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "upgrade.log");
+            var types = new[] { (int)swDocumentTypes_e.swDocPART, (int)swDocumentTypes_e.swDocASSEMBLY, (int)swDocumentTypes_e.swDocDRAWING };
             IntPtr main = new SolidWorksWindow().Handle;
             EnableWindow(main, false);
+            foreach (int type in types) application.DocumentVisible(false, type);
             try
             {
-                return ConvertEach(files, failed, log);
-            }
-            finally { EnableWindow(main, true); }
-        }
-
-        private List<string> ConvertEach(List<string> files, List<string> failed, string log)
-        {
-            try { Directory.CreateDirectory(Path.GetDirectoryName(log)); File.AppendAllText(log, DateTime.Now + "  starting " + files.Count + " files\r\n"); }
-            catch (Exception) { }
-            using (var progress = new Form { Text = Title, ClientSize = new System.Drawing.Size(520, 90), FormBorderStyle = FormBorderStyle.FixedDialog,
-                ControlBox = false, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false, TopMost = true })
-            {
-                var label = new Label { AutoSize = false, Location = new System.Drawing.Point(16, 14), Size = new System.Drawing.Size(488, 36) };
-                var bar = new ProgressBar { Location = new System.Drawing.Point(16, 56), Size = new System.Drawing.Size(488, 18), Maximum = files.Count };
-                progress.Controls.Add(label);
-                progress.Controls.Add(bar);
-                progress.Show(new SolidWorksWindow());
-                for (int i = 0; i < files.Count; i++)
+                try { Directory.CreateDirectory(Path.GetDirectoryName(log)); File.AppendAllText(log, DateTime.Now + "  starting " + files.Count + " files\r\n"); }
+                catch (Exception) { }
+                using (var progress = new Form { Text = Title, ClientSize = new System.Drawing.Size(520, 90), FormBorderStyle = FormBorderStyle.FixedDialog,
+                    ControlBox = false, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false, TopMost = true })
                 {
-                    string file = files[i];
-                    label.Text = "Converting " + (i + 1) + " of " + files.Count + ":\n" + Path.GetFileName(file);
-                    bar.Value = i;
-                    progress.Refresh();
-                    Application.DoEvents();
-                    try
+                    var label = new Label { AutoSize = false, Location = new System.Drawing.Point(16, 14), Size = new System.Drawing.Size(488, 36) };
+                    var bar = new ProgressBar { Location = new System.Drawing.Point(16, 56), Size = new System.Drawing.Size(488, 18), Maximum = files.Count };
+                    progress.Controls.Add(label);
+                    progress.Controls.Add(bar);
+                    progress.Show(new SolidWorksWindow());
+                    var batch = new List<string>();
+                    for (int i = 0; i < files.Count; i++)
                     {
-                        int type = file.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocPART
-                            : file.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY : (int)swDocumentTypes_e.swDocDRAWING;
-                        int errors = 0, warnings = 0;
-                        var doc = application.OpenDoc6(file, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
-                        if (doc == null) { failed.Add(Path.GetFileName(file) + " (couldn't open, error " + errors + ")"); continue; }
-                        if (doc.IsOpenedReadOnly()) failed.Add(Path.GetFileName(file) + " (opened read-only)");
-                        else if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
-                            failed.Add(Path.GetFileName(file) + " (couldn't save, error " + errors + ")");
-                    }
-                    catch (Exception exception)
-                    {
-                        ErrorLog.Write("upgrade " + file, exception);
-                        failed.Add(Path.GetFileName(file) + " (" + exception.Message + ")");
-                    }
-                    finally
-                    {
-                        application.CloseAllDocuments(true);
-                        try { File.AppendAllText(log, DateTime.Now + "  " + (i + 1) + "/" + files.Count + "  " + file + "\r\n"); } catch (Exception) { }
+                        string file = files[i];
+                        label.Text = "Converting " + (i + 1) + " of " + files.Count + ":\n" + Path.GetFileName(file);
+                        bar.Value = i;
+                        progress.Refresh();
+                        Application.DoEvents();
+                        try
+                        {
+                            File.WriteAllText(UpgradeMarker, file);
+                            int type = file.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? types[0] : file.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? types[1] : types[2];
+                            int errors = 0, warnings = 0;
+                            var doc = application.OpenDoc6(file, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+                            if (doc == null) failed.Add(Path.GetFileName(file) + " (couldn't open, error " + errors + ")");
+                            else if (doc.IsOpenedReadOnly()) failed.Add(Path.GetFileName(file) + " (opened read-only)");
+                            else if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
+                                failed.Add(Path.GetFileName(file) + " (couldn't save, error " + errors + ")");
+                            else batch.Add(file);
+                        }
+                        catch (Exception exception)
+                        {
+                            ErrorLog.Write("upgrade " + file, exception);
+                            failed.Add(Path.GetFileName(file) + " (" + exception.Message + ")");
+                        }
+                        finally
+                        {
+                            application.CloseAllDocuments(true);
+                            TryDelete(UpgradeMarker);
+                            try { File.AppendAllText(log, DateTime.Now + "  " + (i + 1) + "/" + files.Count + "  " + file + "\r\n"); } catch (Exception) { }
+                        }
+                        if (batch.Count >= UpgradeBatch || (i == files.Count - 1 && batch.Count > 0))
+                        {
+                            label.Text = "Submitting " + batch.Count + " converted files…";
+                            progress.Refresh();
+                            commit(batch);
+                            batch = new List<string>();
+                        }
                     }
                 }
             }
-            return failed;
+            finally
+            {
+                foreach (int type in types) application.DocumentVisible(true, type);
+                EnableWindow(main, true);
+            }
         }
 
         // For reorganizing an old robot before import: file names are unique, so every link that points outside the
