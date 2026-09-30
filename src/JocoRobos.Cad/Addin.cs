@@ -268,7 +268,7 @@ namespace JocoRobos.Cad
                 path => OnUi("release on close", () => ReleaseIfUnchanged(path)),
                 path => OnUi("saved", () => OnDocumentSaved(path)));
             // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
-            savedTimer = new Timer { Interval = 2500 };
+            savedTimer = new Timer { Interval = 1000 };
             savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
             flashTimer = new Timer { Interval = 15000 };
             flashTimer.Tick += (s, e) => { flashTimer.Stop(); flash = null; RenderStatus(); };
@@ -603,7 +603,11 @@ namespace JocoRobos.Cad
 
         private Catalog LoadCatalog(NetworkCredential login)
         {
-            var catalog = OperationDialog.Run("Contacting the CAD server…", () => Catalog.Fetch(login));
+            // The robot list changes rarely (a new season, a new add-in): reuse the one the panel fetched in the last two
+            // minutes instead of making every click wait for the server first.
+            var catalog = paneCatalog != null && paneUser == login.UserName && DateTime.UtcNow - paneCatalogAt < TimeSpan.FromMinutes(2)
+                ? paneCatalog
+                : OperationDialog.Run("Contacting the CAD server…", () => Catalog.Fetch(login));
             KeepUnfinishedSeason(login, catalog);
             return catalog;
         }
@@ -928,6 +932,21 @@ namespace JocoRobos.Cad
         private void OnDocumentSaved(string path)
         {
             if (application == null) return;
+            // Show the save in the panel right away; the server check a moment later confirms it.
+            try
+            {
+                path = Path.GetFullPath(path);
+                var snapshot = new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Contains(path));
+                if (snapshot != null && WorkspacePolicy.IsSubmittableCad(path))
+                {
+                    if (snapshot.Mine.Contains(path)) snapshot.Changed.Add(path);
+                    else if (!snapshot.Locks.ContainsKey(path) && !snapshot.Changed.Contains(path) && CredentialStore.Read() is NetworkCredential login &&
+                             new SvnWorkspace(login, snapshot.Info).IsNewFile(path))
+                        snapshot.New.Add(path);
+                    RenderStatus();
+                }
+            }
+            catch (Exception exception) { ErrorLog.Write("saved: quick panel update", exception); }
             if (savedTimer != null) { savedTimer.Stop(); savedTimer.Start(); }
             try { WarnDuplicateName(path); }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO duplicate check: " + exception); }

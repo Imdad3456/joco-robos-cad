@@ -141,7 +141,9 @@ namespace JocoRobos.Cad
                 else if (owner.Mine.Contains(activePath))
                 {
                     state.ActiveStatus = "✎ You're editing this" + (activeDirty ? " (unsaved changes)" : owner.Changed.Contains(activePath) ? " (saved)" : "") +
-                        (activeReadOnly ? "\nStill read-only in SOLIDWORKS: click Edit again." : "");
+                        (activeReadOnly ? "\nStill read-only in SOLIDWORKS: click Edit again." : "") +
+                        // SOLIDWORKS marks the read-only parts inside an assembly changed just from rebuilding, then offers to save them.
+                        (assembly && !activeReadOnly ? "\nWhen you save: if SOLIDWORKS lists read-only files, tick \"Do not save read-only documents\" and Save All; only your changes are saved." : "");
                     state.ActiveTone = Tone.Good;
                     if (activeReadOnly) state.EditTarget = assembly ? "" : Path.GetFileNameWithoutExtension(activePath);
                 }
