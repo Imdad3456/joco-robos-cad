@@ -38,6 +38,7 @@ namespace JocoRobos.Cad
         [DispId(16)] void ImportOutsideReferences();
         [DispId(17)] void RepairMovedReferences();
         [DispId(18)] void ChangePassword();
+        [DispId(19)] void UpgradeRobotFiles();
     }
 
     [ComVisible(true)]
@@ -51,7 +52,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591911;
+        private const int LayoutVersion = 591912;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -132,6 +133,7 @@ namespace JocoRobos.Cad
                 Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu);
                 Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu);
                 Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu);
+                Add(group, "Upgrade Robot Files", "Convert every robot file to this SOLIDWORKS version once, so opening parts stops marking them changed", nameof(UpgradeRobotFiles), 18, menu);
                 Add(group, "Repair Moved References", "After reorganizing folders: repoint every file's links to the same-named file in the folder", nameof(RepairMovedReferences), 16, menu);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
@@ -892,7 +894,8 @@ namespace JocoRobos.Cad
         // Closing a locked file without saving changes gives it back, so forgotten locks don't block teammates.
         private void ReleaseIfUnchanged(string path)
         {
-            if (application == null) return;
+            // While a command runs (Upgrade Robot Files opens and closes hundreds of locked files), locks stay put.
+            if (application == null || busy) return;
             var season = paneCatalog?.Owning(path);
             bool mine = new[] { robotSnapshot, librarySnapshot }.Any(x => x != null && x.Mine.Contains(path));
             var login = paneUser == null ? null : CredentialStore.Read();
@@ -1605,6 +1608,96 @@ namespace JocoRobos.Cad
             return "Copied " + map.Count + " outside file(s) into " + robot.Name + "\\90_COTS and pointed " + Path.GetFileName(assembly) + " at them." +
                 (notFixed.Count > 0 ? "\n\nStill outside (inside a sub-assembly you haven't locked — Edit it and run this again):\n" + String.Join("\n", notFixed.Take(6)) : "") +
                 "\n\nCheck the assembly looks right, save, then Submit.";
+        }
+
+        // Files saved in an older SOLIDWORKS are converted when opened, which marks them changed: every save then asks
+        // to save read-only team parts somewhere else. Converting the whole robot once, as one submit, ends that for everyone.
+        public void UpgradeRobotFiles()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
+                var robot = catalog.Robot;
+                if (robot.Archived) throw new InvalidOperationException(robot.Name + " is archived and read-only.");
+                if (OpenDocuments().Any()) throw new InvalidOperationException("Close all SOLIDWORKS documents first.");
+                var files = SubmitCheck.CadByName(robot.Root).SelectMany(g => g)
+                    // Parts first, then assemblies, then drawings: each file finds what it uses already converted.
+                    .OrderBy(f => f.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? 0 : f.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
+                    .ThenBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
+                if (files.Count == 0) { Message(robot.Name + " has no CAD files yet."); return; }
+                if (MessageBox.Show(new SolidWorksWindow(), "Convert all " + files.Count + " files in " + robot.Name + " to this SOLIDWORKS version?\n\n" +
+                    "This locks every file (it stops if anyone is editing one), opens and saves each one, and submits them as one change. " +
+                    "It can take several minutes, and SOLIDWORKS is busy until it finishes. Everyone downloads the converted files at their next Update.\n\n" +
+                    "Do it once, when nobody else is working on the robot.", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+                UpdateWorkspace(login, robot);
+                var svn = new SvnWorkspace(login, robot);
+                OperationDialog.Run("Locking all " + files.Count + " robot files…", () => SvnWorkspace.Exclusive(() => { svn.LockAll(files); return true; }));
+                bool submitted = false;
+                try
+                {
+                    var failed = ConvertFiles(files);
+                    var plan = OperationDialog.Run("Checking the converted files…", () => SvnWorkspace.Exclusive(svn.PrepareSubmit));
+                    var mine = plan.Items.Where(x => x.Kind != SubmitKind.New).ToList();
+                    int changed = mine.Count(x => x.Kind == SubmitKind.Modified);
+                    var result = OperationDialog.Run("Submitting " + changed + " converted files…", () => SvnWorkspace.Exclusive(() =>
+                        svn.Submit(mine, "Convert all files to the current SOLIDWORKS format (Upgrade Robot Files)")));
+                    submitted = true;
+                    Message("Converted and submitted " + changed + " file(s)" + (result.Revision > 0 ? " as revision " + result.Revision : "") + "." +
+                        (failed.Count > 0 ? "\n\nThese couldn't be converted and were left as they were:\n" + String.Join("\n", failed.Take(12)) + (failed.Count > 12 ? "\n…" : "") : "") +
+                        (result.Warnings.Count > 0 ? "\n\n" + String.Join("\n", result.Warnings) : "") +
+                        "\n\nTeammates get them with Update (close documents first).", failed.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+                }
+                finally
+                {
+                    // Stopped partway: give back the locks on files that didn't change. Converted files stay locked, ready to Submit.
+                    if (!submitted)
+                        try { OperationDialog.Run("Releasing unchanged files…", () => SvnWorkspace.Exclusive(svn.ReleaseUnchangedLocks)); }
+                        catch (Exception exception) { ErrorLog.Write("upgrade: release", exception); }
+                }
+            });
+        }
+
+        // Opens and saves each file silently, one at a time, with a small progress window. Returns the files that failed.
+        private List<string> ConvertFiles(List<string> files)
+        {
+            var failed = new List<string>();
+            using (var progress = new Form { Text = Title, ClientSize = new System.Drawing.Size(520, 90), FormBorderStyle = FormBorderStyle.FixedDialog,
+                ControlBox = false, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false, TopMost = true })
+            {
+                var label = new Label { AutoSize = false, Location = new System.Drawing.Point(16, 14), Size = new System.Drawing.Size(488, 36) };
+                var bar = new ProgressBar { Location = new System.Drawing.Point(16, 56), Size = new System.Drawing.Size(488, 18), Maximum = files.Count };
+                progress.Controls.Add(label);
+                progress.Controls.Add(bar);
+                progress.Show(new SolidWorksWindow());
+                for (int i = 0; i < files.Count; i++)
+                {
+                    string file = files[i];
+                    label.Text = "Converting " + (i + 1) + " of " + files.Count + ":\n" + Path.GetFileName(file);
+                    bar.Value = i;
+                    progress.Refresh();
+                    try
+                    {
+                        int type = file.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocPART
+                            : file.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY : (int)swDocumentTypes_e.swDocDRAWING;
+                        int errors = 0, warnings = 0;
+                        var doc = application.OpenDoc6(file, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+                        if (doc == null) { failed.Add(Path.GetFileName(file) + " (couldn't open, error " + errors + ")"); continue; }
+                        if (doc.IsOpenedReadOnly()) failed.Add(Path.GetFileName(file) + " (opened read-only)");
+                        else if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
+                            failed.Add(Path.GetFileName(file) + " (couldn't save, error " + errors + ")");
+                    }
+                    catch (Exception exception)
+                    {
+                        ErrorLog.Write("upgrade " + file, exception);
+                        failed.Add(Path.GetFileName(file) + " (" + exception.Message + ")");
+                    }
+                    finally { application.CloseAllDocuments(true); }
+                }
+            }
+            return failed;
         }
 
         // For reorganizing an old robot before import: file names are unique, so every link that points outside the

@@ -261,6 +261,46 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>
+        /// Locks every listed file for a whole-robot operation. Refuses (taking nothing) if any file is changed here,
+        /// out of date, or locked by anyone else, and names them.
+        /// </summary>
+        internal void LockAll(IList<string> paths)
+        {
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                var wanted = new HashSet<string>(paths.Select(p => WorkspacePolicy.RequireInside(Root, p)), StringComparer.OrdinalIgnoreCase);
+                var problems = new List<string>();
+                var toLock = new List<string>();
+                foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+                {
+                    string path = Path.GetFullPath(item.FullPath);
+                    if (!wanted.Contains(path)) continue;
+                    string name = path.Substring(Root.Length + 1);
+                    if (item.LocalNodeStatus != SvnStatus.Normal) problems.Add(name + " — changed on this computer (Submit or Set Aside it first)");
+                    else if (item.IsRemoteUpdated) problems.Add(name + " — out of date (Update first)");
+                    else if (WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner)) continue;
+                    else if (item.RemoteLock != null) problems.Add(name + " — " + item.RemoteLock.Owner + " is editing it");
+                    else toLock.Add(path);
+                }
+                if (problems.Count > 0)
+                    throw new InvalidOperationException("Nothing was changed. These files need attention first:\n\n" + String.Join("\n", problems.Take(12)) +
+                        (problems.Count > 12 ? "\n…and " + (problems.Count - 12) + " more" : ""));
+                if (toLock.Count > 0)
+                {
+                    try { client.Lock(toLock, new SvnLockArgs { StealLock = false, Comment = "Upgrade Robot Files" }); }
+                    catch (SvnException failure)
+                    {
+                        // Someone started editing in the meantime: give back whatever this took.
+                        try { ReleaseUnchangedLocks(); } catch (Exception) { }
+                        throw new InvalidOperationException("Could not lock every file; a teammate may have just started editing. Nothing was changed.\n\n" + failure.Message, failure);
+                    }
+                }
+                ReconcileReadOnly(client);
+            }
+        }
+
         /// <summary>Releases every lock this computer holds on a file that is unchanged; changed files keep theirs.</summary>
         internal List<string> ReleaseUnchangedLocks()
         {

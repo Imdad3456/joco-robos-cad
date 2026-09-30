@@ -48,6 +48,7 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 - Mentors choose the active season on the web page, and the add-in follows it automatically. A student with unfinished work in the old season stays there until it's submitted or set aside.
 - Archived seasons are read-only (SVN access rules). **Open Old Robot** opens any season read-only for reference.
 - SOLIDWORKS can't hold two files with the same name, so the add-in refuses to open two seasons at once.
+- **Upgrade Robot Files** converts every file saved in an older SOLIDWORKS to the current format in one submit. Until then, opening a part marks it changed, and every save offers to save read-only team parts somewhere else. It locks the whole robot first and refuses if anyone is editing.
 - Existing CAD is imported with `joco.py import-season` (see server README). The 2026 robot was reorganized with `tools/reorganize-2026.py` and repaired with **Repair Moved References** first.
 
 ## Accounts and security
