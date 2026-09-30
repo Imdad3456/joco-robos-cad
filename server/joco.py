@@ -404,6 +404,22 @@ def new_setup_code(user, mentor):
     return code
 
 
+def new_open_code(mentor, make_mentor):
+    """A setup code not tied to a name: the student chooses their own username (and password) with it."""
+    code = '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
+    invites = read_json(INVITES) or {}
+    invites['open:' + secrets.token_hex(6)] = {'code': code, 'expires': time.time() + INVITE_DAYS * 86400, 'by': mentor, 'mentor': bool(make_mentor)}
+    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+    return code
+
+
+def open_codes():
+    """Unused, unexpired codes that let a student pick their own username: [(id, invite)]."""
+    now = time.time()
+    return [(k[5:], v) for k, v in sorted((read_json(INVITES) or {}).items(), key=lambda kv: kv[1]['expires'])
+            if k.startswith('open:') and v['expires'] > now]
+
+
 def claim_account(address, user, code, password):
     """Public (no sign-in): a student turns a setup code into their own password. Deliberately vague errors."""
     now = time.time()
@@ -415,7 +431,26 @@ def claim_account(address, user, code, password):
     code = re.sub(r'[^A-Z0-9]', '', (code or '').upper())
     invites = read_json(INVITES) or {}
     invite = invites.get(user)
-    if not invite or invite['expires'] < now or not hmac.compare_digest(invite['code'].replace('-', ''), code):
+    matches = lambda i: i['expires'] >= now and hmac.compare_digest(i['code'].replace('-', ''), code)
+    if not (invite and matches(invite)):
+        # A code not tied to a name: this student is choosing their username now. Only someone holding a valid code
+        # learns whether a name is taken.
+        key = next((k for k, v in invites.items() if k.startswith('open:') and matches(v)), None)
+        if key is not None:
+            if not USERNAME.match(user) or user == PUBLISHER:
+                raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore, starting with a letter or number.')
+            if user in users():
+                raise Refused('The username ' + user + ' is taken. Choose another one.')
+            if len(password) < 10 or password.lower() == user:
+                raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
+            run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
+            if invites[key].get('mentor'):
+                state = load_state()
+                state['mentors'] = sorted(set(state['mentors']) | {user})
+                save_state(state)
+            del invites[key]
+            write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+            return
         if invite:
             invite['failures'] = invite.get('failures', 0) + 1
             if invite['failures'] >= 5:
@@ -507,6 +542,16 @@ def act(user, form):
         # rmlocks bypasses the student pre-unlock hook; unsubmitted edits on the owner's PC become stale.
         run('svnadmin', 'rmlocks', os.path.join(REPOS, repo), path)
         return 'Released ' + path + '. The previous owner can no longer submit their unsaved copy of it.'
+    if action == 'add-user' and not form.get('username', '').strip():
+        new_open_code(user, form.get('mentor'))
+        return ('New ' + ('mentor ' if form.get('mentor') else '') + 'setup code made; it\'s listed under Unused setup codes. '
+                'Give it to the student: they choose their own username and password in SOLIDWORKS.')
+    if action == 'cancel-code':
+        invites = read_json(INVITES) or {}
+        if invites.pop('open:' + form.get('id', ''), None) is None:
+            raise Refused('That code was already used or cancelled.')
+        write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+        return 'Setup code cancelled.'
     if action in ('add-user', 'reset-password'):
         name = form.get('username', '').strip().lower()
         if not USERNAME.match(name):
@@ -1122,13 +1167,20 @@ class Admin(BaseHTTPRequestHandler):
                 (' · ' + esc(', '.join(beat.get('computers', [])))) if beat.get('computers') else '')
             rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', seen, reset, tools)
         add = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="add-user">'
-               '<input name="username" placeholder="username (e.g. sarah)" pattern="[a-z0-9][a-z0-9._\\-]{1,31}" required aria-label="Username">'
+               '<input name="username" placeholder="username (optional)" pattern="[a-z0-9][a-z0-9._\\-]{1,31}" aria-label="Username (optional)">'
 
-               '<label><input type="checkbox" name="mentor" value="1"> Mentor</label><button class="primary">Add account</button></form>'
-               '<p class="muted">You get a one-time setup code (valid %d days). The student enters their username and that code the first time SOLIDWORKS starts, '
-               'then chooses their own password. Mentors never see it. "New setup code" resets a forgotten password the same way.</p>') % (self.token(), INVITE_DAYS)
-        return ('<section><h2>Add an account</h2>%s</section><section><h2>Accounts</h2><div class="scroll"><table>'
-                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Setup</th><th></th></tr>%s</table></div></section>') % (add, rows)
+               '<label><input type="checkbox" name="mentor" value="1"> Mentor</label><button class="primary">Make setup code</button></form>'
+               '<p class="muted">Leave the username empty and just hand out the one-time code (valid %d days): the student enters it the first time SOLIDWORKS starts '
+               'and chooses their own username and password. Type a username to pick it for them instead. Mentors never see passwords. '
+               '"New setup code" next to a name resets a forgotten password the same way.</p>') % (self.token(), INVITE_DAYS)
+        unused = ''.join('<tr><td><code style="font-size:15px"><b>%s</b></code> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+            esc(i['code']), '<span class="tag">mentor</span>' if i.get('mentor') else '', esc(i.get('by', '')),
+            time.strftime('%b %d', time.localtime(i['expires'])), self.form('cancel-code', {'id': cid}, 'Cancel'))
+            for cid, i in open_codes())
+        unused = ('<section><h2>Unused setup codes</h2><div class="scroll"><table><tr><th>Code</th><th>Made by</th><th>Expires</th><th></th></tr>%s</table></div></section>' % unused
+                  if unused else '')
+        return ('<section><h2>Add an account</h2>%s</section>%s<section><h2>Accounts</h2><div class="scroll"><table>'
+                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Setup</th><th></th></tr>%s</table></div></section>') % (add, unused, rows)
 
 
 def serve():

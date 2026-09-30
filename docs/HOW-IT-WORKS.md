@@ -53,7 +53,7 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 
 ## Accounts and security
 
-- **Passwords are the student's own.** A mentor creates the account and gets a one-time setup code (7 days). The student enters it on the add-in's first-run screen and chooses a password, which is saved only in Windows Credential Manager. **New setup code** disables a forgotten password immediately.
+- **Passwords are the student's own.** A mentor clicks **Make setup code** and hands out the one-time code (7 days); the student enters it on the add-in's first-run screen and chooses their own username and password (a mentor can also pick the username, or make a mentor code). The password is saved only in Windows Credential Manager. **New setup code** disables a forgotten password immediately.
 - **Locks and tokens are per computer.** Taking a lock on another PC with the same account shows "You locked this from another computer".
 - **Shared PCs:** `C:\JOCO-ROBOS` belongs to its first Windows user; other Windows users get a private `%USERPROFILE%\JOCO-ROBOS`. Switching CAD accounts is refused while there's unsubmitted work.
 - **Secrets never enter the repository.** The Cloudflare token, the Onshape API key, and passwords live only on the Deck; the release upload password lives only in a GitHub secret. The `github-release` account can only stage installers and is denied all SVN access.

@@ -212,8 +212,8 @@ namespace JocoRobos.Cad
             };
             if (askCode)
             {
-                row("Username", username);
                 row("Setup code", code);
+                row("Username", username);
             }
             username.Text = currentUser ?? "";
             row("New password", password);
@@ -224,7 +224,9 @@ namespace JocoRobos.Cad
             var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(360, y + 32), Size = new Size(95, 30) };
             ok.Click += (s, e) =>
             {
-                if (askCode && (Username.Length == 0 || Code.Length == 0)) { MessageBox.Show(this, "Enter your username and the setup code from your mentor."); return; }
+                if (askCode && (Username.Length == 0 || Code.Length == 0)) { MessageBox.Show(this, "Enter the setup code from your mentor and choose a username."); return; }
+                if (askCode && !System.Text.RegularExpressions.Regex.IsMatch(Username, "^[a-z0-9][a-z0-9._-]{1,31}$"))
+                { MessageBox.Show(this, "Usernames: 2–32 lowercase letters, numbers, dot, dash, or underscore, starting with a letter or number."); return; }
                 if (password.Text.Length < 10) { MessageBox.Show(this, "Use at least 10 characters."); return; }
                 if (password.Text != confirm.Text) { MessageBox.Show(this, "The two passwords don't match."); return; }
                 if (password.Text.Equals(Username, StringComparison.OrdinalIgnoreCase)) { MessageBox.Show(this, "Don't use your username as your password."); return; }

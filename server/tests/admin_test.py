@@ -137,6 +137,25 @@ code2 = code_for('alex'); check(code2 and code2 != code, 'reset makes a new code
 for i in range(5): setup('alex', 'AAAA-AAAA-AAA%d' % i, 'alexpassword3')
 check(setup('alex', code2, 'alexpassword3')[0] == 400 and code_for('alex') is None, 'five wrong guesses kill the code')
 post('/admin/users', {'action': 'reset-password', 'username': 'alex'}); setup('alex', code_for('alex'), 'alexpassword3')
+# Codes without a name: the student picks their own username.
+def open_code():
+    page = req('/admin/users', *M)[2]
+    m = re.search(r'Unused setup codes.*?<code[^>]*><b>([A-Z0-9-]+)</b></code>', page, re.S)
+    return m.group(1) if m else None
+s, loc = post('/admin/users', {'action': 'add-user', 'username': ''}); check('Unused setup codes' in loc or 'setup code made' in loc, 'code without a name ' + loc)
+oc = open_code(); check(oc and oc not in loc, 'open code listed, never in a URL')
+check('taken' in setup('sarah', oc, 'sarahpassword9')[1], 'existing username refused')
+check(req('/catalog.json', 'sarah', 'sarahpass123')[0] == 200, 'existing account untouched')
+check(setup('Bad Name!', oc, 'jordanpassword1')[0] == 400, 'bad username refused')
+s_, t = setup('jordan', oc, 'jordanpassword1'); check(s_ == 200, 'student picks own username ' + t)
+check(req('/catalog.json', 'jordan', 'jordanpassword1')[0] == 200 and req('/admin', 'jordan', 'jordanpassword1')[0] == 403, 'new student account, not a mentor')
+check(setup('jordan2', oc, 'jordanpassword1')[0] == 400 and open_code() is None, 'open code works once')
+post('/admin/users', {'action': 'add-user', 'username': '', 'mentor': '1'}); oc = open_code()
+check(setup('casey', oc, 'caseypassword1')[0] == 200 and req('/admin', 'casey', 'caseypassword1')[0] == 200, 'mentor code makes a mentor')
+post('/admin/users', {'action': 'add-user', 'username': ''}); oc = open_code()
+page = req('/admin/users', *M)[2]; cid = re.search(r'name="id" value="([0-9a-f]+)"', page).group(1)
+s, loc = post('/admin/users', {'action': 'cancel-code', 'id': cid}); check('cancelled' in loc and setup('drew', oc, 'drewpassword1')[0] == 400, 'cancelled code dead')
+for name in ('jordan', 'casey'): post('/admin/users', {'action': 'delete-user', 'username': name})
 s, loc = post('/admin/users', {'action': 'toggle-mentor', 'username': 'alex'}); check('now a mentor' in loc, 'make mentor')
 check(req('/admin', 'alex', 'alexpassword3')[0] == 200, 'new mentor sees admin')
 s, loc = post('/admin/users', {'action': 'delete-user', 'username': 'mentor1'}); check('own account' in loc, 'cannot delete self')

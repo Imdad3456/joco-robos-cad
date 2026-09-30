@@ -481,7 +481,8 @@ namespace JocoRobos.Cad
         private NetworkCredential SetUpAccount(NetworkCredential saved)
         {
             using (var dialog = new SetupAccountDialog("Set Up Your Account",
-                "Welcome! Enter your username and the setup code a mentor gave you, then choose your own password. Mentors never see it.", true, saved?.UserName))
+                "Welcome! Enter the setup code a mentor gave you, then choose your username (lowercase, like sarah or j.smith) and password. " +
+                "If a mentor reset your password, use your existing username.", true, saved?.UserName))
             {
                 if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
                 OperationDialog.Run("Setting up your account…", () => { Accounts.Setup(dialog.Username, dialog.Code, dialog.Password); return true; });
