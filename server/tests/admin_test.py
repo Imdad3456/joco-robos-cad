@@ -15,6 +15,10 @@ def req(path, user=None, pw=None, data=None, origin=BASE, ctype=None):
     except urllib.error.HTTPError as e:
         return e.code, e.headers, e.read().decode(errors='replace')
 M = ('mentor1', 'mentorpass123'); U = ('sarah', 'sarahpass123')
+# A public front page says what this server is (for people and web filters); nothing else is public.
+s_, _, page = req('/'); assert s_ == 200 and 'Team 5919' in page and '/admin' in page, 'public front page ' + str(s_)
+assert req('/robots.txt')[0] == 200 and req('/svn/')[0] in (401, 403) and req('/admin')[0] == 401 and req('/catalog.json')[0] == 401, 'everything else still needs a sign-in'
+
 n = 0
 def check(cond, msg):
     global n

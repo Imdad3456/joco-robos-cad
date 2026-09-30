@@ -8,6 +8,7 @@ COPY pre-unlock.py /opt/joco/pre-unlock
 COPY joco.py /opt/joco/joco.py
 COPY frcdesign.py /opt/joco/frcdesign.py
 COPY entrypoint.sh /opt/joco/entrypoint.sh
+COPY www/ /var/www/joco/
 RUN chmod 755 /opt/joco/pre-* /opt/joco/joco.py /opt/joco/entrypoint.sh
 EXPOSE 80
 ENTRYPOINT ["/opt/joco/entrypoint.sh"]
