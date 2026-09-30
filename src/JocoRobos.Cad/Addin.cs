@@ -1311,13 +1311,8 @@ namespace JocoRobos.Cad
                 RequireCurrentAddin(login, catalog);
                 var library = catalog.Library;
                 if (library == null) throw new InvalidOperationException("The server has no parts library yet. Ask a mentor.");
-                var assemblyDoc = application.ActiveDoc as ModelDoc2;
-                var robot = assemblyDoc == null || String.IsNullOrEmpty(assemblyDoc.GetPathName()) ? null : catalog.Owning(assemblyDoc.GetPathName());
-                if (robot == null || robot.IsLibrary || assemblyDoc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY)
-                    throw new InvalidOperationException("Open the robot assembly you want to add the part to, and click Edit on it first.");
+                var robot = catalog.Robot;
                 if (robot.Archived) throw new InvalidOperationException(robot.Name + " is archived and read-only.");
-                if (assemblyDoc.IsOpenedReadOnly())
-                    throw new InvalidOperationException("Click Edit on " + Path.GetFileName(assemblyDoc.GetPathName()) + " first, so you can add parts to it.");
 
                 // Keep the library fresh; a local copy is fine if the update cannot run right now.
                 var librarySvn = new SvnWorkspace(login, library);
@@ -1332,11 +1327,10 @@ namespace JocoRobos.Cad
                     source = Path.GetFullPath(dialog.FileName);
                 }
                 if (!library.Contains(source)) throw new InvalidOperationException("Choose a part from the Library folder:\n" + library.Root);
-
-                string copy = CopyFromLibrary(library, robot, source);
-                AddToAssembly(assemblyDoc, copy);
-                Message("Inserted " + Path.GetFileName(copy) + ".\n\nIt was copied into your robot at:\n" + copy +
-                    "\n\nMate it, save the assembly, and it will be included in your next Submit.");
+                bool cancelled;
+                var target = InsertTarget(catalog, Path.GetFileNameWithoutExtension(source), out cancelled);
+                if (cancelled) return;
+                DeliverPart(target, CopyFromLibrary(library, robot, source), Path.GetFileNameWithoutExtension(source));
             });
         }
 
@@ -1355,7 +1349,10 @@ namespace JocoRobos.Cad
                 RequireCurrentAddin(login, catalog);
                 var library = catalog.Library;
                 if (library == null) throw new InvalidOperationException("The server has no team Library yet. Ask a mentor.");
-                var assemblyDoc = WritableRobotAssembly(catalog);
+                if (catalog.Robot.Archived) throw new InvalidOperationException(catalog.Robot.Name + " is archived and read-only.");
+                bool cancelled;
+                var assemblyDoc = InsertTarget(catalog, item.Name, out cancelled);
+                if (cancelled) return;
                 var client = new FrcClient(login);
                 var claim = OperationDialog.Run("Checking the team Library for " + item.Name + "…", () => client.Claim(item.Id, configuration));
                 if (claim.Status == "busy")
@@ -1377,12 +1374,10 @@ namespace JocoRobos.Cad
                     ImportIntoLibrary(client, claim, item, library, libraryFile, login);
                 }
                 // The download may have taken a while: make sure the assembly is still open and ours to change.
-                if (!OpenDocuments().Any(d => ReferenceEquals(d, assemblyDoc)) || assemblyDoc.IsOpenedReadOnly())
+                if (assemblyDoc != null && (!OpenDocuments().Any(d => ReferenceEquals(d, assemblyDoc)) || assemblyDoc.IsOpenedReadOnly()))
                     throw new InvalidOperationException(claim.Name + " is in the team Library now, but your assembly was closed or is no longer locked. " +
                         "Open it, click Edit, and use Insert again (it will be instant).");
-                string copy = CopyFromLibrary(library, catalog.Robot, libraryFile);
-                AddToAssembly(assemblyDoc, copy);
-                Message("Inserted " + claim.Name + ".\n\nIt's in your robot at:\n" + copy + "\n\nMate it, save, and Submit.");
+                DeliverPart(assemblyDoc, CopyFromLibrary(library, catalog.Robot, libraryFile), claim.Name);
             });
         }
 
@@ -1876,6 +1871,47 @@ namespace JocoRobos.Cad
                     (missing.Count > 0 ? "\n\nThese referenced files aren't in the folder at all, so SOLIDWORKS will ask for them:\n" + String.Join("\n", missing.Take(12)) + (missing.Count > 12 ? "\n…" : "") : "") +
                     "\n\nNow open the top assembly and check it.");
             });
+        }
+
+        // Where an inserted part goes: the active robot assembly if you're editing it (after offering to lock a read-only one),
+        // or a new assembly that isn't saved yet. Null otherwise: the part is then copied into the robot and opened by itself,
+        // to use anywhere. The Library copy never changes either way; unused copies can be unchecked at Submit.
+        private ModelDoc2 InsertTarget(Catalog catalog, string partName, out bool cancelled)
+        {
+            cancelled = false;
+            var doc = application.ActiveDoc as ModelDoc2;
+            if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY) return null;
+            string path = doc.GetPathName();
+            if (String.IsNullOrEmpty(path)) return doc; // New assembly: saved into the robot folder later.
+            var owner = catalog.Owning(path);
+            if (owner == null || owner.IsLibrary || owner.Name != catalog.Robot.Name || owner.Archived) return null;
+            if (!doc.IsOpenedReadOnly()) return doc;
+            string name = Path.GetFileName(path);
+            var answer = MessageBox.Show(new SolidWorksWindow(), name + " is read-only.\n\n" +
+                "Yes: lock " + name + " (like Edit) and insert " + partName + " into it.\n" +
+                "No: just add " + partName + " to the robot and open it on its own, to use anywhere.", Title,
+                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel) { cancelled = true; return null; }
+            if (answer == DialogResult.No) return null;
+            EditDocument(doc, true, catalog, true);
+            if (doc.IsOpenedReadOnly()) { cancelled = true; return null; } // Edit explained why it couldn't lock.
+            return doc;
+        }
+
+        private void DeliverPart(ModelDoc2 assemblyDoc, string copy, string name)
+        {
+            if (assemblyDoc != null)
+            {
+                AddToAssembly(assemblyDoc, copy);
+                Message("Inserted " + name + ".\n\nIt's in your robot at:\n" + copy + "\n\nMate it, save, and Submit.");
+                return;
+            }
+            int errors = 0, warnings = 0;
+            int type = copy.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY : (int)swDocumentTypes_e.swDocPART;
+            if (application.OpenDoc6(copy, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings) == null)
+                throw new InvalidOperationException(name + " is in your robot at\n" + copy + "\nbut SOLIDWORKS couldn't open it (error " + errors + "). Open it from there.");
+            Message(name + " is in your robot at:\n" + copy + "\n\nIt's open now. Drag it into any assembly (or use Insert Component). " +
+                "It goes to the team with your next Submit; uncheck it there if you end up not using it.");
         }
 
         private ModelDoc2 WritableRobotAssembly(Catalog catalog)
