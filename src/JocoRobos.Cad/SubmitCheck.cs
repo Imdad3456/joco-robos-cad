@@ -218,7 +218,8 @@ namespace JocoRobos.Cad
                         users.Add(item.Name);
                     }
                 }
-                string missingKey = "missing:" + item.Path;
+                // The key names the actual files, so "Submit anyway" never covers a different problem found later.
+                string missingKey = "missing:" + item.Path + ":" + String.Join("|", missing.Select(p => p.ToLowerInvariant()).OrderBy(p => p));
                 if (missing.Count > 0 && !input.Acknowledged.Contains(missingKey))
                     issues.Add(new SubmitIssue { Level = IssueLevel.Blocking, Key = missingKey,
                         Title = item.Name + " uses " + (missing.Count == 1 ? "a file that isn't" : missing.Count + " files that aren't") + " on this computer",
@@ -247,8 +248,9 @@ namespace JocoRobos.Cad
                     Title = String.Join(", ", pair.Value.Distinct().Take(3)) + " needs " + Path.GetFileName(pair.Key),
                     Description = Path.GetFileName(pair.Key) + " is new and unchecked, so teammates couldn't open " + (pair.Value.Count == 1 ? "it" : "them") + " without it.",
                     Files = { pair.Key }, Actions = { IssueAction.IncludeFile } });
-            if (temporary.Count > 0 && !input.Acknowledged.Contains(TemporaryKey))
-                issues.Add(new SubmitIssue { Level = IssueLevel.Blocking, Key = TemporaryKey,
+            string temporaryKey = TemporaryKey + ":" + String.Join("|", temporary.Select(p => p.ToLowerInvariant()));
+            if (temporary.Count > 0 && !input.Acknowledged.Contains(temporaryKey))
+                issues.Add(new SubmitIssue { Level = IssueLevel.Blocking, Key = temporaryKey,
                     Title = temporary.Count + " imported part(s) exist only in SOLIDWORKS' temporary folder",
                     Description = String.Join(", ", temporary.Take(4)) + (temporary.Count > 4 ? ", …" : "") +
                         "\nThis happens with parts inserted from STEP or other CAD formats. Teammates may see them as missing. To make them permanent: " +

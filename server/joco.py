@@ -1186,7 +1186,7 @@ class Admin(BaseHTTPRequestHandler):
         if current:
             info = ('<p>Published: <b>%s</b> (%s, %.1f MB) — %s</p><p class="muted">SHA-256 <code>%s</code></p>%s') % (
                 esc(current['version']), esc(current['file']), current.get('size', 0) / 1048576.0,
-                '<span class="bad">required: students must install it before Edit or Submit</span>' if current.get('required')
+                '<span class="bad">required: students must install it before new edits and inserts (they can still Submit work they already have)</span>' if current.get('required')
                 else '<span class="ok">optional: students are offered it</span>', esc(current['sha256']),
                 self.form('addin-required', {}, 'Make optional' if current.get('required') else 'Make required'))
         else:
@@ -1207,7 +1207,8 @@ class Admin(BaseHTTPRequestHandler):
                        '<p class="muted">On the Windows PC: bump <code>&lt;Version&gt;</code> in <code>JocoRobos.Cad.csproj</code>, run '
                        '<code>scripts\\Build-Installer.ps1</code>, and upload <code>installer\\Output\\JOCO-ROBOS-CAD-Setup-x.y.z.exe</code>. '
                        'Students get a prompt in SOLIDWORKS; after they save and close SOLIDWORKS it installs and reopens. '
-                       'Use <b>Required</b> when the server or file format changed and older add-ins must not submit.</p>') % self.token()
+                       'Use <b>Required</b> when older add-ins must not start new work (for example after a server or file-format change); '
+                       'they can always Submit or Set Aside what they already have.</p>') % self.token()
         beats = read_json(HEARTBEATS) or {}
         recent = {u: b for u, b in beats.items() if (age_hours(b.get('seen')) or 1e9) < 30 * 24}
         if current and recent:

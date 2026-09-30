@@ -84,6 +84,24 @@ namespace JocoRobos.Cad
         // Background work the panel shows as a line of text instead of a window (automatic update).
         private string working, autoUpdateProblem;
         private long autoUpdateTried;
+        private DateTime nextAutoUpdateRetry;
+        private readonly List<ModelDoc2> pendingLockOffers = new List<ModelDoc2>();
+
+        // Lock offers that arrived while JOCO was busy, handled once it isn't: only files still read-only with unsaved changes.
+        private void OfferPendingLocks()
+        {
+            if (busy || pendingLockOffers.Count == 0) return;
+            var waiting = pendingLockOffers.ToList();
+            pendingLockOffers.Clear();
+            foreach (var doc in waiting)
+                OnUi("pending lock offer", () =>
+                {
+                    bool stillNeeded;
+                    try { stillNeeded = doc.IsOpenedReadOnly() && doc.GetSaveFlag(); }
+                    catch (Exception) { stillNeeded = false; } // Closed meanwhile.
+                    if (stillNeeded) OfferLock(doc);
+                });
+        }
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -217,6 +235,7 @@ namespace JocoRobos.Cad
             finally
             {
                 busy = false;
+                OfferPendingLocks();
                 // Includes dialogs the student had open, so only very long commands are worth noting.
                 ErrorLog.Slow("command " + name, clock.ElapsedMilliseconds, 60000);
                 RefreshStatus();
@@ -991,7 +1010,8 @@ namespace JocoRobos.Cad
             {
                 if (busy || application == null || robotSnapshot == null || paneCatalog == null) return;
                 var robot = robotSnapshot.Info;
-                if (robotSnapshot.Head == autoUpdateTried) return; // Tried this revision already; the panel shows why it didn't work.
+                // A failed try (a Wi-Fi hiccup) is retried after a minute, not given up on for this revision.
+                if (robotSnapshot.Head == autoUpdateTried && DateTime.UtcNow < nextAutoUpdateRetry) return;
                 var library = paneCatalog.Library;
                 if (RobotDocuments(robot).Any() || (library != null && RobotDocuments(library).Any())) return;
                 var login = CredentialStore.Read();
@@ -1017,9 +1037,11 @@ namespace JocoRobos.Cad
                     }
                     else
                     {
+                        nextAutoUpdateRetry = DateTime.UtcNow.AddSeconds(60);
                         autoUpdateProblem = task.Exception?.GetBaseException().Message ?? "unknown error";
                         ErrorLog.Write("auto update", task.Exception?.GetBaseException() ?? new Exception(autoUpdateProblem));
                     }
+                    OfferPendingLocks();
                     RefreshStatus();
                 }));
             }
@@ -1231,7 +1253,13 @@ namespace JocoRobos.Cad
         // before the student spends time on changes they could not save.
         private void OfferLock(ModelDoc2 doc)
         {
-            if (busy || application == null) return;
+            if (application == null) return;
+            // Busy (a command, the Submit window's checks, an automatic update): ask as soon as it's done, not never.
+            if (busy)
+            {
+                if (!pendingLockOffers.Any(d => ReferenceEquals(d, doc))) pendingLockOffers.Add(doc);
+                return;
+            }
             string path;
             try { path = Path.GetFullPath(doc.GetPathName()); if (!doc.IsOpenedReadOnly()) return; }
             catch (Exception) { return; } // Closed in the meantime.
@@ -1500,7 +1528,7 @@ namespace JocoRobos.Cad
                 Busy = value =>
                 {
                     if (value) { wasBusy = busy; busy = true; }
-                    else { busy = wasBusy; RenderStatus(); }
+                    else { busy = wasBusy; RenderStatus(); OfferPendingLocks(); }
                 },
             };
             var window = new SubmitWindow(host, submitDraft);

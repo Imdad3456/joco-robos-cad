@@ -34,6 +34,7 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | 2.3 | Both | Wait 10 seconds, then change a dimension **without** clicking Edit | No question. The panel says "✎ You're editing …" (locked by itself), and your change is still there | ☐ |
 | 2.4 | Both | Save | "1 change waiting" and a **Submit 1** button | ☐ |
 | 2.5 | Both | Open your assembly (A: `50_Electrical\battery holder`, B: `motor cover asssewmbly`) read-only and drag a component | Assemblies still ask "Lock it for editing now?" → **No**. Close it without saving | ☐ |
+| 2.5b | Both | Open your assembly read-only, change a mate right away (first 5 seconds), and click **No** if asked to lock. Then Submit something else | The panel keeps warning about the unsaved assembly changes; you can't easily forget them (write down anything that felt too quiet) | ☐ |
 | 2.6 | Both | Close the part without submitting, reopen it, click **Edit** → change nothing → close it | Within a few seconds it's no longer listed under "You're editing" (unchanged → given back) | ☐ |
 
 ## 3. Library tab

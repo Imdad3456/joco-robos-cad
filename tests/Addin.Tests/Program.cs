@@ -125,6 +125,7 @@ static class Program
             Check(shaft.CheckNumber("abc", out typed) != null && shaft.CheckNumber("NaN", out typed) != null, "Non-number length");
             Check(new FrcChoice { Name = "Teeth", Integer = true, Min = "0", Max = "255" }.CheckNumber("3.5", out typed) != null, "Fractional whole number");
             Check(WorkspacePolicy.SolidWorksYear("34.1.0") == 2026 && WorkspacePolicy.SolidWorksYear("x") == 0, "SOLIDWORKS year from revision number");
+            Check(WorkspacePolicy.SolidWorksProblem(0, "2026") != null && WorkspacePolicy.SolidWorksProblem(0, null) == null, "Unknown SOLIDWORKS version fails safe");
             Check(WorkspacePolicy.SolidWorksProblem(2026, "2026") == null && WorkspacePolicy.SolidWorksProblem(2026, null) == null &&
                 WorkspacePolicy.SolidWorksProblem(2027, "2026").Contains("not edit") && WorkspacePolicy.SolidWorksProblem(2025, "2026").Contains("Update SOLIDWORKS"),
                 "Team SOLIDWORKS version rule");
@@ -258,17 +259,19 @@ static class Program
             // A reference to a CAD file that exists nowhere is reported, never skipped silently; "Submit anyway" acknowledges it.
             references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "Lost Bracket.SLDPRT") };
             var lost = run(new[] { shooter, camera }).Single();
-            Check(lost.Blocking && lost.Key == "missing:" + shooter && lost.Title.Contains("isn't on this computer") && lost.Description.Contains("Lost Bracket"),
+            Check(lost.Blocking && lost.Key.StartsWith("missing:" + shooter + ":") && lost.Title.Contains("isn't on this computer") && lost.Description.Contains("Lost Bracket"),
                 "Unresolved reference reported");
             acknowledged.Add(lost.Key);
             Check(run(new[] { shooter, camera }).Count == 0, "Acknowledged missing reference");
+            references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "Other Bracket.SLDPRT") };
+            Check(run(new[] { shooter, camera }).Single().Description.Contains("Other Bracket"), "Submit anyway doesn't cover a different missing file found later");
             references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "table.xlsx") };
             Check(run(new[] { shooter, camera }).Count == 0, "Non-CAD dependency is a documented limit, not an issue");
             // Imported-only parts need an explicit "Submit anyway"; missing files and mentor problems never block the rest.
             references[shooter] = new[] { camera, interconnect };
             var temporary = run(new[] { shooter, camera }).Single();
-            Check(temporary.Key == SubmitCheck.TemporaryKey && temporary.Blocking && temporary.Actions.SequenceEqual(new[] { IssueAction.SubmitAnyway }), "Temporary reference");
-            acknowledged.Add(SubmitCheck.TemporaryKey);
+            Check(temporary.Key.StartsWith(SubmitCheck.TemporaryKey) && temporary.Blocking && temporary.Actions.SequenceEqual(new[] { IssueAction.SubmitAnyway }), "Temporary reference");
+            acknowledged.Add(temporary.Key);
             Check(run(new[] { shooter, camera }).Count == 0, "Acknowledged warning still blocks");
             plan.Restore.Add(new SubmitItem { Kind = SubmitKind.Modified, Path = Path.Combine(root, "Gone.SLDPRT"), Workspace = season, Reason = "Missing" });
             plan.Blocked.Add("Odd — needs mentor repair");

@@ -140,7 +140,10 @@ namespace JocoRobos.Cad
         internal static string SolidWorksProblem(int mine, string approved)
         {
             int team;
-            if (mine == 0 || !Int32.TryParse(approved ?? "", out team) || team == mine) return null;
+            if (!Int32.TryParse(approved ?? "", out team) || team == mine) return null;
+            if (mine == 0)
+                return "JOCO couldn't tell which SOLIDWORKS version this is, and the team uses SOLIDWORKS " + team + ". To be safe you can look at the robot " +
+                    "but not edit or submit it. Restart SOLIDWORKS; if this stays, Copy Diagnostics and send it to a mentor.";
             return mine > team
                 ? "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Files saved here couldn't be opened by everyone else, " +
                   "so you can look at the robot but not edit or submit it. Use SOLIDWORKS " + team + ", or ask a mentor (the team upgrades together)."
