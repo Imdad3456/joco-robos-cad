@@ -17,6 +17,9 @@ namespace JocoRobos.Cad
         internal Func<Task<SubmitPlan>> Scan;
         // UI thread: the preflight for the current plan, checked files, and acknowledged warnings.
         internal Func<SubmitPlan, ISet<string>, ISet<string>, List<SubmitIssue>> Check;
+        // UI thread, one file at a time: reads references ahead of Check so SOLIDWORKS stays responsive between files.
+        // The callback reports progress and returns false to stop (the window was closed).
+        internal Func<IList<string>, Func<int, int, bool>, Task> Prepare;
         // UI thread: runs one fix button (save, lock, import, restore); returns a note to show or null, throws on failure.
         internal Func<SubmitIssue, IssueAction, string> Fix;
         // The real Submit (SvnWorkspace.Submit), which rechecks everything itself.
@@ -77,7 +80,7 @@ namespace JocoRobos.Cad
         // can never skip it.
         private string scanFailure, checkFailure;
         private IssueLevel noteLevel;
-        private bool working, populating;
+        private bool working, populating, preparing;
         private string workingText;
         private DateTime? leftAt;
 
@@ -135,7 +138,7 @@ namespace JocoRobos.Cad
                 if (populating || item == null) return;
                 if (e.Item.Checked) draft.Unchecked.Remove(item.Path); else draft.Unchecked.Add(item.Path);
                 // Later, not inside the ListView's own event.
-                Safely("file checkbox", () => { Recheck(); return Task.FromResult(true); });
+                Safely("file checkbox", Recheck);
             };
             files.Resize += (s, e) => FitColumns();
 
@@ -181,7 +184,8 @@ namespace JocoRobos.Cad
             };
             FormClosing += (s, e) =>
             {
-                if (working && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; return; }
+                // Closing is fine while references are being read (that stops); not while saving, importing, or submitting.
+                if (working && !preparing && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; return; }
                 try { if (Outcome == null) draft.Comment = comment.Text; }
                 catch (Exception exception) { ErrorLog.Write("Submit window closing", exception); }
             };
@@ -236,6 +240,7 @@ namespace JocoRobos.Cad
             {
                 Begin("Checking your changes…");
                 var fresh = await host.Scan();
+                if (IsDisposed) return;
                 if (fresh.Notice != null) notice = fresh.Notice;
                 plan = fresh;
                 scanFailure = null;
@@ -247,11 +252,34 @@ namespace JocoRobos.Cad
                 scanFailure = exception.Message;
             }
             finally { End(); }
-            Recheck();
+            if (!IsDisposed) await Recheck();
         }
 
-        private void Recheck()
+        private async Task Recheck()
         {
+            if (plan != null && host.Prepare != null && !working)
+            {
+                var paths = Selected.Where(x => x.Kind != SubmitKind.ReleaseOnly && WorkspacePolicy.IsCad(x.Path)).Select(x => x.Path).ToList();
+                try
+                {
+                    Begin("Checking file references…");
+                    preparing = true;
+                    await host.Prepare(paths, (done, total) =>
+                    {
+                        if (IsDisposed) return false;
+                        status.Text = "Checking file references (" + done + " of " + total + ")…";
+                        status.Refresh();
+                        return true;
+                    });
+                }
+                catch (Exception exception) { ErrorLog.Write("Submit reference reading", exception); }
+                finally
+                {
+                    preparing = false;
+                    End();
+                }
+                if (IsDisposed) return;
+            }
             if (plan != null)
             {
                 try
@@ -337,7 +365,9 @@ namespace JocoRobos.Cad
             }
             else if (blocking > 0)
             {
-                status.Text = "⚠ Fix " + blocking + (blocking == 1 ? " issue" : " issues") + " before submitting";
+                // Say what, right here: the explanation cards are above the file list.
+                var first = issues.First(x => x.Blocking);
+                status.Text = "⚠ Fix " + (blocking == 1 ? "this before submitting: " : blocking + " things before submitting, first: ") + first.Title;
                 status.ForeColor = Color.DarkOrange;
             }
             else if (plan.Items.Count == 0)
@@ -438,7 +468,8 @@ namespace JocoRobos.Cad
             }
             int wanted = issuePanel.Controls.Cast<Control>().Sum(c => c.GetPreferredSize(new Size(width, 0)).Height + c.Margin.Vertical);
             int limit = Math.Max(120, root.ClientSize.Height / 2 - 40);
-            root.RowStyles[2].Height = issuePanel.Controls.Count == 0 ? 0 : Math.Min(wanted + 4, limit);
+            // At least room for one card, even if the layout hasn't measured it yet.
+            root.RowStyles[2].Height = issuePanel.Controls.Count == 0 ? 0 : Math.Max(90, Math.Min(wanted + 4, limit));
         }
 
         private void FitColumns()
@@ -468,11 +499,11 @@ namespace JocoRobos.Cad
                             }
                     }
                     finally { populating = false; }
-                    Recheck();
+                    await Recheck();
                     return;
                 case IssueAction.SubmitAnyway:
                     acknowledged.Add(issue.Key);
-                    Recheck();
+                    await Recheck();
                     return;
                 case IssueAction.ShowFile:
                     Reveal(issue.Files.FirstOrDefault());

@@ -1485,6 +1485,16 @@ namespace JocoRobos.Cad
                         ErrorLog.Write("slow Submit check (" + clock.ElapsedMilliseconds + " ms)", new TimeoutException(selected.Count + " files checked, " + plan.Items.Count + " listed"));
                     return issues;
                 },
+                Prepare = async (paths, progress) =>
+                {
+                    var todo = paths.Where(p => !DependenciesCached(p)).ToList();
+                    for (int i = 0; i < todo.Count; i++)
+                    {
+                        if (!progress(i + 1, todo.Count)) return;
+                        CachedDependencies(todo[i]);
+                        await Task.Yield(); // Let SOLIDWORKS repaint and handle clicks between files.
+                    }
+                },
                 Fix = (issue, action) => FixSubmitIssue(issue, action, catalog, workspaces),
                 Commit = (selected, comment) => CommitSubmit(selected, comment, workspaces),
                 Busy = value =>
@@ -1534,6 +1544,12 @@ namespace JocoRobos.Cad
         // (checked themselves) or unchanged team files. Cached until the file is saved again. Slow reads are logged.
         private readonly Dictionary<string, Tuple<DateTime, List<string>>> dependencyCache =
             new Dictionary<string, Tuple<DateTime, List<string>>>(StringComparer.OrdinalIgnoreCase);
+
+        private bool DependenciesCached(string path)
+        {
+            Tuple<DateTime, List<string>> cached;
+            return dependencyCache.TryGetValue(path, out cached) && cached.Item1 == (File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue);
+        }
 
         private IEnumerable<string> CachedDependencies(string path)
         {
