@@ -246,6 +246,31 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>Releases every lock this computer holds on a file that is unchanged; changed files keep theirs.</summary>
+        internal List<string> ReleaseUnchangedLocks()
+        {
+            var released = new List<string>();
+            if (!IsCheckedOut) return released;
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+                {
+                    string path = Path.GetFullPath(item.FullPath);
+                    if (item.NodeKind != SvnNodeKind.File || item.LocalNodeStatus != SvnStatus.Normal) continue;
+                    if (item.LocalPropertyStatus != SvnStatus.None && item.LocalPropertyStatus != SvnStatus.Normal) continue;
+                    if (!WorkspacePolicy.OwnsLock(login.UserName, item.LocalLock?.Token, item.RemoteLock?.Token, item.RemoteLock?.Owner)) continue;
+                    released.Add(WorkspacePolicy.RequireInside(Root, path));
+                }
+                if (released.Count > 0)
+                {
+                    client.Unlock(released, new SvnUnlockArgs { BreakLock = false });
+                    ReconcileReadOnly(client);
+                }
+            }
+            return released;
+        }
+
         internal void ReleaseEdit(string path)
         {
             path = WorkspacePolicy.RequireInside(Root, path);

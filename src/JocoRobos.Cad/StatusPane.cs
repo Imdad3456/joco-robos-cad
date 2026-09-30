@@ -20,6 +20,7 @@ namespace JocoRobos.Cad
         internal string Locks = "";
         internal string Update;
         internal string Pending = "";
+        internal bool HasLocks;
     }
 
     internal sealed class StatusPane : UserControl
@@ -31,13 +32,14 @@ namespace JocoRobos.Cad
         private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
         private readonly Label locks = Caption(8.5f, FontStyle.Regular);
         private readonly Label pending = Caption(9.5f, FontStyle.Bold, "", Color.DarkOrange);
+        private readonly LinkLabel releaseLink = new LinkLabel { Text = "Release my unchanged files", AutoSize = true, Margin = new Padding(0, 4, 0, 0), Visible = false };
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
         private readonly Button install = new Button { Text = "Install update", Width = 200, Height = 30, FlatStyle = FlatStyle.System };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
             WrapContents = false, AutoScroll = true, Padding = new Padding(10) };
 
         internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate,
-            Func<System.Net.NetworkCredential> login, Action<FrcItem, Dictionary<string, string>> insertFrc, Action teamLibrary)
+            Func<System.Net.NetworkCredential> login, Action<FrcItem, Dictionary<string, string>> insertFrc, Action teamLibrary, Action releaseUnchanged)
         {
             BackColor = SystemColors.Window;
             layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText));
@@ -63,6 +65,8 @@ namespace JocoRobos.Cad
             }
             layout.Controls.Add(Spacer());
             layout.Controls.Add(locks);
+            releaseLink.LinkClicked += (s, e) => releaseUnchanged();
+            layout.Controls.Add(releaseLink);
             var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
             check.LinkClicked += (s, e) => refresh();
             layout.Controls.Add(check);
@@ -117,6 +121,7 @@ namespace JocoRobos.Cad
             activeStatus.ForeColor = state.ActiveColor;
             locks.Text = state.Locks;
             pending.Text = state.Pending;
+            releaseLink.Visible = state.HasLocks;
             pending.Visible = state.Pending.Length > 0;
             update.Text = state.Update ?? "";
             update.Visible = install.Visible = state.Update != null;
@@ -218,6 +223,7 @@ namespace JocoRobos.Cad
             if (unsubmitted > 0)
                 state.Pending = "⚠ " + unsubmitted + (unsubmitted == 1 ? " saved change" : " saved changes") + " not submitted.\nClick Submit so teammates get them.";
             var mine = snapshots.SelectMany(x => x.Mine).ToList();
+            state.HasLocks = mine.Count > 0;
             state.Locks = mine.Count == 0 ? "You have no files locked." :
                 "Your locked files (" + mine.Count + "):\n" + String.Join("\n", mine.Take(8).Select(Path.GetFileName)) +
                 (mine.Count > 8 ? "\n…" : "") + "\nSubmit when done so others can edit them.";

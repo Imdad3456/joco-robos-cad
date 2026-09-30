@@ -44,6 +44,7 @@ A works in `50_Electrical\battery holder.SLDASM` and B works in `50_Electrical\M
 | 2.8 | Both | Now click **Edit** | Locked; your change is still there (tell A if SOLIDWORKS reloaded it instead). Close **without saving** | ☐ |
 | 2.8b | Both | Open `80_Unsorted\id2_1.SLDPRT` and change a dimension **right away** (within 5 seconds), without Edit | A few seconds later you are still asked "Lock it now?" → **No**, close without saving | ☐ |
 | 2.9 | Both | Look at "Your locked files" in the panel | That part disappears within a few seconds (unchanged file closed → lock released) | ☐ |
+| 2.9b | Both | **Edit** two parts, change neither, then close SOLIDWORKS completely. Reopen → panel → **Release my unchanged files** | Both released without opening them; "Your locked files" is empty | ☐ |
 | 2.10 | Both | Close SOLIDWORKS documents. In Explorer, delete `2026-Robot\80_Unsorted\pvc1intube.SLDPRT`. **Tools → Restore Deleted Files** | Lists `pvc1intube.SLDPRT` → Restore → it's back | ☐ |
 
 ## 3. Together (the important part)

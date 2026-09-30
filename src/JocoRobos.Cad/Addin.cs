@@ -218,11 +218,12 @@ namespace JocoRobos.Cad
                 new KeyValuePair<string, Action>("Edit", Edit),
                 new KeyValuePair<string, Action>("Submit", Submit),
                 new KeyValuePair<string, Action>("Insert from Library", InsertFromLibrary),
+                new KeyValuePair<string, Action>("Release Edit", ReleaseEdit),
             }, RefreshStatus, InstallUpdate, () =>
             {
                 try { return CredentialStore.Read(); }
                 catch (Exception) { return null; }
-            }, InsertFromFrcDesign, InsertFromLibrary);
+            }, InsertFromFrcDesign, InsertFromLibrary, ReleaseUnchangedLocks);
             pane.CreateControl();
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
@@ -889,6 +890,27 @@ namespace JocoRobos.Cad
                 Message("Your versions are saved in:\n" + String.Join("\n", folders) + "\n\nThe team's versions are back in the robot. Click Update to get the newest, " +
                     "then Edit when the file is free. Open your saved copy side by side to redo or copy your changes.");
                 ReleaseSeasonHold(login, catalog);
+            });
+        }
+
+        // One click from the panel: give back every lock on a file you didn't change, without opening anything.
+        public void ReleaseUnchangedLocks()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var workspaces = new[] { catalog.Robot, catalog.Library }.Where(w => w != null && !w.Archived)
+                    .Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
+                var released = OperationDialog.Run("Releasing your unchanged files…", () =>
+                    SvnWorkspace.Exclusive(() => workspaces.SelectMany(w => w.ReleaseUnchangedLocks()).ToList()));
+                var done = new HashSet<string>(released, StringComparer.OrdinalIgnoreCase);
+                foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "") && !d.GetSaveFlag()))
+                    doc.SetReadOnlyState(true);
+                Message(released.Count == 0 ? "You have no unchanged locked files. Files you changed stay locked until you Submit them."
+                    : "Released " + released.Count + " file(s): " + String.Join(", ", released.Take(8).Select(Path.GetFileName)) + (released.Count > 8 ? ", …" : "") +
+                      ".\n\nFiles you changed stay locked until you Submit them.");
             });
         }
 

@@ -15,7 +15,7 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
    - **Edit**: select the part or assembly you're working on and click Edit. It's yours until you Submit.
    - **CAD normally**, and **Save**. New parts go anywhere inside your robot folder.
    - **Submit**: check the list, say what you changed, done.
-4. **The JOCO ROBOS CAD panel** (right side): the **Robot** tab shows whether you're up to date, who's editing what, and your unsubmitted work. The **Library** tab searches the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, gearboxes…) and inserts parts with one click.
+4. **The JOCO ROBOS CAD panel** (right side): the **Robot** tab shows whether you're up to date, who's editing what, and your unsubmitted work. **Release Edit** gives back a file you didn't change, and **Release my unchanged files** (under your locked files) gives back all of them at once. The **Library** tab searches the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, gearboxes…) and inserts parts with one click.
 
 Less common things live in **Tools → JOCO ROBOS CAD**: Change Password, Release Edit, Set Aside My Changes, Restore Deleted Files, Insert External Part, Import Outside References, Open Old Robot, Choose Robot.
 
