@@ -1404,7 +1404,14 @@ namespace JocoRobos.Cad
             {
                 OperationDialog.Run("Preparing " + claim.Name + " for the team (first time only)…", () => { client.Download(claim, staging); return true; });
                 int errors = 0;
-                var imported = application.LoadFile4(staging, "r", null, ref errors) as ModelDoc2;
+                // Without 3D Interconnect: a linked import keeps pointing at export.x_t, a file only this computer has.
+                // Teammates' SOLIDWORKS would go looking for it (and can hang doing so); a plain import is self-contained.
+                int interconnect = (int)swUserPreferenceToggle_e.swMultiCAD_Enable3DInterconnect;
+                bool wasLinking = application.GetUserPreferenceToggle(interconnect);
+                ModelDoc2 imported;
+                application.SetUserPreferenceToggle(interconnect, false);
+                try { imported = application.LoadFile4(staging, "r", null, ref errors) as ModelDoc2; }
+                finally { application.SetUserPreferenceToggle(interconnect, wasLinking); }
                 if (imported == null)
                     throw new InvalidOperationException("SOLIDWORKS could not open the downloaded " + claim.Name + " (error " + errors + "). Nothing was inserted.");
                 try
@@ -1421,6 +1428,9 @@ namespace JocoRobos.Cad
                 {
                     application.CloseDoc(imported.GetTitle());
                 }
+                // The download isn't needed once the part is saved natively.
+                try { Directory.Delete(Path.GetDirectoryName(staging), true); }
+                catch (Exception exception) { ErrorLog.Write("import cleanup", exception); }
                 var newItem = new SubmitItem { Kind = SubmitKind.New, Path = libraryFile, Workspace = library };
                 OperationDialog.Run("Adding " + claim.Name + " to the team Library…", () => SvnWorkspace.Exclusive(() =>
                     svn.Submit(new List<SubmitItem> { newItem }, "Import " + claim.Name + " from FRCDesignLib (" + item.Vendor + ")")));
