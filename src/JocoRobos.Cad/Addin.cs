@@ -833,14 +833,30 @@ namespace JocoRobos.Cad
                 pane?.Dispose();
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
+            try { if (commands != null) commands.RemoveCommandGroup2(GroupId, true); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
+            // Unreleased COM references can keep SLDWORKS.exe running after its window closes,
+            // which also stops a waiting update from installing.
+            Release(taskpane);
+            Release(commands);
+            Release(application);
             statusTimer = null;
             taskpane = null;
             pane = null;
-            try { if (commands != null) commands.RemoveCommandGroup2(GroupId, true); }
-            catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
             commands = null;
             application = null;
+            paneCatalog = null;
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
             return true;
+        }
+
+        private static void Release(object comObject)
+        {
+            try { if (comObject != null && Marshal.IsComObject(comObject)) Marshal.FinalReleaseComObject(comObject); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
         }
 
         private static void Message(string text, MessageBoxIcon icon = MessageBoxIcon.Information)
