@@ -1633,12 +1633,19 @@ namespace JocoRobos.Cad
                     .OrderBy(f => f.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? 0 : f.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? 1 : 2)
                     .ThenBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
                 if (files.Count == 0) { Message(robot.Name + " has no CAD files yet."); return; }
-                if (MessageBox.Show(new SolidWorksWindow(), "Convert all " + files.Count + " files in " + robot.Name + " to this SOLIDWORKS version?\n\n" +
-                    "This locks every file (it stops if anyone is editing one), opens and saves each one, and submits them as one change. " +
-                    "It can take several minutes, and SOLIDWORKS is busy until it finishes. Everyone downloads the converted files at their next Update.\n\n" +
-                    "Do it once, when nobody else is working on the robot.", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
                 UpdateWorkspace(login, robot);
                 var svn = new SvnWorkspace(login, robot);
+                // Resumes an interrupted upgrade: files an earlier conversion submit already covered are skipped.
+                var done = OperationDialog.Run("Checking which files are already converted…", () => svn.ConvertedFiles());
+                int total = files.Count;
+                files = files.Where(f => !done.Contains(f)).ToList();
+                if (files.Count == 0) { Message("All " + total + " files in " + robot.Name + " are already converted."); return; }
+                if (MessageBox.Show(new SolidWorksWindow(), "Convert " + (files.Count == total ? "all " + total : files.Count + " remaining (of " + total + ")") +
+                    " files in " + robot.Name + " to this SOLIDWORKS version?\n\n" +
+                    "This locks every file (it stops if anyone is editing one), opens and saves each one, and submits them as one change. " +
+                    "It can take several minutes, and SOLIDWORKS is busy until it finishes. Everyone downloads the converted files at their next Update.\n\n" +
+                    "Do it once, when nobody else is working on the robot. If it's interrupted, Submit what it finished and run it again: it continues where it stopped.",
+                    Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
                 OperationDialog.Run("Locking all " + files.Count + " robot files…", () => SvnWorkspace.Exclusive(() => { svn.LockAll(files); return true; }));
                 bool submitted = false;
                 try
@@ -1665,10 +1672,28 @@ namespace JocoRobos.Cad
             });
         }
 
+        [DllImport("user32.dll")] private static extern bool EnableWindow(IntPtr window, bool enable);
+
         // Opens and saves each file silently, one at a time, with a small progress window. Returns the files that failed.
+        // SOLIDWORKS' own window is disabled meanwhile, so the progress window can keep Windows from calling it "Not Responding"
+        // without anyone opening documents in the middle. Each finished file is written to upgrade.log.
         private List<string> ConvertFiles(List<string> files)
         {
             var failed = new List<string>();
+            string log = Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "upgrade.log");
+            IntPtr main = new SolidWorksWindow().Handle;
+            EnableWindow(main, false);
+            try
+            {
+                return ConvertEach(files, failed, log);
+            }
+            finally { EnableWindow(main, true); }
+        }
+
+        private List<string> ConvertEach(List<string> files, List<string> failed, string log)
+        {
+            try { Directory.CreateDirectory(Path.GetDirectoryName(log)); File.AppendAllText(log, DateTime.Now + "  starting " + files.Count + " files\r\n"); }
+            catch (Exception) { }
             using (var progress = new Form { Text = Title, ClientSize = new System.Drawing.Size(520, 90), FormBorderStyle = FormBorderStyle.FixedDialog,
                 ControlBox = false, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false, TopMost = true })
             {
@@ -1683,6 +1708,7 @@ namespace JocoRobos.Cad
                     label.Text = "Converting " + (i + 1) + " of " + files.Count + ":\n" + Path.GetFileName(file);
                     bar.Value = i;
                     progress.Refresh();
+                    Application.DoEvents();
                     try
                     {
                         int type = file.EndsWith(".sldprt", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocPART
@@ -1699,7 +1725,11 @@ namespace JocoRobos.Cad
                         ErrorLog.Write("upgrade " + file, exception);
                         failed.Add(Path.GetFileName(file) + " (" + exception.Message + ")");
                     }
-                    finally { application.CloseAllDocuments(true); }
+                    finally
+                    {
+                        application.CloseAllDocuments(true);
+                        try { File.AppendAllText(log, DateTime.Now + "  " + (i + 1) + "/" + files.Count + "  " + file + "\r\n"); } catch (Exception) { }
+                    }
                 }
             }
             return failed;

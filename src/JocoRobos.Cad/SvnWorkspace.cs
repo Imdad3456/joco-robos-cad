@@ -261,6 +261,26 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>Files whose latest version came from a conversion submit, so Upgrade Robot Files can resume where it stopped.</summary>
+        internal HashSet<string> ConvertedFiles()
+        {
+            var converted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                var revisions = new HashSet<long>();
+                client.Log(Root, new SvnLogArgs { RetrieveChangedPaths = false }, (s, e) =>
+                {
+                    if (WorkspacePolicy.IsConversionMessage(e.LogMessage)) revisions.Add(e.Revision);
+                });
+                if (revisions.Count == 0) return converted;
+                foreach (var item in Status(client, Root, false, SvnDepth.Infinity))
+                    if (item.Versioned && item.LocalNodeStatus == SvnStatus.Normal && revisions.Contains(item.LastChangeRevision))
+                        converted.Add(Path.GetFullPath(item.FullPath));
+            }
+            return converted;
+        }
+
         /// <summary>
         /// Locks every listed file for a whole-robot operation. Refuses (taking nothing) if any file is changed here,
         /// out of date, or locked by anyone else, and names them.

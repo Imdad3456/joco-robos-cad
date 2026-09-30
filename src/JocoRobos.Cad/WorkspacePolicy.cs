@@ -63,6 +63,15 @@ namespace JocoRobos.Cad
             return IsCad(path) && !IsOwnerFile(path);
         }
 
+        // A submit that converted files to the current SOLIDWORKS format: Upgrade Robot Files' own, or one finished by hand
+        // after an interrupted upgrade ("Convert files to SOLIDWORKS 2026").
+        internal static bool IsConversionMessage(string message)
+        {
+            message = message ?? "";
+            return message.IndexOf("Upgrade Robot Files", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (message.IndexOf("convert", StringComparison.OrdinalIgnoreCase) >= 0 && message.IndexOf("solidworks", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
         // Left behind when SOLIDWORKS closes unexpectedly; never team work, so Update steps around them.
         internal static bool IsOwnerFile(string path)
         {

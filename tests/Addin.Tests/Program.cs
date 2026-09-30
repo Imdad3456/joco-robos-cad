@@ -49,6 +49,8 @@ static class Program
             Check(!WorkspacePolicy.OwnsLock("imdad", "token-1", "token-1", "sarah"), "Other user's lock accepted");
             Check(WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "CameraMount.SLDPRT")), "New part not submittable");
             Check(!WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "~$CameraMount.SLDPRT")), "SOLIDWORKS owner file submittable");
+            Check(WorkspacePolicy.IsConversionMessage("Convert all files to the current SOLIDWORKS format (Upgrade Robot Files)") &&
+                WorkspacePolicy.IsConversionMessage("convert files to solidworks 2026 (part 1)") && !WorkspacePolicy.IsConversionMessage("Converted intake to hex"), "Conversion submit detection");
             Check(WorkspacePolicy.IsOwnerFile(Path.Combine(root, "00_Master", "~$Robot.SLDASM")) && !WorkspacePolicy.IsOwnerFile(Path.Combine(root, "Robot.SLDASM")), "Leftover lock file not recognized");
             Check(!WorkspacePolicy.IsSubmittableCad(Path.Combine(root, "notes.txt")), "Non-CAD submittable");
             string shooter = Path.Combine(root, "30_Shooter");
