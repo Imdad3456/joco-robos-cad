@@ -1,7 +1,7 @@
 # What this does, in plain words:
 #   Every push:  build the server container and run its tests (mentor page, APIs, lock rules, backups),
 #                run the add-in's unit tests, and build the student installer (downloadable under Artifacts).
-#   A v* tag:    also publish a GitHub Release with the installer and stage it on cad.imdad.stream,
+#   A v* tag:    also publish a GitHub Release with the installer and stage it on cad.team5919.org,
 #                where a mentor clicks "Release to students". Nothing reaches students automatically.
 # Secrets used: JOCO_PUBLISH_PASSWORD (the upload-only github-release account). No other credentials.
 name: Build and test
@@ -104,7 +104,7 @@ jobs:
           $exe = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           gh release create $env:GITHUB_REF_NAME $exe.FullName --title "JOCO ROBOS CAD $env:GITHUB_REF_NAME" `
-            --notes "Download $($exe.Name), then publish it on https://cad.imdad.stream/admin/addin so students are offered it.`n`nSHA-256: $hash"
+            --notes "Download $($exe.Name), then publish it on https://cad.team5919.org/admin/addin so students are offered it.`n`nSHA-256: $hash"
       - name: Stage installer on the CAD server for mentor release
         if: steps.sw.outputs.found == 'true' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -115,9 +115,9 @@ jobs:
           $exe = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("github-release:$env:JOCO_PUBLISH_PASSWORD"))
-          $response = Invoke-WebRequest -Uri 'https://cad.imdad.stream/admin/api/stage-addin' -Method Post -InFile $exe.FullName `
+          $response = Invoke-WebRequest -Uri 'https://cad.team5919.org/admin/api/stage-addin' -Method Post -InFile $exe.FullName `
             -ContentType 'application/octet-stream' -UserAgent 'JOCO-ROBOS-CAD-CI' -SkipHttpErrorCheck `
             -Headers @{ Authorization = "Basic $auth"; 'X-Joco-File' = $exe.Name; 'X-Joco-Sha256' = $hash }
           "Server: $($response.StatusCode) $($response.Content)"
           if ($response.StatusCode -ne 200) { throw "Staging failed. Upload $($exe.Name) on the Add-in page instead." }
-          "::notice::Staged $($exe.Name). Release it at https://cad.imdad.stream/admin/addin"
+          "::notice::Staged $($exe.Name). Release it at https://cad.team5919.org/admin/addin"

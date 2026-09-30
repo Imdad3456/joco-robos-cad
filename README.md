@@ -23,7 +23,7 @@ Everything else is in **Tools → JOCO ROBOS CAD**, in sections: everyday extras
 
 ## For mentors
 
-Everything is on **https://cad.imdad.stream/admin**:
+Everything is on **https://cad.team5919.org/admin**:
 
 | Tab | Use it to |
 |---|---|

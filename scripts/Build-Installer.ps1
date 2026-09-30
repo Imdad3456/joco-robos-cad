@@ -29,4 +29,4 @@ if ($LASTEXITCODE -ne 0) { throw "Installer build failed: $LASTEXITCODE" }
 $output = Join-Path $root "installer\Output\JOCO-ROBOS-CAD-Setup-$version.exe"
 Write-Host "Built $output"
 Write-Host ("SHA-256: " + (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant())
-Write-Host 'Publish it on https://cad.imdad.stream/admin/addin to offer it to students.'
+Write-Host 'Publish it on https://cad.team5919.org/admin/addin to offer it to students.'

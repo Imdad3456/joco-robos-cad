@@ -1,6 +1,6 @@
 # Steam Deck SVN service
 
-The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`, …) plus a shared `Library` of reusable parts. Mentors manage it from **https://cad.imdad.stream/admin**. Students never use the web page; the add-in reads `/catalog.json` to find the active season and the library.
+The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`, …) plus a shared `Library` of reusable parts. Mentors manage it from **https://cad.team5919.org/admin**. Students never use the web page; the add-in reads `/catalog.json` to find the active season and the library.
 
 ## Mentor web page
 
@@ -15,7 +15,7 @@ Sign in with your CAD account; only accounts marked as mentor get past the first
 
 ## Deployment
 
-The Deck runs SteamOS with rootless Podman as `deck`. Files are under `~/server/joco-cad`, outside the immutable OS. `joco-svn.service` starts with the user manager; lingering was already enabled. Apache/Subversion listens only at `127.0.0.1:8091`, with repositories at `http://127.0.0.1:8091/svn/<name>` on the Deck. That HTTP address is loopback-only; everyone else uses `https://cad.imdad.stream` through the tunnel.
+The Deck runs SteamOS with rootless Podman as `deck`. Files are under `~/server/joco-cad`, outside the immutable OS. `joco-svn.service` starts with the user manager; lingering was already enabled. Apache/Subversion listens only at `127.0.0.1:8091`, with repositories at `http://127.0.0.1:8091/svn/<name>` on the Deck. That HTTP address is loopback-only; everyone else uses `https://cad.team5919.org` through the tunnel.
 
 The container uses Debian Bookworm packages and persistent bind mounts for repositories and authentication. Its startup creates the canonical subsystem folders only if the repository is absent. It installs hooks on restart. There is no default account/password, anonymous access is denied, and temporary integration-test accounts are removed after testing.
 
@@ -70,12 +70,12 @@ For disaster recovery, stop the SVN service, preserve the damaged data separatel
 
 ## Cloudflare Tunnel
 
-The public repository URL is **https://cad.imdad.stream/svn/2027-Robot**. The `joco-cad` tunnel routes `cad.imdad.stream` to `http://127.0.0.1:8091` on the Deck, retaining the request path. `joco-cad-tunnel.service` runs the official cloudflared 2026.9.3 container, pinned by image digest, with host networking to reach the loopback-only origin. The token is at `~/server/joco-cad/tunnel/token` (mode 600), mounted read-only. It is not committed to GitHub. Connector metrics are loopback-only at port 2091.
+The public repository URL is **https://cad.team5919.org/svn/2027-Robot**. The `joco-cad` tunnel routes `cad.team5919.org` to `http://127.0.0.1:8091` on the Deck, retaining the request path. `joco-cad-tunnel.service` runs the official cloudflared 2026.9.3 container, pinned by image digest, with host networking to reach the loopback-only origin. The token is at `~/server/joco-cad/tunnel/token` (mode 600), mounted read-only. It is not committed to GitHub. Connector metrics are loopback-only at port 2091.
 
 SVN uses its own per-user authentication; no browser-only Cloudflare Access login is placed in front of it. Anonymous requests receive HTTP 401. To repeat the integration suite over the actual public HTTPS route:
 
 ```sh
-podman exec -i -e JOCO_TEST_BASE_URL=https://cad.imdad.stream/svn joco-svn python3 - < ~/server/joco-cad/source/tests/integration.py
+podman exec -i -e JOCO_TEST_BASE_URL=https://cad.team5919.org/svn joco-svn python3 - < ~/server/joco-cad/source/tests/integration.py
 ```
 
 Cloudflare may reject generic Python HTTP user agents; the anonymous probe identifies itself as an SVN integration test, and actual operations use the real SVN client. No firewall or bot protections were disabled. Cloudflare's free plan limits a single request to 100 MB, which applies to the admin page's uploads. SVN commits send each file separately, but very large single CAD files should be tested (TESTING.md step 30). See [Cloudflare's tunnel setup documentation](https://developers.cloudflare.com/tunnel/get-started/).
