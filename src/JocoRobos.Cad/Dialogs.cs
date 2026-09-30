@@ -197,21 +197,26 @@ namespace JocoRobos.Cad
         }
     }
 
-    /// <summary>Username + one-time setup code from a mentor, then the student's own password (twice).</summary>
+    /// <summary>
+    /// First sign-in: the student picks a username and password and sends a request (no code needed); a mentor gives them the
+    /// code shown for them, and they finish here with it. A code handed out beforehand works the same way.
+    /// Also used, without the code, for Change Password.
+    /// </summary>
     internal sealed class SetupAccountDialog : Form
     {
         private readonly TextBox username = new TextBox();
         private readonly TextBox code = new TextBox { CharacterCasing = CharacterCasing.Upper };
         private readonly TextBox password = new TextBox { UseSystemPasswordChar = true };
         private readonly TextBox confirm = new TextBox { UseSystemPasswordChar = true };
+        private readonly Label status = new Label { ForeColor = Color.ForestGreen };
         internal string Username { get { return username.Text.Trim().ToLowerInvariant(); } }
         internal string Code { get { return code.Text.Trim(); } }
         internal string Password { get { return password.Text; } }
 
-        internal SetupAccountDialog(string title, string intro, bool askCode, string currentUser)
+        internal SetupAccountDialog(string title, string intro, bool askCode, string currentUser, Action<string, string> request = null, string presetCode = null)
         {
             Text = "JOCO ROBOS CAD — " + title;
-            ClientSize = new Size(480, askCode ? 330 : 250);
+            ClientSize = new Size(480, askCode ? 400 : 250);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false;
@@ -225,26 +230,54 @@ namespace JocoRobos.Cad
                 Controls.Add(box);
                 y += 38;
             };
-            if (askCode)
-            {
-                row("Setup code", code);
-                row("Username", username);
-            }
+            if (askCode) row("Username", username);
             username.Text = currentUser ?? "";
-            row("New password", password);
-            row("New password again", confirm);
+            row(askCode ? "Password" : "New password", password);
+            row(askCode ? "Password again" : "New password again", confirm);
             Controls.Add(new Label { Text = "At least 10 characters. Only you know it; it's saved in Windows Credential Manager.",
                 Location = new Point(20, y), Size = new Size(440, 20), ForeColor = SystemColors.GrayText });
-            var ok = new Button { Text = "Save", Location = new Point(255, y + 32), Size = new Size(95, 30) };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(360, y + 32), Size = new Size(95, 30) };
+            y += 30;
+            if (askCode)
+            {
+                row("Code from a mentor", code);
+                code.Text = presetCode ?? "";
+                status.SetBounds(20, y, 440, 36);
+                Controls.Add(status);
+                y += 40;
+            }
+            var ok = new Button { Text = askCode ? "Send request" : "Save", Location = new Point(235, y), Size = new Size(115, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(360, y), Size = new Size(95, 30) };
+            if (askCode)
+            {
+                // No code yet: ask for an account. With a code: finish.
+                Action label = () => ok.Text = Code.Length == 0 ? "Send request" : "Finish";
+                code.TextChanged += (s, e) => label();
+                label();
+            }
             ok.Click += (s, e) =>
             {
-                if (askCode && (Username.Length == 0 || Code.Length == 0)) { MessageBox.Show(this, "Enter the setup code from your mentor and choose a username."); return; }
                 if (askCode && !System.Text.RegularExpressions.Regex.IsMatch(Username, "^[a-z0-9][a-z0-9._-]{1,31}$"))
-                { MessageBox.Show(this, "Usernames: 2–32 lowercase letters, numbers, dot, dash, or underscore, starting with a letter or number."); return; }
+                { MessageBox.Show(this, "Choose a username: 2–32 lowercase letters, numbers, dot, dash, or underscore, starting with a letter or number (like sarah or j.smith)."); return; }
                 if (password.Text.Length < 10) { MessageBox.Show(this, "Use at least 10 characters."); return; }
                 if (password.Text != confirm.Text) { MessageBox.Show(this, "The two passwords don't match."); return; }
                 if (password.Text.Equals(Username, StringComparison.OrdinalIgnoreCase)) { MessageBox.Show(this, "Don't use your username as your password."); return; }
+                if (askCode && Code.Length == 0)
+                {
+                    if (request == null) { MessageBox.Show(this, "Enter the code from your mentor."); return; }
+                    try
+                    {
+                        request(Username, Password);
+                        status.ForeColor = Color.ForestGreen;
+                        status.Text = "✓ Request sent. Ask a mentor for your code (they see it next to " + Username + "), type it above, and click Finish.";
+                        code.Focus();
+                    }
+                    catch (Exception exception)
+                    {
+                        status.ForeColor = Color.Firebrick;
+                        status.Text = exception.Message;
+                    }
+                    return;
+                }
                 DialogResult = DialogResult.OK;
                 Close();
             };
@@ -252,6 +285,7 @@ namespace JocoRobos.Cad
             Controls.Add(cancel);
             AcceptButton = ok;
             CancelButton = cancel;
+            Shown += (s, e) => { if (askCode && username.Text.Length > 0) password.Focus(); };
         }
     }
 }

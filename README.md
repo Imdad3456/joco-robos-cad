@@ -9,7 +9,7 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 ## For students
 
 1. **Install:** download the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest) and run it. Windows warns about an unknown publisher; click **More info → Run anyway**.
-2. **Set up your account:** start SOLIDWORKS. Enter the **setup code** from a mentor, then choose your own username and password. You won't need to type it again.
+2. **Set up your account:** start SOLIDWORKS, choose a username and password, and click **Send request**. A mentor gives you a code; type it in and click **Finish**. You won't need to type it again.
 3. **Daily work:**
    - **Open Robot** gets teammates' latest work and opens the robot. Everything is read-only until you change it.
    - **Just start CADing.** The first change to a part locks it for you (or select a part and click **Edit**). If a teammate is editing it, you're told right away.
@@ -28,7 +28,7 @@ Everything is on **https://cad.imdad.stream/admin**:
 | **Seasons** | Check health (backups, disk), create the next season, choose which season students open, archive old ones, see recent submits and **undo** a bad one |
 | **Locks** | Release a lock someone abandoned |
 | **Library** | Add reusable parts; see what's been imported from FRCDesignLib |
-| **Accounts** | Make setup codes for new students (they choose their own username and password), reset a forgotten password, see add-in versions |
+| **Accounts** | Give waiting students their code (they asked from SOLIDWORKS with their own username and password), reject requests you don't recognize, reset a forgotten password, see add-in versions |
 | **Add-in** | Release a new add-in version to everyone |
 
 To **release a new add-in version**: bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, then run `git tag v1.0.0 && git push origin main --tags`. When GitHub finishes, click **Release to students**.

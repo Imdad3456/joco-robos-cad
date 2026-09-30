@@ -490,23 +490,64 @@ namespace JocoRobos.Cad
         // First sign-in with a mentor's one-time setup code: the student chooses their own password.
         private NetworkCredential SetUpAccount(NetworkCredential saved)
         {
-            using (var dialog = new SetupAccountDialog("Set Up Your Account",
-                "Welcome! Enter the setup code a mentor gave you, then choose your username (lowercase, like sarah or j.smith) and password. " +
-                "If a mentor reset your password, use your existing username.", true, saved?.UserName))
+            string name = saved?.UserName ?? PendingUsername, presetCode = null;
+            while (true)
             {
-                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
-                OperationDialog.Run("Setting up your account…", () => { Accounts.Setup(dialog.Username, dialog.Code, dialog.Password); return true; });
-                var login = new NetworkCredential(dialog.Username, dialog.Password);
-                OperationDialog.Run("Checking your CAD account…", () =>
+                SetupAccountDialog dialog;
+                using (dialog = new SetupAccountDialog("Set Up Your Account",
+                    "Welcome! Choose a username (lowercase, like sarah or j.smith) and a password, then click Send request. A mentor gives you a code: " +
+                    "type it in and click Finish. (Got a code already, or a mentor reset your password? Fill everything in and click Finish.)", true, name,
+                    (user, password) =>
+                    {
+                        OperationDialog.Run("Sending your request…", () => { Accounts.Request(user, password); return true; });
+                        PendingUsername = user;
+                    }, presetCode))
                 {
-                    var catalog = Catalog.Fetch(login);
-                    new SvnWorkspace(login, catalog.Robot).TestConnection();
-                    return true;
-                });
-                CredentialStore.Write(login);
-                Message("You're set up as " + login.UserName + ". Your password is saved in Windows, so you won't need to type it again.\n\nClick Open Robot to get started.");
-                return login;
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
+                    name = dialog.Username;
+                    presetCode = dialog.Code;
+                    try { OperationDialog.Run("Setting up your account…", () => { Accounts.Setup(dialog.Username, dialog.Code, dialog.Password); return true; }); }
+                    catch (InvalidOperationException problem)
+                    {
+                        // Wrong code or password: show why, then the same form again with what they typed (except the passwords).
+                        Message(problem.Message, MessageBoxIcon.Warning);
+                        continue;
+                    }
+                    PendingUsername = null;
+                    return FinishSetup(new NetworkCredential(dialog.Username, dialog.Password));
+                }
             }
+        }
+
+        // Remembered between SOLIDWORKS sessions so the form comes back with the name the student asked for.
+        private static string PendingUsername
+        {
+            get
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(@"Software\JOCO ROBOS\CAD"))
+                    return key?.GetValue("PendingUsername") as string;
+            }
+            set
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
+                {
+                    if (value == null) key.DeleteValue("PendingUsername", false);
+                    else key.SetValue("PendingUsername", value, RegistryValueKind.String);
+                }
+            }
+        }
+
+        private NetworkCredential FinishSetup(NetworkCredential login)
+        {
+            OperationDialog.Run("Checking your CAD account…", () =>
+            {
+                var catalog = Catalog.Fetch(login);
+                new SvnWorkspace(login, catalog.Robot).TestConnection();
+                return true;
+            });
+            CredentialStore.Write(login);
+            Message("You're set up as " + login.UserName + ". Your password is saved in Windows, so you won't need to type it again.\n\nClick Open Robot to get started.");
+            return login;
         }
 
         public void ChangePassword()

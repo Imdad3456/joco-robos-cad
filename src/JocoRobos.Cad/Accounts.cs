@@ -14,6 +14,12 @@ namespace JocoRobos.Cad
             Post("account/setup", null, "{\"username\": " + Json(username) + ", \"code\": " + Json(code) + ", \"password\": " + Json(password) + "}");
         }
 
+        /// <summary>A new student asks for an account with the username and password they chose; a mentor then gives them a code.</summary>
+        internal static void Request(string username, string password)
+        {
+            Post("account/request", null, "{\"username\": " + Json(username) + ", \"password\": " + Json(password) + "}");
+        }
+
         internal static void ChangePassword(NetworkCredential login, string password)
         {
             Post("admin/api/password", login, "{\"password\": " + Json(password) + "}");

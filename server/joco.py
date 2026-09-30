@@ -40,6 +40,8 @@ UPDATES = os.path.join(CONFIG, 'public', 'updates')
 HEALTH = os.path.join(CONFIG, 'health')
 HEARTBEATS = os.path.join(CONFIG, 'heartbeats.json')
 INVITES = os.path.join(CONFIG, 'invites.json')
+REQUESTS = os.path.join(CONFIG, 'requests.json')  # Students asking for an account, waiting for a mentor's code.
+MAX_REQUESTS = 40
 CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'  # No 0/O, 1/I/L.
 INVITE_DAYS = 7
 _setup_attempts = {}  # address -> [times]; in memory, reset on restart.
@@ -406,7 +408,7 @@ def new_setup_code(user, mentor):
 
 def new_open_code(mentor, make_mentor):
     """A setup code not tied to a name: the student chooses their own username (and password) with it."""
-    code = '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
+    code = new_code()
     invites = read_json(INVITES) or {}
     invites['open:' + secrets.token_hex(6)] = {'code': code, 'expires': time.time() + INVITE_DAYS * 86400, 'by': mentor, 'mentor': bool(make_mentor)}
     write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
@@ -420,15 +422,85 @@ def open_codes():
             if k.startswith('open:') and v['expires'] > now]
 
 
+def _throttle(address, kind='setup'):
+    # Generous: a whole team setting up at school shares one public address. Codes are 12 random characters,
+    # and five wrong guesses kill a code, so this only slows down scripts.
+    now = time.time()
+    key = kind + ':' + (address or '')
+    recent = [t for t in _setup_attempts.get(key, []) if now - t < 3600]
+    if len(recent) >= 60:
+        raise Refused('Too many attempts from this network. Try again in an hour.')
+    _setup_attempts[key] = recent + [now]
+
+
+def _password_rule(user, password):
+    if len(password) < 10 or password.lower() == user:
+        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
+
+
+def _password_matches(user, hashed, password):
+    """bcrypt check through htpasswd itself (Python has no bcrypt here), against a one-line temporary file."""
+    with tempfile.NamedTemporaryFile('w', dir=CONFIG, prefix='.verify-', delete=True) as handle:
+        handle.write(user + ':' + hashed + '\n')
+        handle.flush()
+        return subprocess.run(['htpasswd', '-v', '-i', handle.name, user], input=password.encode(), capture_output=True).returncode == 0
+
+
+def pending_requests():
+    now = time.time()
+    return {k: v for k, v in (read_json(REQUESTS) or {}).items() if v['expires'] > now}
+
+
+def request_account(address, user, password):
+    """Public (no sign-in): a student asks for an account with the username and password they chose. Nothing works
+    until a mentor hands them the code shown on the Accounts tab; activating needs that code and this password."""
+    _throttle(address, 'request')
+    user = (user or '').strip().lower()
+    if not USERNAME.match(user) or user == PUBLISHER:
+        raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore, starting with a letter or number.')
+    if user in users():
+        raise Refused('The username ' + user + ' is taken. Choose another one (or, if it\'s yours, ask a mentor for a New setup code).')
+    _password_rule(user, password)
+    requests = pending_requests()
+    existing = requests.get(user)
+    if existing:
+        if _password_matches(user, existing['hash'], password):
+            return  # Asked twice: same request, same code.
+        raise Refused('Someone already asked for the username ' + user + '. Choose another one, or ask a mentor.')
+    if len(requests) >= MAX_REQUESTS:
+        raise Refused('Too many account requests are waiting. Ask a mentor.')
+    hashed = run('htpasswd', '-niB', user, stdin=password.encode()).strip().split(':', 1)[1]
+    requests[user] = {'hash': hashed, 'code': new_code(), 'at': time.time(), 'expires': time.time() + INVITE_DAYS * 86400,
+                      'address': re.sub(r'[^0-9a-fA-F.:]', '', address or '')[:45], 'failures': 0}
+    write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
+
+
+def new_code():
+    return '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
+
+
 def claim_account(address, user, code, password):
     """Public (no sign-in): a student turns a setup code into their own password. Deliberately vague errors."""
     now = time.time()
-    recent = [t for t in _setup_attempts.get(address, []) if now - t < 3600]
-    if len(recent) >= 20:
-        raise Refused('Too many attempts. Try again in an hour.')
-    _setup_attempts[address] = recent + [now]
+    _throttle(address)
     user = (user or '').strip().lower()
     code = re.sub(r'[^A-Z0-9]', '', (code or '').upper())
+    # A student's own request: the mentor's code plus the password they asked with.
+    requests = pending_requests()
+    asked = requests.get(user)
+    if asked and user not in users():
+        if not hmac.compare_digest(asked['code'].replace('-', ''), code):
+            asked['failures'] = asked.get('failures', 0) + 1
+            if asked['failures'] >= 5:
+                del requests[user]  # Guessing: the request is dead; the student asks again.
+            write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
+            raise Refused('That code isn\'t the one for ' + user + '. Check it with your mentor.')
+        if not _password_matches(user, asked['hash'], password):
+            raise Refused('Use the same password you asked with. (If someone else asked for ' + user + ', ask a mentor to reject that request.)')
+        run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
+        del requests[user]
+        write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
+        return
     invites = read_json(INVITES) or {}
     invite = invites.get(user)
     matches = lambda i: i['expires'] >= now and hmac.compare_digest(i['code'].replace('-', ''), code)
@@ -546,6 +618,13 @@ def act(user, form):
         new_open_code(user, form.get('mentor'))
         return ('New ' + ('mentor ' if form.get('mentor') else '') + 'setup code made; it\'s listed under Unused setup codes. '
                 'Give it to the student: they choose their own username and password in SOLIDWORKS.')
+    if action == 'reject-request':
+        requests = pending_requests()
+        name = form.get('username', '')
+        if requests.pop(name, None) is None:
+            raise Refused('That request was already used or rejected.')
+        write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
+        return 'Rejected the request for ' + name + '.'
     if action == 'cancel-code':
         invites = read_json(INVITES) or {}
         if invites.pop('open:' + form.get('id', ''), None) is None:
@@ -841,6 +920,8 @@ class Admin(BaseHTTPRequestHandler):
             return self.frc_api('POST')
         if urlsplit(self.path).path == '/account/setup':
             return self.account_setup()
+        if urlsplit(self.path).path == '/account/request':
+            return self.account_request()
         if urlsplit(self.path).path == '/admin/api/password':
             return self.password_change()
         state = self.guard()
@@ -911,6 +992,17 @@ class Admin(BaseHTTPRequestHandler):
             with Locked():
                 claim_account(address, str(body.get('username', '')), str(body.get('code', '')), str(body.get('password', '')))
             self.reply(200, 'Your password is set.')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
+
+    def account_request(self):
+        # Reached without sign-in (see svn.conf /account); only stores a request, which does nothing without a mentor's code.
+        address = self.headers.get('CF-Connecting-IP') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
+            with Locked():
+                request_account(address, str(body.get('username', '')), str(body.get('password', '')))
+            self.reply(200, 'Request sent. Ask a mentor for your code.')
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
 
@@ -1179,7 +1271,15 @@ class Admin(BaseHTTPRequestHandler):
             for cid, i in open_codes())
         unused = ('<section><h2>Unused setup codes</h2><div class="scroll"><table><tr><th>Code</th><th>Made by</th><th>Expires</th><th></th></tr>%s</table></div></section>' % unused
                   if unused else '')
-        return ('<section><h2>Add an account</h2>%s</section>%s<section><h2>Accounts</h2><div class="scroll"><table>'
+        waiting = ''.join('<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td><code style="font-size:15px"><b>%s</b></code></td><td>%s</td></tr>' % (
+            esc(name), time.strftime('%b %d %H:%M', time.localtime(r['at'])), esc(r.get('address', '')), esc(r['code']),
+            self.form('reject-request', {'username': name}, 'Reject'))
+            for name, r in sorted(pending_requests().items(), key=lambda kv: kv[1]['at']))
+        waiting = ('<section><h2>Students waiting for a code</h2><p class="muted">They asked from SOLIDWORKS with the username and password they chose. '
+                   'Give each student the code next to their name (in person, so you know it\'s them); they type it in and their account works. '
+                   'Reject anything you don\'t recognize.</p><div class="scroll"><table><tr><th>Username</th><th>Asked</th><th>From</th><th>Code</th><th></th></tr>%s</table></div></section>' % waiting
+                   if waiting else '')
+        return waiting + ('<section><h2>Add an account</h2>%s</section>%s<section><h2>Accounts</h2><div class="scroll"><table>'
                 '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Setup</th><th></th></tr>%s</table></div></section>') % (add, unused, rows)
 
 

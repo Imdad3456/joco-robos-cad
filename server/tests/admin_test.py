@@ -156,6 +156,33 @@ post('/admin/users', {'action': 'add-user', 'username': ''}); oc = open_code()
 page = req('/admin/users', *M)[2]; cid = re.search(r'name="id" value="([0-9a-f]+)"', page).group(1)
 s, loc = post('/admin/users', {'action': 'cancel-code', 'id': cid}); check('cancelled' in loc and setup('drew', oc, 'drewpassword1')[0] == 400, 'cancelled code dead')
 for name in ('jordan', 'casey'): post('/admin/users', {'action': 'delete-user', 'username': name})
+# A student asks with their own username and password; the mentor only hands over the code shown for them.
+def ask(user, password):
+    r = urllib.request.Request(BASE + '/account/request', data=_json.dumps({'username': user, 'password': password}).encode(), method='POST')
+    r.add_header('Content-Type', 'application/json')
+    try:
+        resp = urllib.request.urlopen(r); return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+def waiting_code(user):
+    page = req('/admin/users', *M)[2]
+    m = re.search(r'Students waiting for a code.*?<b>' + re.escape(user) + r'</b>.*?<code[^>]*><b>([A-Z0-9-]+)</b></code>', page, re.S)
+    return m.group(1) if m else None
+check(ask('riley', 'rileypassword1')[0] == 200, 'student asks without a code')
+check(req('/catalog.json', 'riley', 'rileypassword1')[0] == 401, 'asking alone gives no access')
+rc = waiting_code('riley'); check(rc and re.match(r'^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$', rc), 'mentor sees the waiting student and their code')
+check(ask('riley', 'rileypassword1')[0] == 200 and waiting_code('riley') == rc, 'asking again with the same password keeps the same code')
+check('already asked' in ask('riley', 'squatterpass1')[1], 'someone else cannot take over a waiting name')
+check('taken' in ask('sarah', 'sarahpassword9')[1], 'existing username refused')
+check(ask('Bad Name', 'rileypassword1')[0] == 400 and ask('quinn', 'short')[0] == 400, 'bad names and short passwords refused')
+check(setup('riley', 'AAAA-AAAA-AAAA', 'rileypassword1')[0] == 400, 'wrong code refused')
+check('same password' in setup('riley', rc, 'otherpassword1')[1], 'the code needs the password the student asked with')
+s_, t = setup('riley', rc, 'rileypassword1'); check(s_ == 200, 'code + own password activates ' + t)
+check(req('/catalog.json', 'riley', 'rileypassword1')[0] == 200 and req('/admin', 'riley', 'rileypassword1')[0] == 403, 'account works; not a mentor')
+check(waiting_code('riley') is None and setup('riley', rc, 'rileypassword1')[0] == 400, 'request used up')
+check(ask('morgan', 'morganpassword1')[0] == 200, 'second student asks')
+s, loc = post('/admin/users', {'action': 'reject-request', 'username': 'morgan'}); check('Rejected' in loc and waiting_code('morgan') is None, 'mentor rejects a request')
+post('/admin/users', {'action': 'delete-user', 'username': 'riley'})
 s, loc = post('/admin/users', {'action': 'toggle-mentor', 'username': 'alex'}); check('now a mentor' in loc, 'make mentor')
 check(req('/admin', 'alex', 'alexpassword3')[0] == 200, 'new mentor sees admin')
 s, loc = post('/admin/users', {'action': 'delete-user', 'username': 'mentor1'}); check('own account' in loc, 'cannot delete self')
