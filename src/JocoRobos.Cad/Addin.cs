@@ -51,10 +51,10 @@ namespace JocoRobos.Cad
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591903;
-        private static readonly int[] OldGroupIds = { 591901, 591902 };
+        private const int GroupId = 591904;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591913;
+        private const int LayoutVersion = 591914;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -128,19 +128,19 @@ namespace JocoRobos.Cad
                 int edit = Add(group, "Edit", "Lock the active CAD document for editing", nameof(Edit), 3, both, 2);
                 int submit = Add(group, "Submit", "Upload your changed and new CAD files", nameof(Submit), 7, both, 3);
                 int insert = Add(group, "Insert from Library", "Copy a reusable part into the robot and insert it", nameof(InsertFromLibrary), 8, both, 4);
-                Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu);
-                Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
-                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu);
-                Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
-                Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
-                Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu);
-                Add(group, "Set Aside My Changes", "Save your version of changed files separately and restore the team's", nameof(SetAsideChanges), 12, menu);
-                Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu);
-                Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu);
-                Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu);
-                Add(group, "Upgrade Robot Files", "Convert every robot file to this SOLIDWORKS version once, so opening parts stops marking them changed", nameof(UpgradeRobotFiles), 18, menu);
-                Add(group, "Repair Moved References", "After reorganizing folders: repoint every file's links to the same-named file in the folder", nameof(RepairMovedReferences), 16, menu);
-                Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
+                Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
+                Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu, 6);
+                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
+                Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu, 8);
+                Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu, 9);
+                Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu, 10);
+                Add(group, "Set Aside My Changes", "Save your version of changed files separately and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
+                Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu, 12);
+                Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu, 13);
+                Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu, 14);
+                Add(group, "Upgrade Robot Files", "Convert every robot file to this SOLIDWORKS version once, so opening parts stops marking them changed", nameof(UpgradeRobotFiles), 18, menu, 15);
+                Add(group, "Repair Moved References", "After reorganizing folders: repoint every file's links to the same-named file in the folder", nameof(RepairMovedReferences), 16, menu, 16);
+                Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu, 17);
                 group.HasMenu = true;
                 group.HasToolbar = true;
                 if (!group.Activate()) throw new InvalidOperationException("Could not activate toolbar.");

@@ -7,7 +7,10 @@ from pathlib import Path
 from PIL import Image
 
 ICONS = Path(__file__).resolve().parent.parent / 'src' / 'JocoRobos.Cad' / 'Icons'
-ORDER = ['open-robot', 'update', 'edit', 'submit', 'insert-library']  # Image index 0..4.
+ORDER = ['open-robot', 'update', 'edit', 'submit', 'insert-library',  # Image index 0..4: toolbar and panel.
+         'sign-in', 'test-connection', 'change-password', 'release-edit', 'choose-robot',  # 5..9: Tools menu.
+         'open-old-robot', 'set-aside', 'restore-deleted', 'insert-external', 'import-references',  # 10..14
+         'upgrade-files', 'repair-references', 'install-update']  # 15..17
 SIZES = [20, 32, 40, 64, 96, 128]
 
 sources = [Image.open(ICONS / 'source' / (name + '.png')).convert('RGBA') for name in ORDER]
