@@ -129,7 +129,7 @@ def publish(name, data, required=False):
     return urllib.parse.unquote(h['Location'])
 exe = b'MZ' + bytes(range(256)) * 400
 check(req('/admin/addin', *M)[0] == 200 and req('/admin/addin', *U)[0] == 403, 'add-in page mentor only')
-check('Upload the file' in publish('evil.exe', exe), 'bad installer name refused')
+check('Use the file made' in publish('evil.exe', exe), 'bad installer name refused')
 check('not a Windows program' in publish('JOCO-ROBOS-CAD-Setup-0.6.0.exe', b'hello'), 'non-exe refused')
 check('Published add-in 0.6.0' in publish('JOCO-ROBOS-CAD-Setup-0.6.0.exe', exe), 'publish 0.6.0')
 catalog = json.loads(req('/catalog.json', *U)[2])
@@ -141,4 +141,40 @@ check('not newer' in publish('JOCO-ROBOS-CAD-Setup-0.5.9.exe', exe), 'older vers
 check('required update' in publish('JOCO-ROBOS-CAD-Setup-0.10.0.exe', exe, required=True), 'publish required 0.10.0 (numeric compare)')
 check(json.loads(req('/catalog.json', *U)[2])['addin']['required'], 'required in catalog')
 s, loc = post('/admin/addin', {'action': 'addin-required'}); check('now optional' in loc, 'toggle required')
+# GitHub staging account
+P = ('github-release', 'releasepass123')
+def stage(name, data, sha, user=P):
+    r = urllib.request.Request(BASE + '/admin/api/stage-addin', data=data, method='POST')
+    r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
+    r.add_header('X-Joco-File', name); r.add_header('X-Joco-Sha256', sha); r.add_header('Content-Type', 'application/octet-stream')
+    try:
+        resp = urllib.request.urlopen(r); return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+out = svn('svn ls http://localhost/svn/2027-Robot', user=P); check(out.returncode != 0, 'publisher has no SVN read access')
+out = svn('svn mkdir -m x http://localhost/svn/Library/Evil', user=P); check(out.returncode != 0, 'publisher has no SVN write access')
+check(req('/admin', *P)[0] == 403, 'publisher cannot open mentor pages')
+out = svn('svn ls http://localhost/svn/Library'); check(out.returncode == 0, 'students still read SVN after authz change ' + out.stderr)
+exe2 = b'MZ' + bytes(range(256)) * 500
+check(stage('JOCO-ROBOS-CAD-Setup-0.11.0.exe', exe2, 'ab' * 32)[0] == 400, 'staging with wrong checksum refused')
+check(stage('JOCO-ROBOS-CAD-Setup-0.11.0.exe', exe2[:1000], hashlib.sha256(exe2).hexdigest())[0] == 400, 'truncated installer refused')
+check(stage('JOCO-ROBOS-CAD-Setup-0.11.0.exe', exe2, hashlib.sha256(exe2).hexdigest(), user=M)[0] == 403, 'mentor cannot use staging API')
+status, text = stage('JOCO-ROBOS-CAD-Setup-0.11.0.exe', exe2, hashlib.sha256(exe2).hexdigest()); check(status == 200 and 'Staged 0.11.0' in text, 'stage ' + text)
+check(json.loads(req('/catalog.json', *U)[2])['addin']['version'] == '0.10.0', 'staged installer not offered to students yet')
+check('0.11.0' in req('/admin/addin', *M)[2], 'staged shown to mentors')
+s, loc = post('/admin/addin', {'action': 'release-staged'}); check('Published add-in 0.11.0' in loc, 'release staged ' + loc)
+cat = json.loads(req('/catalog.json', *U)[2])['addin']
+check(cat['version'] == '0.11.0' and cat['sha256'] == hashlib.sha256(exe2).hexdigest(), 'released installer offered')
+check('not newer' in stage('JOCO-ROBOS-CAD-Setup-0.11.0.exe', exe2, hashlib.sha256(exe2).hexdigest())[1], 'restaging same version refused')
+s, loc = post('/admin/users', {'action': 'toggle-mentor', 'username': 'github-release'}); check('cannot be a mentor' in loc, 'publisher cannot become mentor')
+# manual upload with expected checksum
+def publish_sha(name, data, sha):
+    s, _, b = req('/admin/addin', *M); tok = re.search(r'name="token" value="([0-9a-f]+)"', b).group(1)
+    bnd = uuid.uuid4().hex
+    body = (f'--{bnd}\r\nContent-Disposition: form-data; name="token"\r\n\r\n{tok}\r\n'
+            f'--{bnd}\r\nContent-Disposition: form-data; name="kind"\r\n\r\naddin\r\n'
+            f'--{bnd}\r\nContent-Disposition: form-data; name="sha256"\r\n\r\n{sha}\r\n'
+            f'--{bnd}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\nContent-Type: application/octet-stream\r\n\r\n').encode() + data + f'\r\n--{bnd}--\r\n'.encode()
+    return urllib.parse.unquote(req('/admin/addin', *M, data=body, ctype='multipart/form-data; boundary=' + bnd)[1]['Location'])
+check('probably incomplete' in publish_sha('JOCO-ROBOS-CAD-Setup-0.12.0.exe', exe2[:5000], hashlib.sha256(exe2).hexdigest()), 'manual truncated upload refused')
 print(f'PASS: {n} server/admin checks')

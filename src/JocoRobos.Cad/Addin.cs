@@ -59,6 +59,7 @@ namespace JocoRobos.Cad
         private string paneUser, paneError;
         private Catalog.AddinRelease offeredUpdate;
         private string promptedVersion;
+        private bool updateChecked;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -249,6 +250,14 @@ namespace JocoRobos.Cad
                         if (paneError.Length > 120) paneError = paneError.Substring(0, 120) + "…";
                     }
                     RenderStatus();
+                    if (!updateChecked && !busy)
+                    {
+                        updateChecked = true;
+                        string failed = null;
+                        try { failed = Updater.TakeFailedUpdate(); }
+                        catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
+                        if (failed != null) { Message(failed, MessageBoxIcon.Warning); promptedVersion = offeredUpdate?.Version; }
+                    }
                     // Ask once per version per session; the pane keeps offering it afterwards.
                     if (offeredUpdate != null && promptedVersion != offeredUpdate.Version && !busy)
                     {

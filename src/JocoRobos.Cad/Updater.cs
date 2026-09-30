@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 namespace JocoRobos.Cad
 {
@@ -86,18 +87,49 @@ namespace JocoRobos.Cad
                 return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
         }
 
+        private const string SettingsKey = @"Software\JOCO ROBOS\CAD";
+
+        /// <summary>After a restart: a message if the last update did not install, otherwise null. Reports once.</summary>
+        internal static string TakeFailedUpdate()
+        {
+            string pending, log;
+            using (var key = Registry.CurrentUser.OpenSubKey(SettingsKey))
+            {
+                pending = key?.GetValue("PendingUpdate") as string;
+                log = key?.GetValue("PendingUpdateLog") as string;
+            }
+            if (pending == null) return null;
+            using (var key = Registry.CurrentUser.CreateSubKey(SettingsKey))
+            {
+                key.DeleteValue("PendingUpdate", false);
+                key.DeleteValue("PendingUpdateLog", false);
+            }
+            Version wanted;
+            if (!Version.TryParse(pending, out wanted) || Normalize(Current) >= Normalize(wanted)) return null;
+            return "The update to JOCO ROBOS CAD " + pending + " did not install; you still have " + Current + "." +
+                (log != null && File.Exists(log) ? "\n\nInstaller log: " + log : "\n\nThe installer may not have received Windows permission.") +
+                "\n\nIt stays available in the JOCO ROBOS CAD pane.";
+        }
+
         /// <summary>Starts the installer (Windows asks for admin approval). It waits for SOLIDWORKS to exit, installs, then reopens it.</summary>
         internal static void Launch(string installer)
         {
             string solidWorks = Process.GetCurrentProcess().MainModule.FileName;
             // Silent installs show no errors, so always keep a log next to the download.
             string log = Path.ChangeExtension(installer, ".log");
+            if (File.Exists(log)) File.Delete(log);
             Process.Start(new ProcessStartInfo
             {
                 FileName = installer,
                 Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /WAITFORSW \"/LOG=" + log + "\" \"/RELAUNCH=" + solidWorks + "\"",
                 UseShellExecute = true,
             });
+            // Only after Windows approved it: remember what should be installed at the next start.
+            using (var key = Registry.CurrentUser.CreateSubKey(SettingsKey))
+            {
+                key.SetValue("PendingUpdate", Path.GetFileNameWithoutExtension(installer).Substring("JOCO-ROBOS-CAD-Setup-".Length), RegistryValueKind.String);
+                key.SetValue("PendingUpdateLog", log, RegistryValueKind.String);
+            }
         }
     }
 }
