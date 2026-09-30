@@ -196,4 +196,38 @@ namespace JocoRobos.Cad
             CancelButton = cancel;
         }
     }
+
+    internal sealed class SetAsideDialog : Form
+    {
+        private readonly CheckedListBox files = new CheckedListBox();
+        internal List<SubmitItem> Selected { get { return files.CheckedItems.Cast<SubmitItem>().ToList(); } }
+
+        internal SetAsideDialog(IEnumerable<SubmitItem> items)
+        {
+            Text = "JOCO ROBOS CAD — Set Aside My Changes";
+            ClientSize = new Size(600, 330);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Controls.Add(new Label { Text = "Checked files are copied to C:\\JOCO-ROBOS\\Set Aside, then replaced with the team's version.\nUse this when someone else is editing a file you changed, or to undo changes while keeping a copy.",
+                Location = new Point(20, 15), Size = new Size(560, 40) });
+            files.SetBounds(20, 60, 560, 210);
+            files.CheckOnClick = true;
+            files.HorizontalScrollbar = true;
+            foreach (var item in items) files.Items.Add(item, false);
+            Controls.Add(files);
+            var ok = new Button { Text = "Set aside", Location = new Point(380, 285), Size = new Size(95, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(485, 285), Size = new Size(95, 30) };
+            ok.Click += (s, e) =>
+            {
+                if (files.CheckedItems.Count == 0) { MessageBox.Show(this, "Check at least one file."); return; }
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            CancelButton = cancel;
+        }
+    }
 }

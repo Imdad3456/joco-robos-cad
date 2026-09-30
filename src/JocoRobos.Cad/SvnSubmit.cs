@@ -14,11 +14,13 @@ namespace JocoRobos.Cad
         internal SubmitKind Kind;
         internal string Path;
         internal WorkspaceInfo Workspace;
+        // Changed without Edit, but free and current: Submit locks it first.
+        internal bool NeedsLock;
         internal string Relative { get { return Path.Substring(Workspace.Root.Length + 1); } }
         public override string ToString()
         {
             string label = Kind == SubmitKind.Modified ? "Modified" : Kind == SubmitKind.New ? "New" : "Unchanged — release lock";
-            return label + ":  " + (Workspace.IsLibrary ? "Library\\" : "") + Relative;
+            return label + ":  " + (Workspace.IsLibrary ? "Library\\" : "") + Relative + (NeedsLock ? "   (not locked yet; Submit locks it)" : "");
         }
     }
 
@@ -26,6 +28,8 @@ namespace JocoRobos.Cad
     {
         internal readonly List<SubmitItem> Items = new List<SubmitItem>();
         internal readonly List<string> Blocked = new List<string>();
+        // Changed files that can't be submitted (someone else's lock, or a newer server version): Set Aside can move them out of the way.
+        internal readonly List<SubmitItem> SetAside = new List<SubmitItem>();
         internal string Notice;
     }
 
@@ -107,9 +111,21 @@ namespace JocoRobos.Cad
                         else if (!WorkspacePolicy.IsCad(path) || owned)
                             plan.Items.Add(Item(SubmitKind.Modified, path));
                         else if (item.RemoteLock != null)
-                            plan.Blocked.Add(relative + " — changed, but locked by " + item.RemoteLock.Owner + ". Keep your copy and ask a mentor");
+                        {
+                            plan.Blocked.Add(relative + " — changed, but " + item.RemoteLock.Owner + " is editing it. Use Set Aside My Changes to keep your version separately");
+                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
+                        }
+                        else if (item.IsRemoteUpdated)
+                        {
+                            plan.Blocked.Add(relative + " — changed, but a teammate submitted a newer version. Use Set Aside My Changes, then Update");
+                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
+                        }
                         else
-                            plan.Blocked.Add(relative + " — changed without Edit. Keep your copy and ask a mentor");
+                        {
+                            var free = Item(SubmitKind.Modified, path);
+                            free.NeedsLock = true;
+                            plan.Items.Add(free);
+                        }
                         break;
                     case SvnStatus.Missing:
                     case SvnStatus.Deleted:
@@ -150,6 +166,19 @@ namespace JocoRobos.Cad
                 foreach (var item in selected)
                     if (!current.Items.Any(x => x.Kind == item.Kind && x.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase)))
                         throw new InvalidOperationException("Your files changed while reviewing:\n" + item.Relative + "\nNothing was submitted. Click Submit again.");
+                // Files changed without Edit: take the lock now. SVN refuses if anyone holds it or the file is out of date.
+                var unlocked = current.Items.Where(x => x.NeedsLock && selected.Any(y => y.Path.Equals(x.Path, StringComparison.OrdinalIgnoreCase))).Select(x => x.Path).ToList();
+                if (unlocked.Count > 0)
+                {
+                    try { client.Lock(unlocked, new SvnLockArgs { StealLock = false, Comment = "Locked by Submit" }); }
+                    catch (SvnException failure)
+                    {
+                        throw new InvalidOperationException("Could not lock your changed files; a teammate may have just started editing them. Nothing was submitted.\n\n" + failure.Message, failure);
+                    }
+                    foreach (var status in Status(client, Root, true, SvnDepth.Infinity).Where(x => unlocked.Contains(Path.GetFullPath(x.FullPath), StringComparer.OrdinalIgnoreCase)))
+                        if (!WorkspacePolicy.OwnsLock(login.UserName, status.LocalLock?.Token, status.RemoteLock?.Token, status.RemoteLock?.Owner))
+                            throw new InvalidOperationException("Could not confirm your lock on " + Path.GetFileName(status.FullPath) + ". Nothing was submitted; try again.");
+                }
 
                 var commit = selected.Where(x => x.Kind != SubmitKind.ReleaseOnly).ToList();
                 var release = selected.Where(x => x.Kind == SubmitKind.ReleaseOnly).Select(x => x.Path).ToList();
@@ -199,6 +228,33 @@ namespace JocoRobos.Cad
                 try { ReconcileReadOnly(client); }
                 catch (Exception failure) { result.Warnings.Add("Could not refresh read-only files; click Update later. " + failure.Message); }
                 return result;
+            }
+        }
+
+        /// <summary>Copies each file to C:\JOCO-ROBOS\Set Aside\&lt;time&gt;\&lt;season&gt;\..., checks the copy, then restores the team's version.</summary>
+        internal string SetAside(IList<SubmitItem> items)
+        {
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                string folder = Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside", DateTime.Now.ToString("yyyy-MM-dd HHmm"), Info.Name);
+                foreach (var item in items.Where(x => x.Workspace.Name == Info.Name))
+                {
+                    string path = WorkspacePolicy.RequireInside(Root, item.Path);
+                    var status = Status(client, path, false, SvnDepth.Empty).SingleOrDefault();
+                    if (status == null || status.LocalNodeStatus != SvnStatus.Modified)
+                        throw new InvalidOperationException(item.Relative + " is no longer changed. Nothing was moved.");
+                    string copy = Path.Combine(folder, item.Relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(copy));
+                    File.Copy(path, copy, false);
+                    File.SetAttributes(copy, File.GetAttributes(copy) & ~FileAttributes.ReadOnly);
+                    // Never discard the only copy: revert only after the saved copy is proven identical.
+                    if (!File.ReadAllBytes(copy).SequenceEqual(File.ReadAllBytes(path)))
+                        throw new InvalidOperationException("Could not save a safe copy of " + item.Relative + ". Nothing was changed.");
+                    client.Revert(path, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                }
+                ReconcileReadOnly(client);
+                return folder;
             }
         }
 

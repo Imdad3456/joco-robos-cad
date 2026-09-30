@@ -32,6 +32,7 @@ namespace JocoRobos.Cad
         [DispId(10)] void ChooseRobot();
         [DispId(11)] void InstallUpdate();
         [DispId(12)] void OpenOldRobot();
+        [DispId(13)] void SetAsideChanges();
     }
 
     [ComVisible(true)]
@@ -45,7 +46,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591906;
+        private const int LayoutVersion = 591907;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -106,6 +107,7 @@ namespace JocoRobos.Cad
                 Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu);
+                Add(group, "Set Aside My Changes", "Save your version of changed files separately and restore the team's", nameof(SetAsideChanges), 12, menu);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu);
                 group.HasMenu = true;
                 group.HasToolbar = true;
@@ -550,31 +552,88 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException(Path.GetFileName(doc.GetPathName()) + " is from " + workspace.Name + ", a reference copy.\n\n" +
                         "To reuse it in " + catalog.Robot.Name + ", ask a mentor to add it to the Library, then use Insert from Library. " +
                         "To edit " + workspace.Name + " itself, switch with Tools → JOCO ROBOS CAD → Choose Robot.");
-                // Never reload a dirty document or change it behind an open assembly.
-                if (doc.GetSaveFlag())
-                    throw new InvalidOperationException("This document has unsaved changes. Preserve them before acquiring a new edit lock.");
                 string path = doc.GetPathName();
+                // Changes made before clicking Edit: keep a copy first, whatever happens next.
+                bool unsaved = doc.GetSaveFlag();
+                if (unsaved && !doc.IsOpenedReadOnly())
+                    throw new InvalidOperationException("Save this document first, then click Edit.");
+                string safety = unsaved ? SaveSafetyCopy(doc, workspace) : null;
                 var svn = new SvnWorkspace(login, workspace);
                 try
                 {
-                    if (!doc.SetReadOnlyState(true)) throw new InvalidOperationException("SOLIDWORKS could not put the document in read-only mode.");
+                    if (!unsaved && !doc.SetReadOnlyState(true)) throw new InvalidOperationException("SOLIDWORKS could not put the document in read-only mode.");
                     string owner = OperationDialog.Run("Checking the revision and acquiring your edit lock…",
                         () => SvnWorkspace.Exclusive(() => svn.Edit(path)));
                     File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.ReadOnly);
                     if (!doc.SetReadOnlyState(false) || doc.IsOpenedReadOnly())
                         throw new InvalidOperationException("Your SVN lock is held, but SOLIDWORKS could not make the document writable. Close and reopen it, then retry Edit.");
                     bool component = !ReferenceEquals(doc, application.ActiveDoc);
+                    string kept = !unsaved ? "" : doc.GetSaveFlag()
+                        ? "\n\nYour earlier changes are still here. Save to keep them. (A backup copy is in " + safety + ")"
+                        : "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety;
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
                         (workspace.IsLibrary ? " in the Library. Changes reach robots only when someone inserts the part again." : ".") +
                         (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
-                        "\n\nSave normally, then click Submit when you are done.");
+                        kept + "\n\nSave normally, then click Submit when you are done.");
                 }
-                catch
+                catch (Exception exception)
                 {
-                    doc.SetReadOnlyState(true);
+                    if (!unsaved) doc.SetReadOnlyState(true);
                     if (File.Exists(path)) File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
-                    throw;
+                    if (safety == null) throw;
+                    throw new InvalidOperationException(exception.Message + "\n\nYour unsaved changes were saved as a copy in:\n" + safety +
+                        "\n\nYou can close this document without saving; your work is in that copy. Show it to whoever is editing the file.", exception);
                 }
+            });
+        }
+
+        // Saves the in-memory document as a copy under C:\JOCO-ROBOS\Set Aside without changing what SOLIDWORKS has open.
+        private string SaveSafetyCopy(ModelDoc2 doc, WorkspaceInfo workspace)
+        {
+            string path = doc.GetPathName();
+            string copy = Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside", DateTime.Now.ToString("yyyy-MM-dd HHmm"), workspace.Name,
+                path.Substring(workspace.Root.Length + 1));
+            Directory.CreateDirectory(Path.GetDirectoryName(copy));
+            int errors = 0, warnings = 0;
+            bool saved = doc.Extension.SaveAs3(copy, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
+                (int)(swSaveAsOptions_e.swSaveAsOptions_Silent | swSaveAsOptions_e.swSaveAsOptions_Copy), null, null, ref errors, ref warnings);
+            if (!saved || !File.Exists(copy))
+                throw new InvalidOperationException("Could not save a backup of your unsaved changes (error " + errors + "). Nothing was changed.\n\n" +
+                    "Use File → Save As to save your work somewhere else first.");
+            return copy;
+        }
+
+        public void SetAsideChanges()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var workspaces = new[] { catalog.Robot, catalog.Library }
+                    .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
+                var candidates = new List<SubmitItem>();
+                OperationDialog.Run("Checking your changes…", () => SvnWorkspace.Exclusive(() =>
+                {
+                    foreach (var plan in workspaces.Select(w => w.PrepareSubmit()))
+                        candidates.AddRange(plan.SetAside.Concat(plan.Items.Where(x => x.Kind == SubmitKind.Modified && WorkspacePolicy.IsCad(x.Path))));
+                    return true;
+                }));
+                if (candidates.Count == 0) { Message("You have no changed files to set aside."); return; }
+                List<SubmitItem> chosen;
+                using (var dialog = new SetAsideDialog(candidates))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    chosen = dialog.Selected;
+                }
+                var open = OpenDocuments().Select(d => d.GetPathName()).Where(p => chosen.Any(c => String.Equals(c.Path, p, StringComparison.OrdinalIgnoreCase))).ToList();
+                if (open.Count > 0)
+                    throw new InvalidOperationException("Close these documents first (don't save):\n\n" + String.Join("\n", open.Select(Path.GetFileName)));
+                var folders = new List<string>();
+                foreach (var svn in workspaces.Where(w => chosen.Any(c => c.Workspace.Name == w.Info.Name)))
+                    folders.Add(OperationDialog.Run("Saving your versions and restoring the team's…", () => SvnWorkspace.Exclusive(() => svn.SetAside(chosen))));
+                Message("Your versions are saved in:\n" + String.Join("\n", folders) + "\n\nThe team's versions are back in the robot. Click Update to get the newest, " +
+                    "then Edit when the file is free. Open your saved copy side by side to redo or copy your changes.");
             });
         }
 
@@ -624,6 +683,7 @@ namespace JocoRobos.Cad
                     {
                         plan.Items.AddRange(part.Items);
                         plan.Blocked.AddRange(part.Blocked);
+                        plan.SetAside.AddRange(part.SetAside);
                         if (part.Notice != null) plan.Notice = (plan.Notice == null ? "" : plan.Notice + "\n\n") + part.Notice;
                     }
                     return true;
