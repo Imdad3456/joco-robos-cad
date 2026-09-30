@@ -22,6 +22,16 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>True when SOLIDWORKS loaded a developer build (Register-Dev.ps1) instead of the installed copy.</summary>
+        internal static bool IsDevelopmentBuild
+        {
+            get
+            {
+                string installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "JOCO ROBOS CAD") + Path.DirectorySeparatorChar;
+                return !typeof(Updater).Assembly.Location.StartsWith(installed, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
         private static Version Normalize(Version version)
         {
             return new Version(version.Major, version.Minor, Math.Max(0, version.Build));
@@ -78,10 +88,12 @@ namespace JocoRobos.Cad
         internal static void Launch(string installer)
         {
             string solidWorks = Process.GetCurrentProcess().MainModule.FileName;
+            // Silent installs show no errors, so always keep a log next to the download.
+            string log = Path.ChangeExtension(installer, ".log");
             Process.Start(new ProcessStartInfo
             {
                 FileName = installer,
-                Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /WAITFORSW \"/RELAUNCH=" + solidWorks + "\"",
+                Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /WAITFORSW \"/LOG=" + log + "\" \"/RELAUNCH=" + solidWorks + "\"",
                 UseShellExecute = true,
             });
         }

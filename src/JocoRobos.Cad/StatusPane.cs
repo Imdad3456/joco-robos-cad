@@ -37,7 +37,7 @@ namespace JocoRobos.Cad
         internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate)
         {
             BackColor = SystemColors.Window;
-            layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current, SystemColors.GrayText));
+            layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText));
             layout.Controls.Add(update);
             install.Click += (s, e) => installUpdate();
             layout.Controls.Add(install);
