@@ -1100,11 +1100,18 @@ namespace JocoRobos.Cad
                     foreach (var svn in workspaces) plan.Add(svn.PrepareSubmit());
                     return plan;
                 })),
-                Check = (plan, selected, acknowledged) => SubmitCheck.Run(new SubmitCheckInput
+                Check = (plan, selected, acknowledged) =>
                 {
-                    Plan = plan, Selected = selected, Workspaces = infos, Documents = DocumentStates(), References = CachedDependencies,
-                    Owning = catalog.Owning, LockedBy = KnownLocks(), User = login.UserName, Acknowledged = acknowledged,
-                }),
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
+                    var issues = SubmitCheck.Run(new SubmitCheckInput
+                    {
+                        Plan = plan, Selected = selected, Workspaces = infos, Documents = DocumentStates(), References = CachedDependencies,
+                        Owning = catalog.Owning, LockedBy = KnownLocks(), User = login.UserName, Acknowledged = acknowledged,
+                    });
+                    if (clock.ElapsedMilliseconds > 3000)
+                        ErrorLog.Write("slow Submit check (" + clock.ElapsedMilliseconds + " ms)", new TimeoutException(selected.Count + " files checked, " + plan.Items.Count + " listed"));
+                    return issues;
+                },
                 Fix = (issue, action) => FixSubmitIssue(issue, action, catalog, workspaces),
                 Commit = (selected, comment) => CommitSubmit(selected, comment, workspaces),
                 Busy = value =>
@@ -1149,7 +1156,9 @@ namespace JocoRobos.Cad
             return states;
         }
 
-        // Reading references is the slow part of the checks; a file's references only change when it's saved.
+        // Reading references is the slow part of the checks, and it runs on SOLIDWORKS' own thread (SOLIDWORKS is frozen
+        // meanwhile). Only each file's direct references are read: deeper ones belong to files that are either in this Submit
+        // (checked themselves) or unchanged team files. Cached until the file is saved again. Slow reads are logged.
         private readonly Dictionary<string, Tuple<DateTime, List<string>>> dependencyCache =
             new Dictionary<string, Tuple<DateTime, List<string>>>(StringComparer.OrdinalIgnoreCase);
 
@@ -1158,7 +1167,17 @@ namespace JocoRobos.Cad
             DateTime written = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
             Tuple<DateTime, List<string>> cached;
             if (dependencyCache.TryGetValue(path, out cached) && cached.Item1 == written) return cached.Item2;
-            var list = Dependencies(path).ToList();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var list = new List<string>();
+            var raw = application.GetDocumentDependencies2(path, false, false, false) as object[];
+            for (int i = 1; raw != null && i < raw.Length; i += 2)
+            {
+                string reference = raw[i] as string;
+                if (String.IsNullOrEmpty(reference)) continue;
+                try { list.Add(Path.GetFullPath(reference)); } catch (ArgumentException) { list.Add(reference); }
+            }
+            if (clock.ElapsedMilliseconds > 1500)
+                ErrorLog.Write("slow references (" + clock.ElapsedMilliseconds + " ms)", new TimeoutException(path + " has " + list.Count + " direct references"));
             dependencyCache[path] = Tuple.Create(written, list);
             return list;
         }
