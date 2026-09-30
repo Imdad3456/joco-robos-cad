@@ -1,4 +1,4 @@
-# Test sheet: two people, about 1 hour (the 1.0 release gate)
+# Test sheet: the 1.0 release gate (two people about 1 hour, plus a 20-minute uncoached student)
 
 **A** = mentor (Imdad). **B** = a teammate on their own Windows PC with SOLIDWORKS 2026. **Both** = each of you on your own computer.
 
@@ -13,7 +13,7 @@ This sheet covers what's **new in 0.13** and the **safety paths nobody has neede
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 0.1 | A | https://cad.imdad.stream/admin → **Add-in** → **Release to students** for the newest version. Both: install it when SOLIDWORKS offers it | The panel header shows the same version on both computers | ☐ |
-| 0.2 | A | **Seasons** → write down 2026-Robot's revision: **r____** | Everything after it is a test submit, undone in section 7 | ☐ |
+| 0.2 | A | **Seasons** → write down 2026-Robot's revision: **r____** | Everything after it is a test submit, undone in section 8 | ☐ |
 
 ## 1. New account (a third person, or B on a spare Windows user)
 
@@ -94,14 +94,28 @@ Write the times down; anything that makes SOLIDWORKS look stuck for more than a 
 | 6.5 | Library tab: type `kraken` until results appear; insert one already in the Library | |
 | 6.6 | Switch between two open documents: does the panel update instantly? | |
 
-## 7. Finish (A)
+## 7. Uncoached student (a teammate who hasn't seen JOCO)
+
+Give them only the installer link and one sentence: "Install this, then use SOLIDWORKS as usual; the JOCO panel on the right tells you what to do." Then **don't explain anything**. Watch and write down every moment they ask "what do I click?", hesitate, or misunderstand something: each one is a 1.0 bug. Don't redesign things they understood.
+
+| # | They should | Where they got stuck (write it down) | ✓ |
+|---|---|---|---|
+| 7.1 | Install, start SOLIDWORKS, ask for an account (you give the code when they ask) | | ☐ |
+| 7.2 | Open the robot | | ☐ |
+| 7.3 | Change one part in `80_Unsorted` | | ☐ |
+| 7.4 | Add a part from the Library tab (FRCDesignLib or team Library) | | ☐ |
+| 7.5 | Save and Submit | | ☐ |
+| 7.6 | Open a file you're editing (A: **Edit** it first) and try to change it | | ☐ |
+| 7.7 | Recover from one problem you set up on purpose (for example: you delete a file they need, or turn off their Wi-Fi during Submit) | | ☐ |
+
+## 8. Finish (A)
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 7.1 | Both | Submit or Set Aside anything left; give back anything still locked | The panel shows no changes waiting and nothing you're editing | ☐ |
-| 7.2 | A | Web **Seasons** → Recent submits → **Undo…** each test submit after r____ (step 0.2), **newest first** | Each says "Undid rN as new revision" | ☐ |
-| 7.3 | Both | Close documents and wait for the automatic update (or **Tools → Update**) | The test changes are gone from both computers | ☐ |
-| 7.4 | A | Web **Locks** | No test locks left | ☐ |
+| 8.1 | Both | Submit or Set Aside anything left; give back anything still locked | The panel shows no changes waiting and nothing you're editing | ☐ |
+| 8.2 | A | Web **Seasons** → Recent submits → **Undo…** each test submit after r____ (step 0.2), **newest first** | Each says "Undid rN as new revision" | ☐ |
+| 8.3 | Both | Close documents and wait for the automatic update (or **Tools → Update**) | The test changes are gone from both computers | ☐ |
+| 8.4 | A | Web **Locks** | No test locks left | ☐ |
 
 ---
 
