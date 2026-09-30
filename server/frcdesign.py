@@ -133,7 +133,8 @@ def details(insertable_id):
     raw = _cached('config-%s-%s.json' % (insertable_id, item['microversionId']),
                   lambda: _get('%s/configuration/insertable/%s?v=%s' % (CATALOG_BASE, insertable_id, item['microversionId']))[0])
     config = json.loads(raw)
-    result['parameters'] = [p for p in config.get('parameters', []) if not p.get('isCosmetic')] if item.get('isConfigurable') else []
+    # "Cosmetic" in FRCDesignLib means it doesn't change the part number, not that it doesn't matter: a tube's length is cosmetic.
+    result['parameters'] = list(config.get('parameters', [])) if item.get('isConfigurable') else []
     result['choices'] = [_choice(p) for p in result['parameters']]
     records = config.get('records') or []
     result['partNumber'] = next((r.get('partNumber') for r in records if r.get('partNumber')), '')
@@ -342,6 +343,8 @@ def normalize_configuration(parameters, requested):
                 chosen[cid] = choice['default']
         chosen = {cid: v for cid, v in chosen.items()
                   if holds(next(c for c in choices if c['id'] == cid)['visibleWhen'], chosen, choices)}
+        # A cosmetic option at its default isn't sent, exactly as before they were editable, so earlier imports keep their fingerprints.
+        chosen = {cid: v for cid, v in chosen.items() if not (raw[cid].get('isCosmetic') and v == str(raw[cid].get('default')))}
         if chosen == previous:
             break
     return chosen

@@ -81,6 +81,7 @@ This is the test that proves nobody can overwrite anyone.
 | 4.7 | Both | At the same moment, both pick **Kraken X60** (default options) and click **Insert** | One of you prepares it; the other gets "being prepared by …". The second try is instant | ☐ |
 | 4.7b | Both | Search `flanged radial bearing` → change its size options | Some choices disappear or reappear as other options change, like in FRCDesignApp | ☐ |
 | 4.7c | A | Search `hex shaft` → **Hex Shaft (VEX)** → the **Length (in, 0 to 36)** box: type `40` → **Insert** | "Length must be between 0 and 36 in." Change it to `2.5` → **Insert** → `Hex Shaft (VEX) (Length 2.5in).SLDPRT`, 2.5" long | ☐ |
+| 4.7d | A | Search `box tube` → **Aluminum Box Tube (AM)** → **Length (in, 0 to 47)**: `24` → **Insert** | A 24" tube with holes along its whole length | ☐ |
 | 4.8 | A | Panel → **Team Library…** → pick any Library part | Copied into `90_COTS` and inserted | ☐ |
 | 4.9 | B | Download any vendor `.SLDPRT` (for example from McMaster) → **Tools → Insert External Part** | Lands in `90_COTS\Imported\<name>\` and inserts | ☐ |
 | 4.10 | B | Save a part to your **Desktop**, insert it the normal way (Insert → Component), save → **Submit**, type a comment | "motor cover asssewmbly.SLDASM uses a file outside 2026-Robot", Submit greyed out | ☐ |

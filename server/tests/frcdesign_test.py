@@ -59,6 +59,10 @@ f._catalog.update(data={'groups': {'g': {'name': 'Shafts'}}, 'insertables': {}},
 check(f.library_path(item, numbers, {'Length': '0.0635 m', 'Teeth': '64'}, 'abcdef') == 'FRCDesignLib/Shafts/Hex Shaft (VEX) (Length 2.5in).SLDPRT',
       'custom length in the file name: ' + f.library_path(item, numbers, {'Length': '0.0635 m'}, 'abcdef'))
 check(f.library_path(item, numbers, {'Length': '0.0254 m'}, 'abcdef') == 'FRCDesignLib/Shafts/Hex Shaft (VEX).SLDPRT', 'default length: plain name')
+# Box tubes mark Length "cosmetic": editable, but left out at its default so older imports keep the same fingerprint.
+tube = [dict(size, id='Type'), dict(length, isCosmetic=True, default='0.0762 m', defaultValue=3, max=47)]
+check(f.normalize_configuration(tube, {'Length': '3'}) == {'Type': 'S'}, 'cosmetic default not sent')
+check(f.normalize_configuration(tube, {'Length': '24'}) == {'Type': 'S', 'Length': '0.6096 m'}, 'custom tube length sent')
 check(f._condition({'type': 'logical', 'operation': 'OR', 'children': []}) is None, 'empty OR never hides (FRCDesignApp rule)')
 check(f._condition({'type': 'alwaysShown'}) is None, 'always shown')
 item = {'id': 'x', 'name': 'A' * 200, 'groupId': 'g', 'microversionId': 'm'}
