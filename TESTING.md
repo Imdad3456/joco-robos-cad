@@ -63,6 +63,13 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 - 🧑 Within 3 minutes (or after *Check now*), SOLIDWORKS asks "0.6.1 is available". Answer Yes → Windows permission prompt → "Update is ready". Close SOLIDWORKS; it should reopen by itself within about a minute. The pane header now says **0.6.1**.
 - 🌐 Mark it **Required** and publish `0.6.2`. 🧑 Clicking Edit without updating is refused with the install prompt.
 
+## G3. Changes without Edit
+
+- 🧑 Open a part (read-only), change a dimension without clicking Edit, then click **Edit**. A backup appears in `C:\JOCO-ROBOS\Set Aside\…`, and the file is locked. Tell me whether the message says your changes are still in the window or that SOLIDWORKS reloaded it.
+- 🧑 As testkid, Edit a part. As imdad, change the same part without Edit, then click Edit. It's refused with "Locked by testkid" plus the backup location.
+- 🧑 Close SOLIDWORKS. In Explorer, clear read-only on a part, change it in SOLIDWORKS, and save. **Submit** lists it as "not locked yet; Submit locks it" and submits it.
+- 🧑 Repeat while testkid holds the lock: Submit shows it under "Cannot be submitted". **Tools → Set Aside My Changes** (with the document closed) saves your copy, restores the team's version, and Update works again.
+
 ## H. Failure cases
 
 27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.

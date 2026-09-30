@@ -22,6 +22,8 @@ Students install with **one setup file** (`scripts\Build-Installer.ps1` builds `
 
 A **JOCO ROBOS CAD task pane** (right side of SOLIDWORKS) shows the robot, ✓ up to date or "N updates available" with who submitted what, the active file's state (🔒 locked by someone, ✎ you are editing, read-only, new), your locked files, and the main buttons. It checks the server every 3 minutes, after each command, and on "Check now". It never changes files.
 
+**Changes made without Edit.** Robot files open read-only, so SOLIDWORKS won't save over them. If a student changes a file first and then clicks **Edit**, the add-in first saves a backup copy of the unsaved work to `C:\JOCO-ROBOS\Set Aside\…`. It then locks the file if it's free and current, keeping the changes. Otherwise it says who is editing and where the backup is. A file changed on disk without Edit (for example, read-only removed in Explorer) is locked automatically by Submit when nobody else holds it and nobody submitted a newer version. Otherwise **Set Aside My Changes** (Tools menu) copies the student's versions to `Set Aside` and restores the team's versions, so Update works again.
+
 **Edit and Release Edit** act on the one component selected in an open assembly (tree or graphics), otherwise on the active document.
 
 The toolbar contains **Open Robot**, **Update**, **Edit**, **Submit**, and **Insert from Library**. The Tools → JOCO ROBOS CAD menu also provides **Sign In**, **Test Connection**, **Release Edit**, and **Choose Robot**.

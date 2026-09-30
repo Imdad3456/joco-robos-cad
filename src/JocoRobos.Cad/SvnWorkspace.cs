@@ -103,7 +103,7 @@ namespace JocoRobos.Cad
                 item.LocalNodeStatus != SvnStatus.Normal ||
                 (item.LocalPropertyStatus != SvnStatus.None && item.LocalPropertyStatus != SvnStatus.Normal))
                 throw new InvalidOperationException("Update stopped to preserve local work or an unsupported workspace item:\n" + item.FullPath +
-                    "\nSubmit your changes first. If this file should not change, keep it and ask a mentor; do not delete or revert it.");
+                    "\nSubmit your changes first, or use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep your version as a copy and restore the team's.");
         }
 
         private void ReconcileReadOnly(SvnClient client)
