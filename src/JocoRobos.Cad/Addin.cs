@@ -81,6 +81,8 @@ namespace JocoRobos.Cad
             try
             {
                 application = (SldWorks)ThisSW;
+                // Can't stop SOLIDWORKS from closing on an escaped error, but leaves a record of why.
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => ErrorLog.Write("unhandled", e.ExceptionObject as Exception ?? new Exception(Convert.ToString(e.ExceptionObject)));
                 if (!application.SetAddinCallbackInfo2(0, this, Cookie))
                     throw new InvalidOperationException("SOLIDWORKS could not register the callbacks.");
                 commands = application.GetCommandManager(Cookie);
@@ -183,6 +185,7 @@ namespace JocoRobos.Cad
             try { action(); }
             catch (Exception exception)
             {
+                ErrorLog.Write("command", exception);
                 string text = exception.Message;
                 bool login = text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     text.IndexOf("authoriz", StringComparison.OrdinalIgnoreCase) >= 0 || text.Contains("401");
@@ -236,23 +239,38 @@ namespace JocoRobos.Cad
             application.ActiveModelDocChangeNotify += OnActiveDocumentChanged;
             watcher = new DocumentWatcher(application,
                 path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
-                doc => pane.BeginInvoke((Action)(() => OfferLock(doc))),
-                path => pane.BeginInvoke((Action)(() => ReleaseIfUnchanged(path))),
-                path => pane.BeginInvoke((Action)(() => OnDocumentSaved(path))));
+                doc => OnUi("lock offer", () => OfferLock(doc)),
+                path => OnUi("release on close", () => ReleaseIfUnchanged(path)),
+                path => OnUi("saved", () => OnDocumentSaved(path)));
             // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
             savedTimer = new Timer { Interval = 2500 };
-            savedTimer.Tick += (s, e) => { savedTimer.Stop(); RefreshStatus(); };
+            savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
             flashTimer = new Timer { Interval = 15000 };
             flashTimer.Tick += (s, e) => { flashTimer.Stop(); flash = null; RenderStatus(); };
             // Just installed and never signed in: welcome the student and let them set up their own password.
             bool signedIn;
             try { signedIn = CredentialStore.Read() != null; }
             catch (Exception) { signedIn = true; }
-            if (!signedIn) pane.BeginInvoke((Action)(() => Execute(() => SetUpAccount(null))));
+            if (!signedIn) OnUi("first sign-in", () => Execute(() => SetUpAccount(null)));
             statusTimer = new Timer { Interval = 3 * 60 * 1000 };
-            statusTimer.Tick += (s, e) => RefreshStatus();
+            statusTimer.Tick += (s, e) => { try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("status timer", exception); } };
             statusTimer.Start();
             RefreshStatus();
+        }
+
+        // Runs on SOLIDWORKS' UI thread, later. An error escaping there would close SOLIDWORKS, so it's logged instead.
+        private void OnUi(string where, Action action)
+        {
+            try
+            {
+                if (pane == null || pane.IsDisposed) return;
+                pane.BeginInvoke((Action)(() =>
+                {
+                    try { action(); }
+                    catch (Exception exception) { ErrorLog.Write(where, exception); }
+                }));
+            }
+            catch (Exception exception) { ErrorLog.Write(where, exception); }
         }
 
         private int OnActiveDocumentChanged()
@@ -306,7 +324,7 @@ namespace JocoRobos.Cad
             }).ContinueWith(task =>
             {
                 if (pane == null || pane.IsDisposed) return;
-                pane.BeginInvoke((Action)(() =>
+                OnUi("status refresh", () =>
                 {
                     refreshing = false;
                     if (task.Status == TaskStatus.RanToCompletion)
@@ -339,7 +357,7 @@ namespace JocoRobos.Cad
                         promptedVersion = offeredUpdate.Version;
                         InstallUpdate();
                     }
-                }));
+                });
             });
         }
 
@@ -889,10 +907,10 @@ namespace JocoRobos.Cad
             }).ContinueWith(task =>
             {
                 if (pane == null || pane.IsDisposed) return;
-                pane.BeginInvoke((Action)(() =>
+                OnUi("release on close", () =>
                 {
                     if (task.Status == TaskStatus.RanToCompletion) RefreshStatus();
-                }));
+                });
             });
         }
 

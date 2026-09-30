@@ -118,7 +118,7 @@ namespace JocoRobos.Cad
             status.Font = new Font(Font.FontFamily, 10f, FontStyle.Bold);
             statusRow.Controls.Add(status);
             statusRow.Controls.Add(checkAgain);
-            checkAgain.LinkClicked += async (s, e) => { note = null; await Rescan(); };
+            checkAgain.LinkClicked += (s, e) => Safely("check again", () => { note = null; return Rescan(); });
 
             files.Columns.Add("File", 250);
             files.Columns.Add("Folder", 230);
@@ -126,10 +126,11 @@ namespace JocoRobos.Cad
             files.Groups.AddRange(new[] { changedGroup, newGroup, releaseGroup });
             files.ItemChecked += (s, e) =>
             {
-                if (populating) return;
-                var item = (SubmitItem)e.Item.Tag;
+                var item = e.Item.Tag as SubmitItem;
+                if (populating || item == null) return;
                 if (e.Item.Checked) draft.Unchecked.Remove(item.Path); else draft.Unchecked.Add(item.Path);
-                Recheck();
+                // Later, not inside the ListView's own event.
+                Safely("file checkbox", () => { Recheck(); return Task.FromResult(true); });
             };
             files.Resize += (s, e) => FitColumns();
 
@@ -140,7 +141,7 @@ namespace JocoRobos.Cad
             buttons.Controls.Add(cancel);
             buttons.Controls.Add(submit);
             buttons.Controls.Add(hint);
-            submit.Click += async (s, e) => await OnSubmit();
+            submit.Click += (s, e) => Safely("submit", OnSubmit);
             cancel.Click += (s, e) => Close();
             CancelButton = cancel;
 
@@ -163,20 +164,21 @@ namespace JocoRobos.Cad
             root.Controls.Add(buttons);
             Controls.Add(root);
 
-            Resize += (s, e) => FitIssues();
-            Shown += async (s, e) => { comment.Focus(); comment.SelectionStart = comment.TextLength; await Rescan(); };
+            Resize += (s, e) => { try { FitIssues(); } catch (Exception exception) { ErrorLog.Write("submit window resize", exception); } };
+            Shown += (s, e) => Safely("first check", () => { comment.Focus(); comment.SelectionStart = comment.TextLength; return Rescan(); });
             // Back from SOLIDWORKS (saved, renamed, closed something): check again by itself.
             Deactivate += (s, e) => leftAt = DateTime.UtcNow;
-            Activated += async (s, e) =>
+            Activated += (s, e) =>
             {
                 bool away = leftAt != null && DateTime.UtcNow - leftAt.Value > TimeSpan.FromSeconds(1.5);
                 leftAt = null;
-                if (away && !working && plan != null) await Rescan();
+                if (away && !working && plan != null) Safely("recheck", Rescan);
             };
             FormClosing += (s, e) =>
             {
                 if (working && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; return; }
-                if (Outcome == null) draft.Comment = comment.Text;
+                try { if (Outcome == null) draft.Comment = comment.Text; }
+                catch (Exception exception) { ErrorLog.Write("Submit window closing", exception); }
             };
             Render();
         }
@@ -197,18 +199,47 @@ namespace JocoRobos.Cad
             noteLevel = level;
         }
 
+        // Every click and event of this window runs through here, one message later than the click itself.
+        // An error inside SOLIDWORKS' window must never escape: it would close SOLIDWORKS. It's shown here and logged instead.
+        private async void Safely(string where, Func<Task> work)
+        {
+            try
+            {
+                await Task.Yield(); // Let the click finish before anything (like the clicked button) is rebuilt.
+                if (IsDisposed) return;
+                await work();
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Write("Submit window: " + where, exception);
+                try
+                {
+                    if (working) End();
+                    if (IsDisposed) return;
+                    SetNote("Something went wrong (" + exception.Message + "). Nothing was submitted unless the panel says so. " +
+                        "Close this window and try again; details are in " + ErrorLog.FilePath, IssueLevel.Blocking);
+                    Render();
+                }
+                catch (Exception again) { ErrorLog.Write("Submit window: showing an error", again); }
+            }
+        }
+
         private async Task Rescan()
         {
             if (working) return;
-            Begin("Checking your changes…");
             try
             {
+                Begin("Checking your changes…");
                 var fresh = await host.Scan();
                 if (fresh.Notice != null) notice = fresh.Notice;
                 plan = fresh;
                 Populate();
             }
-            catch (Exception exception) { SetNote("Couldn't check your changes: " + exception.Message, IssueLevel.Blocking); }
+            catch (Exception exception)
+            {
+                ErrorLog.Write("Submit scan", exception);
+                SetNote("Couldn't check your changes: " + exception.Message, IssueLevel.Blocking);
+            }
             finally { End(); }
             Recheck();
         }
@@ -220,6 +251,7 @@ namespace JocoRobos.Cad
                 try { issues = host.Check(plan, SelectedPaths, acknowledged); }
                 catch (Exception exception)
                 {
+                    ErrorLog.Write("Submit checks", exception);
                     issues = new List<SubmitIssue>();
                     SetNote("Couldn't check your files: " + exception.Message, IssueLevel.Blocking);
                 }
@@ -238,6 +270,7 @@ namespace JocoRobos.Cad
 
         private void End()
         {
+            if (!working) return;
             working = false;
             host.Busy(false);
         }
@@ -324,8 +357,11 @@ namespace JocoRobos.Cad
             issuePanel.SuspendLayout();
             try
             {
-                foreach (Control old in issuePanel.Controls.Cast<Control>().ToList()) old.Dispose();
+                // Removed now, disposed a moment later: one of them may be the button being clicked.
+                var old = issuePanel.Controls.Cast<Control>().ToList();
                 issuePanel.Controls.Clear();
+                if (old.Count > 0 && IsHandleCreated)
+                    BeginInvoke((Action)(() => { foreach (var card in old) card.Dispose(); }));
                 if (note != null) issuePanel.Controls.Add(Card(new SubmitIssue { Level = noteLevel, Title = noteLevel == IssueLevel.Info ? "Done" : "Not finished", Description = note }));
                 if (notice != null) issuePanel.Controls.Add(Card(new SubmitIssue { Level = IssueLevel.Info, Title = "Your earlier Submit reached the server", Description = notice }));
                 foreach (var issue in issues) issuePanel.Controls.Add(Card(issue));
@@ -352,7 +388,7 @@ namespace JocoRobos.Cad
                     var button = new Button { Text = ActionText(issue, action), AutoSize = true, MinimumSize = new Size(0, 28), Margin = new Padding(0, 0, 6, 0),
                         BackColor = SystemColors.Control, UseVisualStyleBackColor = true, Enabled = !working };
                     var chosen = action;
-                    button.Click += async (s, e) => await OnAction(issue, chosen);
+                    button.Click += (s, e) => Safely(chosen.ToString(), () => OnAction(issue, chosen));
                     row.Controls.Add(button);
                 }
                 card.Controls.Add(row);
@@ -409,13 +445,16 @@ namespace JocoRobos.Cad
             {
                 case IssueAction.IncludeFile:
                     populating = true;
-                    foreach (ListViewItem row in files.Items)
-                        if (issue.Files.Contains(((SubmitItem)row.Tag).Path, StringComparer.OrdinalIgnoreCase))
-                        {
-                            row.Checked = true;
-                            draft.Unchecked.Remove(((SubmitItem)row.Tag).Path);
-                        }
-                    populating = false;
+                    try
+                    {
+                        foreach (ListViewItem row in files.Items)
+                            if (issue.Files.Contains(((SubmitItem)row.Tag).Path, StringComparer.OrdinalIgnoreCase))
+                            {
+                                row.Checked = true;
+                                draft.Unchecked.Remove(((SubmitItem)row.Tag).Path);
+                            }
+                    }
+                    finally { populating = false; }
                     Recheck();
                     return;
                 case IssueAction.SubmitAnyway:
@@ -429,14 +468,18 @@ namespace JocoRobos.Cad
                     Reveal(issue.Other);
                     return;
             }
-            Begin(action == IssueAction.SaveDocuments ? "Saving…" : action == IssueAction.ImportIntoRobot ? "Importing into the robot…" :
-                action == IssueAction.LockFile ? "Locking…" : "Working…");
             try
             {
+                Begin(action == IssueAction.SaveDocuments ? "Saving…" : action == IssueAction.ImportIntoRobot ? "Importing into the robot…" :
+                    action == IssueAction.LockFile ? "Locking…" : "Working…");
                 string result = host.Fix(issue, action);
                 if (result != null) SetNote(result, IssueLevel.Info);
             }
-            catch (Exception exception) { SetNote(exception.Message, IssueLevel.Blocking); }
+            catch (Exception exception)
+            {
+                ErrorLog.Write("Submit fix " + action, exception);
+                SetNote(exception.Message, IssueLevel.Blocking);
+            }
             finally { End(); }
             await Rescan();
         }
@@ -474,10 +517,17 @@ namespace JocoRobos.Cad
                 Render();
                 return;
             }
-            Begin("Submitting " + chosen.Count + (chosen.Count == 1 ? " file" : " files") + "…");
             SubmitOutcome outcome;
-            try { outcome = await host.Commit(chosen, comment.Text.Trim()); }
-            catch (Exception exception) { outcome = new SubmitOutcome { Error = exception.Message }; }
+            try
+            {
+                Begin("Submitting " + chosen.Count + (chosen.Count == 1 ? " file" : " files") + "…");
+                outcome = await host.Commit(chosen, comment.Text.Trim());
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Write("Submit commit", exception);
+                outcome = new SubmitOutcome { Error = exception.Message };
+            }
             finally { End(); }
             if (outcome.Error == null)
             {
