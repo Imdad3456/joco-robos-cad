@@ -62,7 +62,7 @@ This is the test that proves nobody can overwrite anyone.
 | 3.4 | B | Open `ABS_MotorCover_v2`, change something without Edit | A warning right away that imdad is editing it. Close without saving | ☐ |
 | 3.5 | A | Change `ABS_MotorCover_v2`, save, **Submit** | Submitted | ☐ |
 | 3.6 | B | Keep the robot open. Wait up to 3 minutes (or **Check now** in the panel) | "⬇ 1 teammate change", A's comment, and a **Close & Update** button | ☐ |
-| 3.6b | B | **Close & Update** | The robot closes, updates, and reopens; the panel says "✓ Up to date" | ☐ |
+| 3.6b | B | Have `Robot.SLDASM`, one sub-assembly, and one part open in their own windows, with the part active → **Close & Update** | All three close, update, and reopen, and the part is active again; the panel says "✓ Up to date" | ☐ |
 | 3.7 | B | **Edit** `ABS_MotorCover_v2` | Has A's change; the lock now works for B. **Tools → Release Edit** | ☐ |
 | 3.7b | A | Close all documents. B: change and Submit any small file. A: wait up to 3 minutes | With nothing open, A's panel shows "Getting 1 teammate change…" then "✓ Got 1 teammate change", without clicking anything | ☐ |
 | 3.8 | B | **Edit** `TPU_MotorCover_v2`, change it, **save**, don't Submit | | ☐ |

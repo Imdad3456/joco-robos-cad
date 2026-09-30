@@ -996,8 +996,12 @@ namespace JocoRobos.Cad
                 if (lost.Count > 0 && MessageBox.Show(new SolidWorksWindow(), "These read-only files have unsaved changes that can't be kept:\n\n" +
                     String.Join("\n", lost.Take(10)) + "\n\nClose them anyway and get teammates' changes?", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
                     return;
+                // Reopen afterwards what had its own window (not the parts loaded inside an assembly), in the same order,
+                // and end on the one that was active.
                 var active = application.ActiveDoc as ModelDoc2;
-                string reopen = active == null ? null : active.GetPathName();
+                string activePath = active == null ? null : active.GetPathName();
+                var reopen = docs.Where(d => d.Visible).Select(d => d.GetPathName())
+                    .OrderBy(p => String.Equals(p, activePath, StringComparison.OrdinalIgnoreCase) ? 1 : 0).ToList();
                 foreach (var doc in docs) application.CloseDoc(doc.GetTitle());
                 var left = OpenDocuments().Select(d => d.GetPathName()).Where(p => !String.IsNullOrEmpty(p) && mine.Any(w => w.Contains(p))).ToList();
                 if (left.Count > 0)
@@ -1006,13 +1010,19 @@ namespace JocoRobos.Cad
                 string summary = UpdateAll(login, catalog);
                 if (summary.StartsWith("Switched", StringComparison.Ordinal) || summary.Contains("not updated")) Message(summary);
                 else ShowFlash("✓ Up to date");
-                if (!String.IsNullOrEmpty(reopen) && File.Exists(reopen))
+                var missing = new List<string>();
+                foreach (string path in reopen)
                 {
+                    // A teammate may have removed or renamed it; say so instead of failing.
+                    if (!File.Exists(path)) { missing.Add(Path.GetFileName(path)); continue; }
                     int errors = 0, warnings = 0;
-                    int type = reopen.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY
-                        : reopen.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocDRAWING : (int)swDocumentTypes_e.swDocPART;
-                    application.OpenDoc6(reopen, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+                    int type = path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY
+                        : path.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocDRAWING : (int)swDocumentTypes_e.swDocPART;
+                    if (application.OpenDoc6(path, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings) == null)
+                        missing.Add(Path.GetFileName(path));
                 }
+                if (missing.Count > 0)
+                    Message("Updated, but these couldn't be reopened:\n\n" + String.Join("\n", missing.Take(10)) + "\n\nUse File → Open if you still need them.", MessageBoxIcon.Warning);
             });
         }
 
