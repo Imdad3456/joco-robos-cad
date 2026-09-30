@@ -1,0 +1,79 @@
+# How JOCO ROBOS CAD works
+
+The details behind the [README](../README.md). Server operations (deploying, backups, recovery, keys) are in [server/README.md](../server/README.md).
+
+## The big picture
+
+```
+Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
+  C:\JOCO-ROBOS\<season>  ── HTTPS ──►  Cloudflare Tunnel ──► Apache
+  C:\JOCO-ROBOS\Library                                         ├─ /svn/<repo>   Subversion: one repo per season + Library
+                                                                ├─ /catalog.json which season is active, add-in version
+                                                                ├─ /admin        mentor web page (joco.py)
+                                                                ├─ /admin/api/*  add-in APIs (FRCDesignLib, check-ins, password)
+                                                                └─ /account      first-time password setup (no sign-in)
+```
+
+- Every student keeps a **complete local copy** of the robot on their SSD. SOLIDWORKS only ever opens local files, so big assemblies stay fast.
+- **Subversion is the source of truth.** It holds the history, exclusive locks, and each file's version. The add-in only translates SOLIDWORKS actions into SVN operations; it never merges CAD or invents its own syncing.
+- **The server enforces ownership.** Hooks (`server/pre-commit.py`, `pre-lock.py`, `pre-unlock.py`) refuse changes to an existing CAD file unless the submitting user holds its lock. They force `svn:needs-lock` and a binary MIME type on new CAD files, and block lock stealing. Read-only files on the PC only prevent accidents.
+
+## What each student action does
+
+| Action | Behind the scenes |
+|---|---|
+| **Open Robot** | Reads the season catalog, runs Update on the season and the Library, then opens the master assembly (a mentor-set path, `00_Master\Robot.SLDASM`, or the only top-level assembly in `00_Master`). |
+| **Update** | `svn update`, only when nothing from that folder is open. Refuses to touch local changes, unknown files, or conflicts, and never merges or reverts CAD. |
+| **Edit** | Checks you have the newest version, takes a non-stealing SVN lock, confirms both the server's lock owner and this PC's lock token, then makes the document writable without reloading it. Works on the component selected in an assembly (lightweight ones are resolved first). |
+| **Submit** | Lists changed, new, and still-locked files; checks every reference is inside the robot and new names are unique; adds new files with the lock properties; commits one revision; releases only the submitted files' locks. A dropped connection is journaled: the next attempt compares the server's bytes with yours, so work is never lost or submitted twice. |
+| **Insert from Library** | Copies the Library part (and an assembly's parts) into `90_COTS\<library folder>` the first time; later inserts reuse that copy. The robot's copy never changes when the Library does. |
+| **FRCDesignLib Insert** | Asks the server whether the team already imported this part + configuration. If yes, it's a Library insert. If not, the server exports it from Onshape once (Parasolid; assemblies flattened to one multi-body part), SOLIDWORKS saves it as a native `.SLDPRT` in `Library\FRCDesignLib\<category>`, it's submitted to the Library, then inserted. The first student to request an item reserves it, so there are no duplicates. |
+
+**Safety nets:**
+- The first change to a read-only team file offers to lock it.
+- Closing a locked, unchanged file releases the lock.
+- The panel warns about unsaved or unsubmitted work, and SOLIDWORKS asks once on exit.
+- **Set Aside My Changes** keeps your version when someone else holds the file.
+- **Restore Deleted Files** brings back accidentally deleted team files.
+- **Import Outside References** and **Insert External Part** copy downloaded or outside files into the robot.
+- **Repair Moved References** fixes links after a folder reorganization.
+
+## Seasons
+
+- The Deck holds one repository per season (`2026-Robot`, `2027-Robot`…) plus `Library`.
+- Mentors choose the active season on the web page, and the add-in follows it automatically. A student with unfinished work in the old season stays there until it's submitted or set aside.
+- Archived seasons are read-only (SVN access rules). **Open Old Robot** opens any season read-only for reference.
+- SOLIDWORKS can't hold two files with the same name, so the add-in refuses to open two seasons at once.
+- Existing CAD is imported with `joco.py import-season` (see server README). The 2026 robot was reorganized with `tools/reorganize-2026.py` and repaired with **Repair Moved References** first.
+
+## Accounts and security
+
+- **Passwords are the student's own.** A mentor creates the account and gets a one-time setup code (7 days). The student enters it on the add-in's first-run screen and chooses a password, which is saved only in Windows Credential Manager. **New setup code** disables a forgotten password immediately.
+- **Locks and tokens are per computer.** Taking a lock on another PC with the same account shows "You locked this from another computer".
+- **Shared PCs:** `C:\JOCO-ROBOS` belongs to its first Windows user; other Windows users get a private `%USERPROFILE%\JOCO-ROBOS`. Switching CAD accounts is refused while there's unsubmitted work.
+- **Secrets never enter the repository.** The Cloudflare token, the Onshape API key, and passwords live only on the Deck; the release upload password lives only in a GitHub secret. The `github-release` account can only stage installers and is denied all SVN access.
+- **Undo a submit** (web page) makes a new revision restoring the previous files, so history is kept. It's refused if a later submit changed those files or someone holds their lock. It's the only way around the lock hook, and only for mentors.
+
+## Add-in updates and releases
+
+- Push a `v*` tag, and GitHub Actions (`.github/workflows/build.yml`) builds the installer, attaches it to a Release, and stages it on the server with its SHA-256.
+- A mentor clicks **Release to students**. Each add-in offers the update once and checks the SHA-256. The installer waits for SOLIDWORKS to close, installs silently (logging to `%LOCALAPPDATA%\JocoRobos.Cad\updates`), and reopens SOLIDWORKS.
+- A *required* update blocks Edit, Submit, and inserts until installed.
+- Every add-in reports its version, so the Accounts tab shows who has what.
+
+## Backups
+
+- **On the Deck:** a daily verified `svnadmin hotcopy` of every repository plus the configuration, kept 14 days.
+- **Off the Deck:** a second computer pulls each completed backup daily over SSH and keeps 90 days (`server/offsite-pull.sh`). The Deck can't delete those copies.
+- **Health panel:** the Seasons tab shows both backup times and free disk space.
+
+## Testing
+
+| What | How |
+|---|---|
+| Add-in logic without SOLIDWORKS | `tests/Addin.Tests` (paths, locks, catalog, updates, library naming) |
+| Mentor page, APIs, permissions, undo, accounts, FRCDesignLib (fake catalog) | `server/tests/admin_test.py` against a disposable container |
+| Lock hooks and backup restore with a real SVN client | `server/tests/integration.py` |
+| SOLIDWORKS itself | by hand, with [TESTING.md](../TESTING.md) |
+
+GitHub Actions runs the first three and builds the installer on every push.

@@ -1,3 +1,6 @@
+// Add-in unit checks that run without SOLIDWORKS or Windows: path safety, lock ownership, file naming,
+// the season catalog, update offers, and library copy rules. Run: dotnet run --project tests/Addin.Tests
+// (CI runs this on every push). SOLIDWORKS behavior itself is tested by hand with TESTING.md.
 using System;
 using System.IO;
 using JocoRobos.Cad;

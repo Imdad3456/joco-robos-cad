@@ -31,7 +31,7 @@ To go back to the installed copy, close SOLIDWORKS, run `.\scripts\Unregister-De
 
 ## Building the installer locally
 
-`winget install JRSoftware.InnoSetup`, reopen PowerShell, then `.\scripts\Build-Installer.ps1`. The output is `installer\Output\JOCO-ROBOS-CAD-Setup-<version>.exe`, and the script prints its SHA-256. Normally GitHub Actions builds it for you when you push a `v*` tag (see [README](README.md#for-mentors)).
+`winget install JRSoftware.InnoSetup`, reopen PowerShell, then `.\scripts\Build-Installer.ps1`. The output is `installer\Output\JOCO-ROBOS-CAD-Setup-<version>.exe`, and the script prints its SHA-256. Normally GitHub Actions builds it for you when you push a `v*` tag (see [README](../README.md#for-mentors)).
 
 ## Troubleshooting
 
@@ -40,4 +40,4 @@ To go back to the installed copy, close SOLIDWORKS, run `.\scripts\Unregister-De
 - **Which copy is SOLIDWORKS loading?** The panel header says "(dev build)" for a development copy. From PowerShell: `(Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\{E219FE9C-5919-4BE5-98B7-A518C11AD901}\InprocServer32").CodeBase`.
 - **An automatic update didn't install:** the installer log is in `%LOCALAPPDATA%\JocoRobos.Cad\updates\`.
 
-Testing steps are in [TESTING.md](TESTING.md).
+Testing steps are in [TESTING.md](../TESTING.md).

@@ -1,122 +1,133 @@
-# Test plan
+# Test sheet: two people, about 2 hours
 
-Work top to bottom on the Windows VM. Each step says what should happen. **If anything differs, stop and send the exact message text or a screenshot.** Don't delete or revert files to make a step pass.
+**A** = mentor (Imdad). **B** = a friend on their own Windows PC with SOLIDWORKS 2026. **Both** = each of you on your own computer.
 
-Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/admin) · ⚙ PowerShell
+Tests run on the real **2026-Robot**, but only touch low-risk files (motor covers, the battery mount, `80_Unsorted`). At the end, A **undoes every test submit** from the web page, which returns the robot exactly to how it started, with history kept. A full backup of the robot was taken right after import, so nothing here can lose it. Tick ☐ → ☑ as you go. If anything doesn't match "Expect", **write the step number and the exact message** in [Problems found](#problems-found) and keep going.
 
-## A. Install
+---
 
-1. Close SOLIDWORKS. If you ever used the development build, run `.\scripts\Unregister-Dev.ps1` as administrator first. Then install the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest), or let the automatic updater bring you to the newest released version.
-2. 🧑 Start SOLIDWORKS. The panel header shows the version you installed, without "(dev build)". Expect the toolbar to show **Open Robot, Update, Edit, Submit, Insert from Library**, and a **JOCO ROBOS CAD** tab (blue "J" icon) in the task pane on the right.
-   - The pane shows **2027-Robot** and either **✓ Up to date** or **N updates available**.
+## 0. Before you start (A, 5 minutes)
 
-## B. Basics (regression)
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 0.1 | A | https://cad.imdad.stream/admin → **Add-in** → **Release to students** (if a version is waiting) | "Published add-in …" | ☐ |
+| 0.2 | A | **Accounts** → add B's username (for example `sam`) | A setup code like `K7QM-3XRP-9TDW` next to the name | ☐ |
+| 0.3 | A | Send B the username and setup code privately | | ☐ |
+| 0.4 | A | **Seasons** → Health | All ✓: server, Deck backup, off-device backup, disk | ☐ |
+| 0.5 | A | **Seasons** → write down 2026-Robot's revision here: **r____** | Everything after this number is a test submit, undone in section 8 | ☐ |
 
-3. 🧑 Close all documents → **Update**. Expect "2027-Robot is at revision …". A new folder `C:\JOCO-ROBOS\Library` appears with Motors, Gearboxes, and similar folders.
-4. 🧑 **Open Robot** → `full assembly.SLDASM` opens read-only.
-5. 🧑 Click the `coxa` component in the tree → **Edit**. Expect "Locked by imdad … coxa.SLDPRT" plus the component tip. The pane (with coxa active) or the 🌐 **Locks** page shows the lock.
-6. 🧑 Clear the selection and click the part again. **Tools → JOCO ROBOS CAD → Release Edit** works while it's unchanged.
+## 1. Install and sign in
 
-## C. Submit
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 1.1 | B | Install the newest `JOCO-ROBOS-CAD-Setup-….exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest). Windows warning → **More info → Run anyway** | Installs; SOLIDWORKS not needed open | ☐ |
+| 1.2 | A | In SOLIDWORKS, accept the update offer (or wait up to 3 min / click **Check now**). Approve Windows, close SOLIDWORKS | SOLIDWORKS reopens by itself | ☐ |
+| 1.3 | B | Start SOLIDWORKS | Welcome screen: username, setup code, new password twice → "You're set up as sam" | ☐ |
+| 1.4 | A | Refresh **Accounts** | B's setup code is gone; within a few minutes B shows the add-in version, "today", and B's computer name | ☐ |
+| 1.5 | Both | Look at the **JOCO ROBOS CAD** panel (right side) | Header shows the same version, **without** "(dev build)"; **Robot** tab says 2026-Robot | ☐ |
+| 1.6 | A | If `C:\JOCO-ROBOS\2026-Robot` still holds the folder you fixed links in, rename it to `2026-Robot-old` first | Open Robot can download the team copy there | ☐ |
+| 1.7 | Both | **Open Robot** | The 2026 robot downloads (first time ~110 MB) and `00_Master\Robot.SLDASM` opens read-only with all components. **Write down how long it took** | ☐ |
 
-7. 🧑 Open `coxa.SLDPRT` in its own window → **Edit** → change a dimension → **Save**.
-8. 🧑 Open `leg.SLDASM` → **Edit**. New part → save it as `C:\JOCO-ROBOS\2027-Robot\00_Master\TestSpacer.SLDPRT`, insert it into the leg → **Save**.
-9. 🧑 **Submit**. Expect Modified `coxa`, `leg` and New `TestSpacer`. Type a comment → Submit. Expect "2027-Robot: submitted as revision 3", and all three documents become read-only.
-10. 🌐 **Seasons** page → *Recent submits* shows your comment and the files.
-11. Refusals (each must upload nothing):
-    - 🧑 Edit a file, change it, don't save → Submit. Expect "Save these documents first".
-    - 🧑 In the dialog, uncheck a new part the assembly uses. Expect "uses the new file … unchecked".
-    - 🧑 Insert a part saved on the Desktop into a locked assembly → Submit. Expect "uses a file outside 2027-Robot".
+## 2. Solo editing (Both, each on your own computer)
 
-## D. Library
+A works in `50_Electrical\battery holder.SLDASM` and B works in `50_Electrical\Motor covers\motor cover asssewmbly.SLDASM`, so you don't collide yet. Open each assembly from the robot's tree (right-click → Open) or with File → Open.
 
-12. 🌐 **Library** → upload any small part into `Hardware`.
-13. 🧑 **Update** (with the documents from 2027-Robot closed, or just Library docs closed). The part appears in `C:\JOCO-ROBOS\Library\Hardware`.
-14. 🧑 Open `leg.SLDASM` → **Edit** → **Insert from Library** → pick the part. Expect it copied to `2027-Robot\90_COTS\Hardware\` and inserted at the origin. Save → **Submit** lists it as New.
-15. 🧑 Insert the same part again. It must reuse the existing copy, not make a second file.
-16. 🌐 **Library → Copy a robot part into the library** → pick `tibia.SLDPRT` → folder `Mechanisms`. Then 🧑 **Update** shows it in the Library.
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 2.1 | Both | In `Robot.SLDASM`'s tree, A clicks `batterymount3dmount` and B clicks `underplate electronics`. Then **Edit** | "Locked by <you>"; with that part open, the panel shows ✎ **You are editing this** | ☐ |
+| 2.2 | Both | Change a dimension on that part → **File → Save All** | Panel: "⚠ 1 saved change not submitted" | ☐ |
+| 2.3 | Both | Open your assembly (A: `battery holder`, B: `motor cover asssewmbly`) → **Edit** → make a small new part, save it as `C:\JOCO-ROBOS\2026-Robot\80_Unsorted\Test-Spacer-<yourname>.SLDPRT`, insert it, **Save All** | Saves normally | ☐ |
+| 2.4 | Both | **Submit** | Modified: your part + assembly; New: your spacer. Comment "TEST ..." → "2026-Robot: submitted as revision N"; those files become read-only | ☐ |
+| 2.5 | Both | **Edit** your part again, change it, **don't save** → **Submit** | "Save these documents first" → nothing submitted. Close without saving | ☐ |
+| 2.6 | Both | **Edit** your assembly, save a new part named `Claw.SLDPRT` into `80_Unsorted`, insert it, save → **Submit** | Refused: "same name as 40_Climber\Coil climb\Claw.SLDPRT". Delete that part from the assembly, save, delete the file in Explorer, then **Release Edit** your assembly | ☐ |
+| 2.7 | Both | **File → Open** `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B), without Edit. Wait 10 seconds, change a dimension | "You're changing … Lock it now?" → **No** → the panel turns yellow: "⚠ Unsaved changes in a read-only file" | ☐ |
+| 2.8 | Both | Now click **Edit** | Locked; your change is still there (tell A if SOLIDWORKS reloaded it instead). Close **without saving** | ☐ |
+| 2.9 | Both | Look at "Your locked files" in the panel | That part disappears within a few seconds (unchanged file closed → lock released) | ☐ |
+| 2.10 | Both | Close SOLIDWORKS documents. In Explorer, delete `2026-Robot\80_Unsorted\pvc1intube.SLDPRT`. **Tools → Restore Deleted Files** | Lists `pvc1intube.SLDPRT` → Restore → it's back | ☐ |
 
-## E. Two students (the CacheCAD test)
+## 3. Together (the important part)
 
-17. 🌐 **Accounts** → add `testkid` with a 10+ character password.
-18. Create a second Windows user on the VM (or use a second VM), sign in there as `testkid`, and install the newest release (step 24). Installing is per-PC, so each Windows user only needs to sign in.
-19. As **imdad**: Edit `femur.SLDPRT`. As **testkid**: open `femur` → Edit. Expect "Locked by imdad". The pane shows 🔒 **Locked by imdad**, and the file stays read-only.
-20. As **imdad**: change `femur`, save, Submit. As **testkid**: the pane shows "1 update available — imdad: …" within 3 minutes (or click *Check now*) → close docs → **Update** → **Edit** `femur` now succeeds.
-21. 🌐 **Locks** → release testkid's `femur` lock. testkid's Submit of femur must now be refused (their lock is gone).
+This is the test that proves nobody can overwrite anyone.
 
-## F. Seasons
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3.1 | Both | **Update** (documents closed), then **Open Robot** | Each of you gets the other's spacer and changes from section 2 | ☐ |
+| 3.2 | A | Select `ABS_MotorCover_v2` → **Edit** | Locked by imdad | ☐ |
+| 3.3 | B | Select `ABS_MotorCover_v2` → **Edit** | Refused: "Locked by imdad". B's panel: 🔒 **Locked by imdad** | ☐ |
+| 3.4 | B | Open `ABS_MotorCover_v2`, change something without Edit | A warning right away that imdad is editing it. Close without saving | ☐ |
+| 3.5 | A | Change `ABS_MotorCover_v2`, save, **Submit** | Submitted | ☐ |
+| 3.6 | B | Wait up to 3 minutes (or **Check now** in the panel) | "⬇ 1 update available", with A's comment | ☐ |
+| 3.7 | B | Close documents → **Update** → **Open Robot** → **Edit** `ABS_MotorCover_v2` | Has A's change; the lock now works for B. **Tools → Release Edit** | ☐ |
+| 3.8 | B | **Edit** `TPU_MotorCover_v2`, change it, **save**, don't Submit | | ☐ |
+| 3.9 | A | Web **Locks** → **Release** B's `TPU_MotorCover_v2` lock. Then in SOLIDWORKS, **Edit** `TPU_MotorCover_v2` | A now holds it | ☐ |
+| 3.10 | B | **Submit** | `TPU_MotorCover_v2` is under "Cannot be submitted — imdad is editing it" | ☐ |
+| 3.11 | B | Close it. **Tools → Set Aside My Changes** → check it → Set aside | Copy saved in `C:\JOCO-ROBOS\Set Aside\…`; the team's version is back. A: **Release Edit** it | ☐ |
 
-22. 🌐 **Seasons** → create `2028-Robot` and **don't** make it active. 🧑 Nothing changes for students.
-23. 🌐 Make `2028-Robot` active → 🧑 **Open Robot** says "Switched to 2028-Robot" and creates `C:\JOCO-ROBOS\2028-Robot` (empty folders). **Tools → Choose Robot** can pick 2027 again. While 2028 is current, **Tools → Open Old Robot** → 2027 opens `full assembly` read-only without updating; the pane says "Reference copy from 2027-Robot", Edit is refused with a Library hint, and Open Old Robot/Open Robot refuse while the other season's documents are open. 🌐 Make **2027** active again, then **Delete (empty)** on 2028.
+## 4. Library and FRCDesignLib
 
-## G. Installer
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 4.1 | A | Open `battery holder` → **Edit**. Panel → **Library** tab → type `breaker` | Results with pictures as you type; making the panel wider or taller makes everything bigger | ☐ |
+| 4.2 | A | Click **120A Main Breaker** → **Insert** | First time: "Preparing…" → "Adding… to the team Library" → inserted at the origin. **Tell B whether SOLIDWORKS asked any import questions** | ☐ |
+| 4.3 | A | Explorer: `C:\JOCO-ROBOS\Library\FRCDesignLib\Control System\` and `2026-Robot\90_COTS\FRCDesignLib\Control System\` | `120A Main Breaker.SLDPRT` in both | ☐ |
+| 4.4 | B | Open `motor cover asssewmbly` → **Edit** → Library tab → `kraken` → **Kraken X44** → set **Back Cap Type** to *ReFire Powerpole*, then *Standard* | "Include ReFire Board Case" appears only for ReFire Powerpole | ☐ |
+| 4.5 | B | **Insert** (with *Standard*) | Prepared, then inserted as one part: `Kraken X44 Brushless Motor (Standard).SLDPRT` | ☐ |
+| 4.6 | A | Insert the same Kraken with the same options into `battery holder` | **Instant**: no "Preparing" (it's in the team Library now) | ☐ |
+| 4.7 | Both | At the same moment, both pick **Kraken X60** (default options) and click **Insert** | One of you prepares it; the other gets "being prepared by …". The second try is instant | ☐ |
+| 4.8 | A | Panel → **Team Library…** → pick any Library part | Copied into `90_COTS` and inserted | ☐ |
+| 4.9 | B | Download any vendor `.SLDPRT` (for example from McMaster) → **Tools → Insert External Part** | Lands in `90_COTS\Imported\<name>\` and inserts | ☐ |
+| 4.10 | B | Save a part to your **Desktop**, insert it the normal way (Insert → Component), save → **Submit** | Refused: "uses a file outside 2026-Robot" | ☐ |
+| 4.11 | B | **Tools → Import Outside References** → then **Submit** | Copied into `90_COTS\Imported\…`; Submit now works | ☐ |
+| 4.12 | Both | Save and **Submit** everything from this section | Submitted | ☐ |
 
-24. Download the newest setup file from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest). Check that its size matches the one shown on the release page; a partial download won't run.
-25. Run the setup file. Expect the Windows "unknown publisher" warning → More info → Run anyway. With SOLIDWORKS open it asks you to close it. After install, start SOLIDWORKS: the add-in loads without visiting Tools → Add-Ins.
-26. Uninstall from Windows Settings → Apps. The add-in is gone, and `C:\JOCO-ROBOS` is untouched.
+## 5. Mentor web page (A, B watching)
 
-## G2. Automatic updates
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 5.1 | A | **Seasons** → Recent submits | Both of your submits with comments | ☐ |
+| 5.2 | A | **Undo…** on one of B's submits → **Undo rN** | "Undid rN as new revision" | ☐ |
+| 5.3 | B | **Update** | That change is gone again | ☐ |
+| 5.4 | A | **Library** tab | "FRCDesignLib imports": Main Breaker, Kraken X44 (Standard), Kraken X60, with who imported each | ☐ |
+| 5.5 | A | **Accounts** → **New setup code** for B | A new code appears | ☐ |
+| 5.6 | B | **Tools → Test Connection** | Fails: password not accepted | ☐ |
+| 5.7 | B | **Tools → Sign In** → "First time? Set up your account…" → new code + a new password | Works again | ☐ |
+| 5.8 | B | **Tools → Change Password** | Changed; SOLIDWORKS doesn't ask again later | ☐ |
 
-- ⚙ Bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, and push a matching tag (for example `v0.6.7`). GitHub builds it and stages it on the server.
-- 🌐 On the **Add-in** page, under "Waiting from GitHub", click **Release to students**.
-- 🧑 Within 3 minutes (or after *Check now*), SOLIDWORKS asks "x.y.z is available". Answer Yes → Windows permission prompt (it may be behind SOLIDWORKS) → "Update is ready". Close SOLIDWORKS; it should reopen by itself within about a minute. The panel header shows the new version, and no update is offered anymore.
-- If the version didn't change, the add-in says so at the next start and points to the installer log in `%LOCALAPPDATA%\JocoRobos.Cad\updates`.
-- 🌐 Release the next version as **Required**. 🧑 Clicking Edit without updating is refused with the install prompt.
+## 6. Add-in update (A, about 10 minutes)
 
-## G3. Changes without Edit
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 6.1 | A | Ask Claude to release a new patch version (or bump `<Version>` and push a tag yourself) → when GitHub finishes: **Add-in** → **Release to students** | "Published add-in …" | ☐ |
+| 6.2 | Both | Accept the update offer, approve Windows, close SOLIDWORKS | SOLIDWORKS reopens with the new version in the panel header; no further offer | ☐ |
+| 6.3 | A | **Add-in** tab | "2 of 2 students … have x.y.z" | ☐ |
 
-- 🧑 Open a part (read-only), change a dimension without clicking Edit, then click **Edit**. A backup appears in `C:\JOCO-ROBOS\Set Aside\…`, and the file is locked. Tell me whether the message says your changes are still in the window or that SOLIDWORKS reloaded it.
-- 🧑 As testkid, Edit a part. As imdad, change the same part without Edit, then click Edit. It's refused with "Locked by testkid" plus the backup location.
-- 🧑 Close SOLIDWORKS. In Explorer, clear read-only on a part, change it in SOLIDWORKS, and save. **Submit** lists it as "not locked yet; Submit locks it" and submits it.
-- 🧑 Repeat while testkid holds the lock: Submit shows it under "Cannot be submitted". **Tools → Set Aside My Changes** (with the document closed) saves your copy, restores the team's version, and Update works again.
+## 7. When things go wrong
 
-## G4. Lock on first change, release on close
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 7.1 | B | **Edit** a part, change it, save. Turn off Wi-Fi → **Submit** | "Submit did not complete. Your edits and locks are kept" | ☐ |
+| 7.2 | B | Wi-Fi on → **Submit** | Submitted. A: Recent submits shows it **once** | ☐ |
+| 7.3 | A | **Edit** a part, then end SOLIDWORKS in Task Manager. Restart, Open Robot | Still locked by you; Submit or Release Edit works | ☐ |
+| 7.4 | Both | Save a change without submitting, then close SOLIDWORKS | Asks once "Submit now before exiting?" → **No** closes normally (tell A if nothing was asked) | ☐ |
+| 7.5 | Both | Wi-Fi off → **Update**, **Edit** | Clear errors; nothing becomes writable; the panel says "Can't reach the server". Wi-Fi back on | ☐ |
 
-- 🧑 **File → Open** a robot part (not locked). Wait 10 seconds, then change a dimension. Expect "You're changing … Lock it for editing now?" → Yes → it's locked and writable, and your change is still there.
-- 🧑 As testkid, Edit a part. As imdad, open it, wait, and change it. Expect a warning right away that testkid is editing it.
-- 🧑 Edit a part, don't change it, close it. Within a few seconds the pane's "Your locked files" no longer lists it, and 🌐 Locks doesn't show it.
-- 🧑 Open the whole robot and just look around (rotate, zoom, open subassemblies). You should **not** get any lock questions. Tell me if you do.
+## 8. Finish
 
-## I. New in 0.7
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 8.1 | Both | Submit or **Set Aside** anything left over; **Release Edit** anything still locked | The panel shows no unsubmitted changes and no locked files | ☐ |
+| 8.2 | A | Web **Seasons** → Recent submits → **Undo…** each test submit after r____ (step 0.5), **newest first** | Each says "Undid rN as new revision". If one is refused, undo the newer one first | ☐ |
+| 8.3 | Both | Close documents → **Update** → **Open Robot** | The robot is exactly as before testing; test spacers and inserted parts are gone | ☐ |
+| 8.4 | A | Web **Locks** | No test locks left. (FRCDesignLib parts imported during testing stay in the team Library, where they're useful) | ☐ |
 
-- 🧑 **Unsubmitted reminder:** change and save a locked part. The panel shows "⚠ 1 saved change not submitted". Close SOLIDWORKS: it asks once whether to Submit first. "No" closes normally, and the lock stays.
-- 🧑 **Read-only warning:** change a part without Edit and answer **No** to "Lock it now?". The panel shows "⚠ Unsaved changes in a read-only file".
-- 🧑 **Other computer:** Edit a part on the VM, then try Edit on the same part while signed in as imdad on another PC (or after deleting and re-downloading the robot folder). Expect "You already locked this file from another computer".
-- 🧑 **Duplicate names:** save a new part as `C:\JOCO-ROBOS\2027-Robot\20_Intake\coxa.SLDPRT` (same name as an existing part), then Submit. Expect a "same name" refusal.
-- 🧑 **Lightweight:** set the robot to open lightweight (Tools → Options → Performance), select a component, and click Edit. It resolves and locks.
-- 🧑 **Restore:** close SOLIDWORKS, delete a part in Explorer, then **Tools → Restore Deleted Files**. It comes back read-only.
-- 🧑 **External parts:** download any vendor STEP/SLDPRT (for example a REV part) → **Tools → Insert External Part**. It lands in `90_COTS\Imported\<name>` and inserts. Then insert a Desktop part the normal way → Submit refuses → **Tools → Import Outside References** fixes it.
-- 🌐 **Undo:** on Recent submits, click **Undo…** on a test submit → **Undo rN**. After Update, students have the previous versions. Undo is refused while someone has one of those files locked.
-- 🌐 **Health:** the Seasons tab shows Deck backup, off-device backup (both today), and disk space.
-- 🌐 **Versions:** the Accounts tab shows your add-in version, last seen, and computer name. The Add-in tab says how many students run the published version.
-- 🌐 **Season change with work outstanding:** with a saved-but-unsubmitted change in 2027, create and activate `2028-Robot`. The page notes your lock. 🧑 Open Robot keeps you on 2027 with an explanation → Submit → the next Open Robot switches you to 2028. Then 🌐 re-activate 2027 and delete 2028.
-- 🧑 **Shared PC:** sign in to Windows as a second user and install. That user's robot goes to `C:\Users\<them>\JOCO-ROBOS`, and they can't open the first user's `C:\JOCO-ROBOS`.
+---
 
-## J. FRCDesignLib (new in 0.8)
+## Problems found
 
-1. 🧑 Open the robot, select an assembly, and click **Edit**. In the panel, click the **Library** tab → type `bearing`. Results with small pictures appear as you type.
-2. 🧑 Click a simple non-configurable part (for example `120A Main Breaker`). You get a big picture, vendor, and part number. Click **Insert**.
-   - First time: "Preparing … (first time only)", then "Adding … to the team Library", and the part is inserted at the origin.
-   - Check that `C:\JOCO-ROBOS\Library\FRCDesignLib\Control System\120A Main Breaker.SLDPRT` exists, plus a copy in `2027-Robot\90_COTS\FRCDesignLib\Control System\`.
-   - Tell me whether SOLIDWORKS showed any import questions or diagnostics.
-3. 🧑 Insert the same part again: instant, no "Preparing".
-4. 🧑 Search `kraken` → **Kraken X44** → change **Back Cap Type** to *Standard*. **Include ReFire Board Case** appears only for *ReFire Powerpole*. Click Insert. It arrives as one part named `Kraken X44 Brushless Motor (Standard).SLDPRT`.
-5. 🧑 Save → **Submit**: the new files in `90_COTS` are listed as New.
-6. 🌐 **Library** tab: "FRCDesignLib imports" lists both parts with who imported them; exports today is 2.
-7. 🧑 As testkid, insert the Kraken with the same options. It comes from the Library (no export); the export count doesn't change.
-8. 🧑 Turn off the network and click Insert: a clear error, and nothing changes in the robot or Library.
+| Step | Who | What happened (exact message, or a screenshot name) |
+|---|---|---|
+| | | |
+| | | |
+| | | |
 
-## K. Accounts (new in 0.9)
-
-1. 🌐 Accounts → add `testkid2`. A setup code like `K7QM-3XRP-9TDW` appears next to the name.
-2. 🧑 On a Windows account that has never signed in (or after deleting the "JOCO ROBOS CAD" entry in Windows Credential Manager), start SOLIDWORKS. The welcome screen asks for username + setup code + new password (twice). Afterward Open Robot works, and the code disappears from the Accounts page.
-3. 🧑 Tools → JOCO ROBOS CAD → **Change Password** → sign in again later without being asked.
-4. 🌐 **New setup code** for testkid2 → their old password stops working at once; the new code sets a new password.
-5. 🧑 The **Library** tab and **Robot** tab stretch to fill the panel when you make it wider or taller.
-
-## H. Failure cases
-
-27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.
-28. 🧑 Network off → Update / Edit. Clear errors, and nothing becomes writable. The pane says "Can't reach the server".
-29. 🧑 Edit a part, then kill SOLIDWORKS in Task Manager. Restart → the part is still locked by you, and Edit/Submit still work.
-30. 🧑 Open the largest real assembly you have, then time **Update** and a **Submit** of a large part through Cloudflare. Note the times and any errors (the upload limit on the web page is 100 MB, but Submit has no such limit—report if it fails).
+Send this list to Claude; each problem gets fixed and you retest just that step.
