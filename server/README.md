@@ -9,7 +9,7 @@ Sign in with your CAD account; only accounts marked as mentor get past the first
 - **Seasons:** create `YYYY-Robot` with the standard folders, lock hooks and backups; choose the active season students open; archive old seasons as read-only (SVN authz), or unarchive them. A season can't be archived while it's active or has locks. An inactive season nobody has submitted to can be deleted; it's moved to a hidden `.deleted-…` folder on the Deck, not erased.
 - **Locks:** list every lock and release abandoned ones (`svnadmin rmlocks`). The previous owner can no longer submit their copy of that file.
 - **Library:** browse, upload new parts (up to 100 MB per request, the Cloudflare limit), or copy a CAD file from any season into the library. Changes to existing library parts go through Edit/Submit like robot files; students can also add parts that way.
-- **Accounts:** add students, reset passwords (at least 10 characters), make or remove mentors, delete accounts that hold no locks.
+- **Accounts:** adding a student (or "New setup code") creates a one-time setup code, valid 7 days, shown only on this page (never in a URL). Until it's used, the account has a random password nobody knows. The student enters username + code in the add-in and chooses their own password through `POST /account/setup`. That's the only address reachable without signing in; it's rate-limited per address, and 5 wrong codes delete the code. Students change their own password with `POST /admin/api/password` from the add-in. Mentors can also make or remove mentors and delete accounts that hold no locks.
 
 `state.json` in the config directory is the source of truth for the active season, archived seasons, and mentors. `authz` and `public/catalog.json` are generated from it. From SSH: `podman exec joco-svn runuser -u www-data -- python3 /opt/joco/joco.py mentor add USER`.
 
@@ -90,4 +90,4 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v11`; earlier tags (`v10` … `initial`) are rollback images.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v12`; earlier tags (`v11` … `initial`) are rollback images.

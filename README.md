@@ -7,7 +7,7 @@ A SOLIDWORKS 2026 add-in that lets the team work on one robot without overwritin
 ## For students
 
 1. Download the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest) and run it. Windows warns about an unknown publisher (the installer isn't code-signed): click **More info → Run anyway**, then approve the admin prompt.
-2. Start SOLIDWORKS. On the **JOCO ROBOS CAD** tab, click **Open Robot** and sign in once with the username and password a mentor gave you. It's saved in Windows Credential Manager.
+2. Start SOLIDWORKS. A welcome screen asks for your username and the **setup code** a mentor gave you, then you **choose your own password** (mentors never see it). It's saved in Windows Credential Manager, so you won't type it again. **Tools → JOCO ROBOS CAD → Change Password** changes it later.
 3. Daily work:
    - **Open Robot**: downloads teammates' changes, then opens the robot. Everything is read-only.
    - **Edit**: select a component in the tree (or open a file), then click **Edit**. You get the lock, and nobody else can change that file until you Submit.
@@ -36,8 +36,10 @@ Everything is on **https://cad.imdad.stream/admin** (sign in with a mentor accou
 | Seasons | Health (backups, off-device copy, disk space), create `YYYY-Robot`, choose the active season, archive old ones read-only, delete an unused empty season, recent submits with **Undo…** |
 | Locks | See every lock; release a lock someone abandoned (their unsubmitted copy can then no longer be submitted) |
 | Library | Browse, upload parts, or copy a part from any season into the Library; FRCDesignLib imports (who, what, where) and today's export count |
-| Accounts | Add students, reset passwords, make mentors; each student's add-in version, last seen, and computers |
+| Accounts | Add students (you get a one-time setup code; they choose their own password), "New setup code" for a forgotten password, make mentors; each student's add-in version, last seen, and computers |
 | Add-in | Release a new add-in version to students (optionally *required*) |
+
+**Importing an existing robot** (for example last season's CAD): mentors run `joco.py import-season <YYYY-Robot> <folder> <user>` on the Deck. It keeps the folders exactly as they are, applies the lock properties, and verifies every file byte-for-byte. To reorganize first, move the files into new folders, then run **Tools → JOCO ROBOS CAD → Repair Moved References** on the folder in SOLIDWORKS; every link is repointed to the one file with that name. The 2026 robot was imported this way (`tools/reorganize-2026.py` has the folder rules).
 
 **Undo a submit** creates a new revision restoring the files as they were before it; history is kept. It's refused if a later submit changed those files or someone has them locked. **Changing the active season** while students still have unfinished work is allowed: their add-in keeps them on the old season until they Submit or Set Aside, then switches them. **Shared PCs:** `C:\JOCO-ROBOS` belongs to the first Windows user; every other Windows user gets a private `%USERPROFILE%\JOCO-ROBOS`, so students never share a working copy.
 

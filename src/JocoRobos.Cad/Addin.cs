@@ -37,6 +37,7 @@ namespace JocoRobos.Cad
         [DispId(15)] void InsertExternalPart();
         [DispId(16)] void ImportOutsideReferences();
         [DispId(17)] void RepairMovedReferences();
+        [DispId(18)] void ChangePassword();
     }
 
     [ComVisible(true)]
@@ -50,7 +51,7 @@ namespace JocoRobos.Cad
         private const string Title = "JOCO ROBOS CAD";
         private const int GroupId = 591902;
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591909;
+        private const int LayoutVersion = 591910;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -111,6 +112,7 @@ namespace JocoRobos.Cad
                 int insert = Add(group, "Insert from Library", "Copy a reusable part into the robot and insert it", nameof(InsertFromLibrary), 8, both);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu);
                 Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu);
+                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu);
                 Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu);
@@ -207,6 +209,11 @@ namespace JocoRobos.Cad
                 path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
                 doc => pane.BeginInvoke((Action)(() => OfferLock(doc))),
                 path => pane.BeginInvoke((Action)(() => ReleaseIfUnchanged(path))));
+            // Just installed and never signed in: welcome the student and let them set up their own password.
+            bool signedIn;
+            try { signedIn = CredentialStore.Read() != null; }
+            catch (Exception) { signedIn = true; }
+            if (!signedIn) pane.BeginInvoke((Action)(() => Execute(() => SetUpAccount(null))));
             statusTimer = new Timer { Interval = 3 * 60 * 1000 };
             statusTimer.Tick += (s, e) => RefreshStatus();
             statusTimer.Start();
@@ -374,7 +381,9 @@ namespace JocoRobos.Cad
             if (saved != null && !force) return saved;
             using (var dialog = new SignInDialog(saved?.UserName))
             {
-                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
+                var answer = dialog.ShowDialog(new SolidWorksWindow());
+                if (answer == DialogResult.Yes) return SetUpAccount(saved);
+                if (answer != DialogResult.OK) return null;
                 NetworkCredential login = dialog.Login;
                 // Lock tokens and unsubmitted edits belong to the account that made them.
                 if (saved != null && !String.Equals(saved.UserName, login.UserName, StringComparison.OrdinalIgnoreCase))
@@ -400,6 +409,43 @@ namespace JocoRobos.Cad
                 CredentialStore.Write(login);
                 return login;
             }
+        }
+
+        // First sign-in with a mentor's one-time setup code: the student chooses their own password.
+        private NetworkCredential SetUpAccount(NetworkCredential saved)
+        {
+            using (var dialog = new SetupAccountDialog("Set Up Your Account",
+                "Welcome! Enter your username and the setup code a mentor gave you, then choose your own password. Mentors never see it.", true, saved?.UserName))
+            {
+                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
+                OperationDialog.Run("Setting up your account…", () => { Accounts.Setup(dialog.Username, dialog.Code, dialog.Password); return true; });
+                var login = new NetworkCredential(dialog.Username, dialog.Password);
+                OperationDialog.Run("Checking your CAD account…", () =>
+                {
+                    var catalog = Catalog.Fetch(login);
+                    new SvnWorkspace(login, catalog.Robot).TestConnection();
+                    return true;
+                });
+                CredentialStore.Write(login);
+                Message("You're set up as " + login.UserName + ". Your password is saved in Windows, so you won't need to type it again.\n\nClick Open Robot to get started.");
+                return login;
+            }
+        }
+
+        public void ChangePassword()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                using (var dialog = new SetupAccountDialog("Change Password", "Choose a new password for " + login.UserName + ".", false, login.UserName))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                    OperationDialog.Run("Changing your password…", () => { Accounts.ChangePassword(login, dialog.Password); return true; });
+                    CredentialStore.Write(new NetworkCredential(login.UserName, dialog.Password));
+                }
+                Message("Password changed and saved in Windows.");
+            });
         }
 
         private Catalog LoadCatalog(NetworkCredential login)

@@ -106,6 +106,14 @@ Legend: 🧑 you in SOLIDWORKS · 🌐 admin web page (https://cad.imdad.stream/
 7. 🧑 As testkid, insert the Kraken with the same options. It comes from the Library (no export); the export count doesn't change.
 8. 🧑 Turn off the network and click Insert: a clear error, and nothing changes in the robot or Library.
 
+## K. Accounts (new in 0.9)
+
+1. 🌐 Accounts → add `testkid2`. A setup code like `K7QM-3XRP-9TDW` appears next to the name.
+2. 🧑 On a Windows account that has never signed in (or after deleting the "JOCO ROBOS CAD" entry in Windows Credential Manager), start SOLIDWORKS. The welcome screen asks for username + setup code + new password (twice). Afterward Open Robot works, and the code disappears from the Accounts page.
+3. 🧑 Tools → JOCO ROBOS CAD → **Change Password** → sign in again later without being asked.
+4. 🌐 **New setup code** for testkid2 → their old password stops working at once; the new code sets a new password.
+5. 🧑 The **Library** tab and **Robot** tab stretch to fill the panel when you make it wider or taller.
+
 ## H. Failure cases
 
 27. 🧑 Edit + change + save a part. Turn off the VM's network → Submit. Expect "Submit did not complete. Your edits and locks are kept". Network back on → Submit succeeds once. 🌐 Recent submits shows exactly one revision.

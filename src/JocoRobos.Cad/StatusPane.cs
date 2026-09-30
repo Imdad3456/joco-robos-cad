@@ -73,6 +73,16 @@ namespace JocoRobos.Cad
             tabs.TabPages.Add(robotTab);
             tabs.TabPages.Add(libraryTab);
             Controls.Add(tabs);
+            layout.Resize += (s, e) =>
+            {
+                // Stretch buttons and wrap text to the pane's width.
+                int width = Math.Max(150, layout.ClientSize.Width - layout.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+                foreach (Control control in layout.Controls)
+                {
+                    if (control is Button) control.Width = width;
+                    else if (control is Label) control.MaximumSize = new Size(width, 0);
+                }
+            };
             Show(new PaneState());
         }
 

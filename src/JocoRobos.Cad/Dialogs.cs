@@ -65,7 +65,10 @@ namespace JocoRobos.Cad
             password.UseSystemPasswordChar = true;
             Controls.Add(password);
             Controls.Add(new Label { Text = "Saved in Windows Credential Manager after the server accepts your login.",
-                Location = new Point(20, 155), Size = new Size(430, 40) });
+                Location = new Point(20, 150), Size = new Size(430, 20) });
+            var firstTime = new LinkLabel { Text = "First time? Set up your account with the code from your mentor", Location = new Point(20, 178), AutoSize = true };
+            firstTime.LinkClicked += (s, e) => { DialogResult = DialogResult.Yes; Close(); };
+            Controls.Add(firstTime);
             var submit = new Button { Text = "Sign In", Location = new Point(255, 215), Size = new Size(95, 30) };
             var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(355, 215), Size = new Size(95, 30) };
             submit.Click += (s, e) =>
@@ -227,6 +230,62 @@ namespace JocoRobos.Cad
             };
             Controls.Add(ok);
             Controls.Add(cancel);
+            CancelButton = cancel;
+        }
+    }
+
+    /// <summary>Username + one-time setup code from a mentor, then the student's own password (twice).</summary>
+    internal sealed class SetupAccountDialog : Form
+    {
+        private readonly TextBox username = new TextBox();
+        private readonly TextBox code = new TextBox { CharacterCasing = CharacterCasing.Upper };
+        private readonly TextBox password = new TextBox { UseSystemPasswordChar = true };
+        private readonly TextBox confirm = new TextBox { UseSystemPasswordChar = true };
+        internal string Username { get { return username.Text.Trim().ToLowerInvariant(); } }
+        internal string Code { get { return code.Text.Trim(); } }
+        internal string Password { get { return password.Text; } }
+
+        internal SetupAccountDialog(string title, string intro, bool askCode, string currentUser)
+        {
+            Text = "JOCO ROBOS CAD — " + title;
+            ClientSize = new Size(480, askCode ? 330 : 250);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Controls.Add(new Label { Text = intro, Location = new Point(20, 15), Size = new Size(440, 55) });
+            int y = 80;
+            Action<string, TextBox> row = (label, box) =>
+            {
+                Controls.Add(new Label { Text = label, Location = new Point(20, y + 3), AutoSize = true });
+                box.SetBounds(170, y, 285, 25);
+                Controls.Add(box);
+                y += 38;
+            };
+            if (askCode)
+            {
+                row("Username", username);
+                row("Setup code", code);
+            }
+            username.Text = currentUser ?? "";
+            row("New password", password);
+            row("New password again", confirm);
+            Controls.Add(new Label { Text = "At least 10 characters. Only you know it; it's saved in Windows Credential Manager.",
+                Location = new Point(20, y), Size = new Size(440, 20), ForeColor = SystemColors.GrayText });
+            var ok = new Button { Text = "Save", Location = new Point(255, y + 32), Size = new Size(95, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(360, y + 32), Size = new Size(95, 30) };
+            ok.Click += (s, e) =>
+            {
+                if (askCode && (Username.Length == 0 || Code.Length == 0)) { MessageBox.Show(this, "Enter your username and the setup code from your mentor."); return; }
+                if (password.Text.Length < 10) { MessageBox.Show(this, "Use at least 10 characters."); return; }
+                if (password.Text != confirm.Text) { MessageBox.Show(this, "The two passwords don't match."); return; }
+                if (password.Text.Equals(Username, StringComparison.OrdinalIgnoreCase)) { MessageBox.Show(this, "Don't use your username as your password."); return; }
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            AcceptButton = ok;
             CancelButton = cancel;
         }
     }

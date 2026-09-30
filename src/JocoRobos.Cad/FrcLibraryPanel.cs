@@ -17,16 +17,19 @@ namespace JocoRobos.Cad
     {
         private readonly Func<NetworkCredential> login;
         private readonly Action<FrcItem, Dictionary<string, string>> insert;
-        private readonly TextBox search = new TextBox { Width = 220 };
-        private readonly Label status = new Label { AutoSize = true, MaximumSize = new Size(230, 0), ForeColor = SystemColors.GrayText };
-        private readonly ListView results = new ListView { View = View.Tile, Width = 226, Height = 250, MultiSelect = false, HideSelection = false,
-            TileSize = new Size(205, 46), FullRowSelect = true };
-        private readonly ImageList pictures = new ImageList { ImageSize = new Size(64, 40), ColorDepth = ColorDepth.Depth32Bit };
-        private readonly PictureBox picture = new PictureBox { Width = 220, Height = 150, SizeMode = PictureBoxSizeMode.Zoom, BackColor = SystemColors.Window };
-        private readonly Label title = new Label { AutoSize = true, MaximumSize = new Size(230, 0), Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
-        private readonly Label subtitle = new Label { AutoSize = true, MaximumSize = new Size(230, 0), ForeColor = SystemColors.GrayText };
-        private readonly FlowLayoutPanel choices = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Width = 226 };
-        private readonly Button insertButton = new Button { Text = "Insert", Width = 220, Height = 32, Enabled = false, FlatStyle = FlatStyle.System };
+        // Everything stretches with the task pane: results take the top half, details the bottom half.
+        private const int Thumb = 72;
+        private readonly TextBox search = new TextBox { Dock = DockStyle.Fill };
+        private readonly Label status = new Label { AutoSize = true, ForeColor = SystemColors.GrayText, Dock = DockStyle.Fill };
+        private readonly ListView results = new ListView { View = View.Tile, Dock = DockStyle.Fill, MultiSelect = false, HideSelection = false, FullRowSelect = true };
+        private readonly ImageList pictures = new ImageList { ImageSize = new Size(Thumb, Thumb), ColorDepth = ColorDepth.Depth32Bit };
+        private readonly FlowLayoutPanel details = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+        private readonly PictureBox picture = new PictureBox { Height = 200, SizeMode = PictureBoxSizeMode.Zoom, BackColor = SystemColors.Window };
+        private readonly Label title = new Label { AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 11f, FontStyle.Bold) };
+        private readonly Label subtitle = new Label { AutoSize = true, ForeColor = SystemColors.GrayText };
+        private readonly FlowLayoutPanel choices = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true };
+        private readonly Button insertButton = new Button { Text = "Insert", Dock = DockStyle.Fill, Height = 36, Enabled = false, FlatStyle = FlatStyle.System,
+            Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold) };
         private readonly Timer debounce = new Timer { Interval = 300 };
         private readonly Dictionary<string, Control> inputs = new Dictionary<string, Control>();
         // Tracked separately: Control.Visible reads false whenever the tab itself isn't on screen.
@@ -39,24 +42,30 @@ namespace JocoRobos.Cad
             this.login = login;
             this.insert = insert;
             BackColor = SystemColors.Window;
-            AutoScroll = true;
-            var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(8) };
-            var team = new Button { Text = "Team Library…", Width = 220, Height = 28, FlatStyle = FlatStyle.System };
+            var team = new Button { Text = "Team Library…", Dock = DockStyle.Fill, Height = 30, FlatStyle = FlatStyle.System };
             team.Click += (s, e) => jocoLibrary();
-            layout.Controls.Add(team);
-            layout.Controls.Add(new Label { Text = "FRCDesignLib", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(0, 10, 0, 2) });
-            layout.Controls.Add(search);
-            layout.Controls.Add(status);
+            var heading = new Label { Text = "FRCDesignLib", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 8, 0, 2) };
+            var hint = new Label { Text = "The first time anyone on the team uses a part (and configuration), it's prepared for the team Library. That takes a little longer.",
+                AutoSize = true, ForeColor = SystemColors.GrayText, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(8) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            foreach (var row in new[] { team, (Control)heading, search, status }) { grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); grid.Controls.Add(row); }
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            grid.Controls.Add(results);
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            grid.Controls.Add(details);
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(insertButton);
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(hint);
+            details.Controls.Add(picture);
+            details.Controls.Add(title);
+            details.Controls.Add(subtitle);
+            details.Controls.Add(choices);
             results.LargeImageList = pictures;
-            layout.Controls.Add(results);
-            layout.Controls.Add(picture);
-            layout.Controls.Add(title);
-            layout.Controls.Add(subtitle);
-            layout.Controls.Add(choices);
-            layout.Controls.Add(insertButton);
-            layout.Controls.Add(new Label { Text = "The first time anyone on the team uses a part (and configuration), it's prepared for the team Library. That takes a little longer.",
-                AutoSize = true, MaximumSize = new Size(225, 0), ForeColor = SystemColors.GrayText, Margin = new Padding(0, 6, 0, 0) });
-            Controls.Add(layout);
+            Controls.Add(grid);
+            Resize += (s, e) => FitWidths();
+            details.Resize += (s, e) => FitWidths();
             pictures.Images.Add("placeholder", Placeholder());
             search.TextChanged += (s, e) => { debounce.Stop(); debounce.Start(); };
             debounce.Tick += (s, e) => { debounce.Stop(); RunSearch(); };
@@ -65,9 +74,26 @@ namespace JocoRobos.Cad
             status.Text = "Search motors, bearings, gears, gearboxes…";
         }
 
+        // FlowLayoutPanels don't stretch their children, so size them to the pane's width by hand.
+        private void FitWidths()
+        {
+            int width = Math.Max(120, details.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 6);
+            picture.Width = width;
+            picture.Height = Math.Min(260, Math.Max(120, width * 2 / 3));
+            title.MaximumSize = subtitle.MaximumSize = new Size(width, 0);
+            choices.Width = width;
+            foreach (Control holder in choices.Controls)
+                foreach (Control input in holder.Controls)
+                {
+                    if (input is ComboBox) input.Width = width - 4;
+                    else if (input is Label || input is CheckBox) input.MaximumSize = new Size(width - 4, 0);
+                }
+            results.TileSize = new Size(Math.Max(120, results.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4), Thumb + 8);
+        }
+
         private static Bitmap Placeholder()
         {
-            var bitmap = new Bitmap(64, 40);
+            var bitmap = new Bitmap(Thumb, Thumb);
             using (var graphics = Graphics.FromImage(bitmap)) graphics.Clear(Color.Gainsboro);
             return bitmap;
         }
@@ -116,13 +142,13 @@ namespace JocoRobos.Cad
         {
             if (items.Count == 0 || mine != generation) return;
             var item = items[0];
-            Background(client => client.Thumbnail(item.Id, false), data =>
+            Background(client => client.Thumbnail(item.Id, true), data =>
             {
                 try
                 {
                     using (var stream = new MemoryStream(data))
                     using (var image = Image.FromStream(stream))
-                        pictures.Images.Add(item.Id, new Bitmap(image, 64, 40));
+                        pictures.Images.Add(item.Id, new Bitmap(image, Thumb, Thumb));
                     foreach (ListViewItem row in results.Items)
                         if (((FrcItem)row.Tag).Id == item.Id) row.ImageKey = item.Id;
                 }
@@ -165,7 +191,7 @@ namespace JocoRobos.Cad
                 Control input;
                 if (choice.Kind == "enum")
                 {
-                    var box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 215 };
+                    var box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
                     foreach (var option in choice.Options ?? new List<FrcOption>()) box.Items.Add(option);
                     box.SelectedItem = box.Items.Cast<FrcOption>().FirstOrDefault(o => o.Id == choice.Default) ?? (box.Items.Count > 0 ? box.Items[0] : null);
                     box.SelectedIndexChanged += (s, e) => UpdateVisibility(item);
@@ -188,6 +214,7 @@ namespace JocoRobos.Cad
                 inputs[choice.Id] = input;
             }
             UpdateVisibility(item);
+            FitWidths();
         }
 
         // FRCDesignLib hides options that don't apply to the current choices (for example a case only for one cap type).

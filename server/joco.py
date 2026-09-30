@@ -39,6 +39,10 @@ SECRET = os.path.join(CONFIG, 'admin-secret')
 UPDATES = os.path.join(CONFIG, 'public', 'updates')
 HEALTH = os.path.join(CONFIG, 'health')
 HEARTBEATS = os.path.join(CONFIG, 'heartbeats.json')
+INVITES = os.path.join(CONFIG, 'invites.json')
+CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'  # No 0/O, 1/I/L.
+INVITE_DAYS = 7
+_setup_attempts = {}  # address -> [times]; in memory, reset on restart.
 INSTALLER = re.compile(r'^JOCO-ROBOS-CAD-Setup-(\d{1,4})\.(\d{1,4})\.(\d{1,4})\.exe$')
 LIBRARY = 'Library'
 # GitHub Actions account: may only stage installers, never touch CAD or the admin pages.
@@ -388,6 +392,49 @@ def record_heartbeat(user, version, computer):
     write_atomic(HEARTBEATS, json.dumps(beats, indent=2) + '\n')
 
 
+# ---------- accounts: students choose their own passwords ----------
+
+def new_setup_code(user, mentor):
+    """Disables any current password and creates a one-time setup code; the student picks the password."""
+    run('htpasswd', '-B', '-i', USERS, user, stdin=secrets.token_urlsafe(32).encode())  # Unusable until set up.
+    code = '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
+    invites = read_json(INVITES) or {}
+    invites[user] = {'code': code, 'expires': time.time() + INVITE_DAYS * 86400, 'by': mentor, 'failures': 0}
+    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+    return code
+
+
+def claim_account(address, user, code, password):
+    """Public (no sign-in): a student turns a setup code into their own password. Deliberately vague errors."""
+    now = time.time()
+    recent = [t for t in _setup_attempts.get(address, []) if now - t < 3600]
+    if len(recent) >= 20:
+        raise Refused('Too many attempts. Try again in an hour.')
+    _setup_attempts[address] = recent + [now]
+    user = (user or '').strip().lower()
+    code = re.sub(r'[^A-Z0-9]', '', (code or '').upper())
+    invites = read_json(INVITES) or {}
+    invite = invites.get(user)
+    if not invite or invite['expires'] < now or not hmac.compare_digest(invite['code'].replace('-', ''), code):
+        if invite:
+            invite['failures'] = invite.get('failures', 0) + 1
+            if invite['failures'] >= 5:
+                del invites[user]  # Guessing: the code is dead; a mentor makes a new one.
+            write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+        raise Refused('That username and setup code don\'t match, or the code expired. Ask a mentor for a new code.')
+    if len(password) < 10 or password.lower() == user:
+        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
+    run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
+    del invites[user]
+    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
+
+
+def change_password(user, password):
+    if len(password) < 10 or password.lower() == user:
+        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
+    run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
+
+
 # ---------- actions (all run under Locked) ----------
 
 def act(user, form):
@@ -462,18 +509,19 @@ def act(user, form):
         return 'Released ' + path + '. The previous owner can no longer submit their unsaved copy of it.'
     if action in ('add-user', 'reset-password'):
         name = form.get('username', '').strip().lower()
-        password = form.get('password', '')
         if not USERNAME.match(name):
             raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore.')
-        if len(password) < 10:
-            raise Refused('Passwords must be at least 10 characters.')
+        if name == PUBLISHER:
+            raise Refused(PUBLISHER + ' is the GitHub release account.')
         if (action == 'add-user') == (name in users()):
             raise Refused(name + (' already exists.' if action == 'add-user' else ' does not exist.'))
-        run('htpasswd', '-B', '-i', USERS, name, stdin=password.encode())
+        new_setup_code(name, user)
         if action == 'add-user' and form.get('mentor'):
             state['mentors'] = sorted(set(state['mentors']) | {name})
             save_state(state)
-        return ('Added ' if action == 'add-user' else 'Reset password for ') + name + '.'
+        # The code is shown on the Accounts page, never in a URL or log.
+        return ('Added ' + name + '.' if action == 'add-user' else name + '\'s old password no longer works.') + \
+            ' Give them the setup code shown next to their name; they choose their own password in SOLIDWORKS.'
     if action in ('delete-user', 'toggle-mentor'):
         name = form.get('username', '')
         if name not in users():
@@ -745,6 +793,10 @@ class Admin(BaseHTTPRequestHandler):
             return self.heartbeat()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('POST')
+        if urlsplit(self.path).path == '/account/setup':
+            return self.account_setup()
+        if urlsplit(self.path).path == '/admin/api/password':
+            return self.password_change()
         state = self.guard()
         if state is None:
             return
@@ -804,6 +856,29 @@ class Admin(BaseHTTPRequestHandler):
             self.reply(200, 'ok')
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
+
+    def account_setup(self):
+        # Reached without sign-in (see svn.conf /account); only a valid setup code can set a password.
+        address = self.headers.get('CF-Connecting-IP') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
+            with Locked():
+                claim_account(address, str(body.get('username', '')), str(body.get('code', '')), str(body.get('password', '')))
+            self.reply(200, 'Your password is set.')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
+
+    def password_change(self):
+        # Apache already checked the current password; the add-in header blocks cross-site form posts.
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        try:
+            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
+            with Locked():
+                change_password(self.user, str(body.get('password', '')))
+            self.reply(200, 'Password changed.')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
 
     def reply(self, status, text):
         data = (text + '\n').encode()
@@ -1029,10 +1104,13 @@ class Admin(BaseHTTPRequestHandler):
     def users_page(self, state):
         rows = ''
         beats = read_json(HEARTBEATS) or {}
+        invites = read_json(INVITES) or {}
         for name in users():
             mentor = name in state['mentors']
-            reset = self.form('reset-password', {'username': name}, 'Reset password',
-                              '<input type="password" name="password" minlength="10" placeholder="New password" required autocomplete="new-password" aria-label="New password for %s"> ' % esc(name))
+            invite = invites.get(name)
+            pending = ('<div><b>Setup code: <code style="font-size:15px">%s</code></b> <span class="muted">(expires %s)</span></div>' % (
+                esc(invite['code']), time.strftime('%b %d', time.localtime(invite['expires'])))) if invite and invite['expires'] > time.time() else ''
+            reset = pending + self.form('reset-password', {'username': name}, 'New setup code')
             tools = '' if name == self.user else (self.form('toggle-mentor', {'username': name}, 'Remove mentor' if mentor else 'Make mentor') + ' ' +
                                                    self.form('delete-user', {'username': name}, 'Delete'))
             beat = beats.get(name) or {}
@@ -1043,11 +1121,12 @@ class Admin(BaseHTTPRequestHandler):
             rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', seen, reset, tools)
         add = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="add-user">'
                '<input name="username" placeholder="username (e.g. sarah)" pattern="[a-z0-9][a-z0-9._\\-]{1,31}" required aria-label="Username">'
-               '<input type="password" name="password" minlength="10" placeholder="Starting password" required autocomplete="new-password" aria-label="Starting password">'
+
                '<label><input type="checkbox" name="mentor" value="1"> Mentor</label><button class="primary">Add account</button></form>'
-               '<p class="muted">Give the student their username and password privately. They sign in once from SOLIDWORKS; it is saved in Windows.</p>') % self.token()
+               '<p class="muted">You get a one-time setup code (valid %d days). The student enters their username and that code the first time SOLIDWORKS starts, '
+               'then chooses their own password. Mentors never see it. "New setup code" resets a forgotten password the same way.</p>') % (self.token(), INVITE_DAYS)
         return ('<section><h2>Add an account</h2>%s</section><section><h2>Accounts</h2><div class="scroll"><table>'
-                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Password</th><th></th></tr>%s</table></div></section>') % (add, rows)
+                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Setup</th><th></th></tr>%s</table></div></section>') % (add, rows)
 
 
 def serve():

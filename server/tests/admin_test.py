@@ -95,17 +95,53 @@ out = svn('svn ls http://localhost/svn/2027-Robot'); check('00_Master/' in out.s
 s, loc = post('/admin', {'action': 'activate', 'name': '2027-Robot'}); check('Unarchive' in loc, 'cannot activate archived')
 s, loc = post('/admin', {'action': 'unarchive', 'name': '2027-Robot'}); check('editable' in loc, 'unarchive')
 out = svn('svn mkdir -m x http://localhost/svn/2027-Robot/99_Test'); check(out.returncode == 0, 'unarchived writable ' + out.stderr)
-# Accounts
-s, loc = post('/admin/users', {'action': 'add-user', 'username': 'alex', 'password': 'short'}); check('at least 10' in loc, 'short password refused')
-s, loc = post('/admin/users', {'action': 'add-user', 'username': 'alex', 'password': 'alexpassword1'}); check('ok=Added alex' in loc, 'add user')
+# Accounts: setup codes, students choose their own passwords
+import json as _json
+def setup(user, code, password, raw=None):
+    r = urllib.request.Request(BASE + '/account/setup', data=raw if raw is not None else _json.dumps({'username': user, 'code': code, 'password': password}).encode(), method='POST')
+    r.add_header('Content-Type', 'application/json')
+    try:
+        resp = urllib.request.urlopen(r); return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+def code_for(user):
+    page = req('/admin/users', *M)[2]
+    m = re.search(r'<b>' + re.escape(user) + r'</b>.*?Setup code: <code[^>]*>([A-Z0-9-]+)</code>', page, re.S)
+    return m.group(1) if m else None
+s, loc = post('/admin/users', {'action': 'add-user', 'username': 'alex'}); check('ok=Added alex' in loc and 'setup code' in loc, 'add user')
+code = code_for('alex'); check(code and re.match(r'^[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$', code), 'setup code shown to mentor')
+check(code not in loc, 'setup code never in a URL')
+check(req('/catalog.json', 'alex', code)[0] == 401, 'the code is not a password')
+check(setup('alex', 'AAAA-AAAA-AAAA', 'alexpassword1')[0] == 400, 'wrong code refused')
+check(setup('nobody', code, 'alexpassword1')[0] == 400, 'wrong user refused')
+check('at least 10' in setup('alex', code, 'short')[1], 'short password refused')
+s_, t = setup('alex', code.lower().replace('-', ''), 'alexpassword1'); check(s_ == 200, 'student sets own password (code case/dashes forgiven) ' + t)
 check(req('/catalog.json', 'alex', 'alexpassword1')[0] == 200, 'new user can sign in')
-s, loc = post('/admin/users', {'action': 'reset-password', 'username': 'alex', 'password': 'alexpassword2'}); check('ok=Reset' in loc, 'reset')
-check(req('/catalog.json', 'alex', 'alexpassword1')[0] == 401 and req('/catalog.json', 'alex', 'alexpassword2')[0] == 200, 'reset takes effect')
+check(setup('alex', code, 'alexpassword9')[0] == 400, 'code works only once')
+check(code_for('alex') is None, 'used code disappears')
+check(req('/account/setup')[0] != 401, 'setup address reachable without sign-in (Apache lets it through)')
+check(req('/admin/users')[0] == 401, 'admin still requires sign-in')
+# change own password from the add-in
+r = urllib.request.Request(BASE + '/admin/api/password', data=_json.dumps({'password': 'alexpassword2'}).encode(), method='POST')
+r.add_header('Authorization', 'Basic ' + base64.b64encode(b'alex:alexpassword1').decode()); r.add_header('X-Joco-Client', 'addin')
+check(urllib.request.urlopen(r).status == 200, 'change own password')
+check(req('/catalog.json', 'alex', 'alexpassword1')[0] == 401 and req('/catalog.json', 'alex', 'alexpassword2')[0] == 200, 'password change takes effect')
+r = urllib.request.Request(BASE + '/admin/api/password', data=_json.dumps({'password': 'hackedpassword'}).encode(), method='POST')
+r.add_header('Authorization', 'Basic ' + base64.b64encode(b'alex:alexpassword2').decode())
+try: urllib.request.urlopen(r); check(False, 'x')
+except urllib.error.HTTPError as e: check(e.code == 403, 'password change needs the add-in header')
+# reset: new code, old password dead immediately; guessing kills the code
+s, loc = post('/admin/users', {'action': 'reset-password', 'username': 'alex'}); check('no longer works' in loc, 'reset')
+check(req('/catalog.json', 'alex', 'alexpassword2')[0] == 401, 'reset disables old password')
+code2 = code_for('alex'); check(code2 and code2 != code, 'reset makes a new code')
+for i in range(5): setup('alex', 'AAAA-AAAA-AAA%d' % i, 'alexpassword3')
+check(setup('alex', code2, 'alexpassword3')[0] == 400 and code_for('alex') is None, 'five wrong guesses kill the code')
+post('/admin/users', {'action': 'reset-password', 'username': 'alex'}); setup('alex', code_for('alex'), 'alexpassword3')
 s, loc = post('/admin/users', {'action': 'toggle-mentor', 'username': 'alex'}); check('now a mentor' in loc, 'make mentor')
-check(req('/admin', 'alex', 'alexpassword2')[0] == 200, 'new mentor sees admin')
+check(req('/admin', 'alex', 'alexpassword3')[0] == 200, 'new mentor sees admin')
 s, loc = post('/admin/users', {'action': 'delete-user', 'username': 'mentor1'}); check('own account' in loc, 'cannot delete self')
 s, loc = post('/admin/users', {'action': 'delete-user', 'username': 'alex'}); check('Deleted alex' in loc, 'delete user')
-check(req('/catalog.json', 'alex', 'alexpassword2')[0] == 401, 'deleted user rejected')
+check(req('/catalog.json', 'alex', 'alexpassword3')[0] == 401, 'deleted user rejected')
 s, _, b = req('/admin', *M); check('Add bolt' in b and 'sarah' in b, 'activity shows submits')
 check('<script' not in b, 'no scripts in page')
 # Delete only empty, inactive seasons
