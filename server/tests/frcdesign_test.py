@@ -21,7 +21,10 @@ bore = {'id': 'Bore', 'name': 'Bore', 'type': 'enum', 'default': 'Round',
                              {'type': 'list', 'controlledOptions': ['Hex'], 'condition': {'type': 'equal', 'id': 'Size', 'value': 'M'}}]}
 flange = {'id': 'Flange', 'name': 'Flange', 'type': 'boolean', 'default': 'true',
           'condition': {'type': 'logical', 'operation': 'OR', 'children': [{'type': 'equal', 'id': 'Size', 'value': 'M'}, {'type': 'range', 'id': 'Size', 'start': 'L', 'end': 'XL'}]}}
-width = {'id': 'Width', 'name': 'Width', 'type': 'quantity', 'default': '0.5 in'}
+width = {'id': 'Width', 'name': 'Width', 'type': 'quantity', 'default': '0.5 in'}  # No unit data: stays fixed.
+length = {'id': 'Length', 'name': 'Length', 'type': 'quantity', 'quantityType': 'LENGTH', 'default': '0.0254 m',
+          'defaultValue': 1, 'min': 0, 'max': 36, 'unit': 'inch'}
+teeth = {'id': 'Teeth', 'name': 'Teeth', 'type': 'quantity', 'quantityType': 'INTEGER', 'default': '64', 'defaultValue': 64, 'min': 0, 'max': 255, 'unit': ''}
 params = [size, bore, flange, width]
 choices = [f._choice(p) for p in params]
 
@@ -37,6 +40,25 @@ for bad in ({'Size': 'Nope'}, {'Width': '2 in'}):
         f.normalize_configuration(params, bad); check(False, 'accepted ' + str(bad))
     except f.FrcError:
         check(True, '')
+# Custom lengths (hex shaft, spacers, tubes): typed in inches, sent to Onshape in meters; the default keeps its exact text.
+numbers = [length, teeth]
+check(f._choice(length)['kind'] == 'number' and f._choice(length)['unit'] == 'in' and f._choice(length)['default'] == '1'
+      and f._choice(length)['max'] == '36', 'length choice in inches')
+check(f._choice(width)['kind'] == 'fixed', 'quantity without unit data stays fixed')
+check(f.normalize_configuration(numbers, {}) == {'Length': '0.0254 m', 'Teeth': '64'}, 'number defaults unchanged (same fingerprints as before)')
+check(f.normalize_configuration(numbers, {'Length': '1.0'})['Length'] == '0.0254 m', 'typed default = default text')
+check(f.normalize_configuration(numbers, {'Length': '2.5', 'Teeth': '36'}) == {'Length': '0.0635 m', 'Teeth': '36'}, 'custom length in meters')
+check(f.normalize_configuration(numbers, {'Length': '0,196'})['Length'] == '0.0049784 m', 'decimal comma accepted')
+for bad in ({'Length': '40'}, {'Length': '-1'}, {'Length': 'abc'}, {'Length': 'nan'}, {'Teeth': '3.5'}):
+    try:
+        f.normalize_configuration(numbers, bad); check(False, 'accepted ' + str(bad))
+    except f.FrcError:
+        check(True, '')
+item = {'id': 'x', 'name': 'Hex Shaft (VEX)', 'groupId': 'g', 'microversionId': 'm'}
+f._catalog.update(data={'groups': {'g': {'name': 'Shafts'}}, 'insertables': {}}, loaded=1e18)
+check(f.library_path(item, numbers, {'Length': '0.0635 m', 'Teeth': '64'}, 'abcdef') == 'FRCDesignLib/Shafts/Hex Shaft (VEX) (Length 2.5in).SLDPRT',
+      'custom length in the file name: ' + f.library_path(item, numbers, {'Length': '0.0635 m'}, 'abcdef'))
+check(f.library_path(item, numbers, {'Length': '0.0254 m'}, 'abcdef') == 'FRCDesignLib/Shafts/Hex Shaft (VEX).SLDPRT', 'default length: plain name')
 check(f._condition({'type': 'logical', 'operation': 'OR', 'children': []}) is None, 'empty OR never hides (FRCDesignApp rule)')
 check(f._condition({'type': 'alwaysShown'}) is None, 'always shown')
 item = {'id': 'x', 'name': 'A' * 200, 'groupId': 'g', 'microversionId': 'm'}

@@ -64,6 +64,29 @@ namespace JocoRobos.Cad
         [DataMember(Name = "options")] public List<FrcOption> Options { get; set; }
         [DataMember(Name = "visibleWhen")] public FrcCondition VisibleWhen { get; set; }
         [DataMember(Name = "optionRules")] public List<FrcOptionRule> OptionRules { get; set; }
+        // Number options (custom lengths): typed in Unit, between Min and Max; the server converts for Onshape.
+        [DataMember(Name = "unit")] public string Unit { get; set; }
+        [DataMember(Name = "min")] public string Min { get; set; }
+        [DataMember(Name = "max")] public string Max { get; set; }
+        [DataMember(Name = "integer")] public bool Integer { get; set; }
+
+        /// <summary>For a number option: null and the value to send, or a message saying what's wrong. The server checks again.</summary>
+        internal string CheckNumber(string text, out string value)
+        {
+            value = null;
+            double number, low, high;
+            var invariant = System.Globalization.CultureInfo.InvariantCulture;
+            string clean = (text ?? "").Trim().Replace(',', '.');
+            string unit = String.IsNullOrEmpty(Unit) ? "" : " " + Unit;
+            if (!Double.TryParse(clean, System.Globalization.NumberStyles.Float, invariant, out number) || Double.IsNaN(number) || Double.IsInfinity(number))
+                return Name + " must be a number" + (unit.Length > 0 ? " (in" + unit + ")" : "") + ".";
+            if ((Double.TryParse(Min, System.Globalization.NumberStyles.Float, invariant, out low) && number < low - 1e-9) ||
+                (Double.TryParse(Max, System.Globalization.NumberStyles.Float, invariant, out high) && number > high + 1e-9))
+                return Name + " must be between " + Min + " and " + Max + unit + ".";
+            if (Integer && number != Math.Floor(number)) return Name + " must be a whole number.";
+            value = number.ToString("0.######", invariant);
+            return null;
+        }
 
         /// <summary>Options no rule names are always offered; a named option shows while any of its rules holds.</summary>
         internal List<FrcOption> VisibleOptions(IDictionary<string, string> chosen, IList<FrcChoice> choices)

@@ -114,6 +114,13 @@ static class Program
             Func<string, string> visible = s => String.Join(",", bore.VisibleOptions(new System.Collections.Generic.Dictionary<string, string> { { "Size", s } }, all).Select(o => o.Id));
             Check(visible("S") == "Round" && visible("M") == "Round,Hex" && visible("XL") == "Round,Big", "Option visibility rules");
             Check(new FrcCondition { Mode = "any", Children = new System.Collections.Generic.List<FrcCondition>() }.Holds(new System.Collections.Generic.Dictionary<string, string>(), all), "Empty rule never hides");
+            // Custom lengths from FRCDesignLib: checked in the panel, sent in the option's unit.
+            var shaft = new FrcChoice { Id = "Length", Name = "Length", Kind = "number", Unit = "in", Min = "0", Max = "36", Default = "1" };
+            string typed;
+            Check(shaft.CheckNumber(" 2,5 ", out typed) == null && typed == "2.5", "Decimal comma length");
+            Check(shaft.CheckNumber("40", out typed) == "Length must be between 0 and 36 in." && typed == null, "Length over the maximum");
+            Check(shaft.CheckNumber("abc", out typed) != null && shaft.CheckNumber("NaN", out typed) != null, "Non-number length");
+            Check(new FrcChoice { Name = "Teeth", Integer = true, Min = "0", Max = "255" }.CheckNumber("3.5", out typed) != null, "Fractional whole number");
             SubmitChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }

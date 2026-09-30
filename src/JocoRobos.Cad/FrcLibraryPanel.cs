@@ -71,7 +71,23 @@ namespace JocoRobos.Cad
             search.TextChanged += (s, e) => { debounce.Stop(); debounce.Start(); };
             debounce.Tick += (s, e) => { debounce.Stop(); RunSearch(); };
             results.SelectedIndexChanged += (s, e) => ShowSelected();
-            insertButton.Click += (s, e) => { if (selected != null) insert(selected, CurrentChoices(true)); };
+            insertButton.Click += (s, e) =>
+            {
+                if (selected == null) return;
+                // A mistyped length is caught here, next to the box, instead of after the server round trip.
+                foreach (Control holder in choices.Controls)
+                {
+                    var choice = (FrcChoice)holder.Tag;
+                    var box = inputs.ContainsKey(choice.Id) ? inputs[choice.Id] as TextBox : null;
+                    string value, problem = box == null || hidden.Contains(choice.Id) ? null : choice.CheckNumber(box.Text, out value);
+                    if (problem == null) continue;
+                    MessageBox.Show(this, problem, "JOCO ROBOS CAD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    box.Focus();
+                    box.SelectAll();
+                    return;
+                }
+                insert(selected, CurrentChoices(true));
+            };
             status.Text = "Search motors, bearings, gears, gearboxes…";
         }
 
@@ -86,7 +102,7 @@ namespace JocoRobos.Cad
             foreach (Control holder in choices.Controls)
                 foreach (Control input in holder.Controls)
                 {
-                    if (input is ComboBox) input.Width = width - 4;
+                    if (input is ComboBox || input is TextBox) input.Width = width - 4;
                     else if (input is Label || input is CheckBox) input.MaximumSize = new Size(width - 4, 0);
                 }
             results.TileSize = new Size(Math.Max(120, results.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 4), Thumb + 8);
@@ -204,12 +220,19 @@ namespace JocoRobos.Cad
                     box.CheckedChanged += (s, e) => UpdateVisibility(item);
                     input = box;
                 }
+                else if (choice.Kind == "number")
+                {
+                    // Custom lengths and counts, like FRCDesignApp's number boxes.
+                    input = new TextBox { Text = choice.Default, Width = 200 };
+                }
                 else
                 {
                     input = new Label { Text = choice.Default + " (fixed for now)", AutoSize = true, ForeColor = SystemColors.GrayText };
                 }
                 var holder = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = new Padding(0, 4, 0, 0), Tag = choice };
-                if (choice.Kind != "boolean") holder.Controls.Add(new Label { Text = choice.Name, AutoSize = true });
+                string range = choice.Kind != "number" ? "" : "  (" + (String.IsNullOrEmpty(choice.Unit) ? "" : choice.Unit + ", ") +
+                    (String.IsNullOrEmpty(choice.Min) || String.IsNullOrEmpty(choice.Max) ? "number" : choice.Min + " to " + choice.Max) + ")";
+                if (choice.Kind != "boolean") holder.Controls.Add(new Label { Text = choice.Name + range, AutoSize = true });
                 holder.Controls.Add(input);
                 choices.Controls.Add(holder);
                 inputs[choice.Id] = input;
@@ -268,8 +291,11 @@ namespace JocoRobos.Cad
                 if (!inputs.TryGetValue(choice.Id, out input)) continue;
                 var combo = input as ComboBox;
                 var check = input as CheckBox;
+                var box = input as TextBox;
+                string number;
                 if (combo != null && combo.SelectedItem != null) result[choice.Id] = ((FrcOption)combo.SelectedItem).Id;
                 else if (check != null) result[choice.Id] = check.Checked ? "true" : "false";
+                else if (box != null) result[choice.Id] = choice.CheckNumber(box.Text, out number) == null ? number : box.Text.Trim();
             }
             return result;
         }

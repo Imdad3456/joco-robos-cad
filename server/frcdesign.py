@@ -175,15 +175,78 @@ def _option_rules(parameter):
     return rules
 
 
+# Number options come in the parameter's own unit (inch for FRCDesignLib); Onshape gets lengths in meters,
+# written the way FRCDesignLib writes defaults ("0.0254 m").
+METERS_PER = {'inch': 0.0254, 'in': 0.0254, 'foot': 0.3048, 'ft': 0.3048, 'millimeter': 0.001, 'mm': 0.001,
+              'centimeter': 0.01, 'cm': 0.01, 'meter': 1.0, 'm': 1.0}
+SHORT_UNIT = {'inch': 'in', 'foot': 'ft', 'millimeter': 'mm', 'centimeter': 'cm', 'meter': 'm'}
+
+
+def _plain(number, digits=6):
+    text = ('%.*f' % (digits, number)).rstrip('0').rstrip('.')
+    return '0' if text in ('', '-0') else text
+
+
+def _number(parameter):
+    """(kind, meters per unit) for an editable number option, or None to keep it at its default."""
+    if parameter.get('type') != 'quantity' or not isinstance(parameter.get('defaultValue'), (int, float)):
+        return None
+    kind = parameter.get('quantityType')
+    if kind == 'LENGTH' and parameter.get('unit') in METERS_PER and str(parameter.get('default', '')).endswith(' m'):
+        return 'length', METERS_PER[parameter['unit']]
+    if kind in ('INTEGER', 'REAL'):
+        return kind.lower(), None
+    return None
+
+
+def _number_value(parameter, text):
+    """The Onshape value for a number typed in the parameter's unit; the default keeps FRCDesignLib's exact text."""
+    kind, factor = _number(parameter)
+    name = parameter.get('name', parameter['id'])
+    try:
+        value = float(str(text).strip().replace(',', '.'))
+    except ValueError:
+        raise FrcError('%s must be a number.' % name)
+    if value != value or value in (float('inf'), float('-inf')):
+        raise FrcError('%s must be a number.' % name)
+    low, high = parameter.get('min'), parameter.get('max')
+    unit = ' ' + SHORT_UNIT.get(parameter.get('unit'), parameter.get('unit') or '') if kind == 'length' else ''
+    if (isinstance(low, (int, float)) and value < low - 1e-9) or (isinstance(high, (int, float)) and value > high + 1e-9):
+        raise FrcError('%s must be between %s and %s%s.' % (name, _plain(low), _plain(high), unit))
+    if kind == 'integer' and value != int(value):
+        raise FrcError('%s must be a whole number.' % name)
+    if abs(value - parameter['defaultValue']) < 1e-9:
+        return str(parameter.get('default'))
+    if kind == 'length':
+        return _plain(value * factor, 10) + ' m'
+    return str(int(value)) if kind == 'integer' else _plain(value)
+
+
+def _number_label(parameter, value):
+    """A configuration value back in the parameter's unit, for file names: 2.5in."""
+    kind, factor = _number(parameter)
+    if kind == 'length':
+        return _plain(float(str(value).split()[0]) / factor, 4) + SHORT_UNIT.get(parameter['unit'], parameter['unit'])
+    return str(value)
+
+
 def _choice(parameter):
-    """What the add-in shows: dropdowns and checkboxes are editable; other kinds keep their default for now."""
+    """What the add-in shows: dropdowns, checkboxes, and numbers are editable; other kinds keep their default for now."""
     kind = parameter.get('type')
-    return {'id': str(parameter['id']), 'name': str(parameter.get('name', parameter['id'])),
-            'kind': kind if kind in ('enum', 'boolean') else 'fixed',
-            'default': str(parameter.get('default', '')),
-            'options': [{'id': str(o['id']), 'name': str(o.get('name', o['id']))} for o in parameter.get('options', [])],
-            'visibleWhen': _condition(parameter.get('condition')),
-            'optionRules': _option_rules(parameter)}
+    number = _number(parameter)
+    choice = {'id': str(parameter['id']), 'name': str(parameter.get('name', parameter['id'])),
+              'kind': kind if kind in ('enum', 'boolean') else 'number' if number else 'fixed',
+              'default': str(parameter.get('default', '')),
+              'options': [{'id': str(o['id']), 'name': str(o.get('name', o['id']))} for o in parameter.get('options', [])],
+              'visibleWhen': _condition(parameter.get('condition')),
+              'optionRules': _option_rules(parameter)}
+    if number:
+        # The add-in works in the parameter's unit; the server converts.
+        choice.update({'default': _plain(parameter['defaultValue']), 'integer': number[0] == 'integer',
+                       'unit': SHORT_UNIT.get(parameter.get('unit'), parameter.get('unit') or '') if number[0] == 'length' else '',
+                       'min': _plain(parameter['min']) if isinstance(parameter.get('min'), (int, float)) else '',
+                       'max': _plain(parameter['max']) if isinstance(parameter.get('max'), (int, float)) else ''})
+    return choice
 
 
 def thumbnail(insertable_id, size='300x300'):
@@ -254,6 +317,7 @@ def normalize_configuration(parameters, requested):
     hidden parameters left out. Values the add-in can't edit yet must stay at their default.
     """
     choices = [_choice(p) for p in parameters]
+    raw = {str(p['id']): p for p in parameters}
     chosen = {}
     for _ in range(len(choices) + 1):  # Visibility can depend on later choices; settle to a fixed point.
         previous = dict(chosen)
@@ -270,6 +334,8 @@ def normalize_configuration(parameters, requested):
                 chosen[cid] = value if value in options else (choice['default'] if choice['default'] in options else options[0])
             elif kind == 'boolean':
                 chosen[cid] = 'true' if value.lower() in ('true', '1', 'yes') else 'false'
+            elif kind == 'number':
+                chosen[cid] = _number_value(raw[cid], requested[cid]) if cid in requested else str(raw[cid].get('default'))
             else:
                 if cid in requested and str(requested[cid]) != choice['default']:
                     raise FrcError('%s can only use its default value for now.' % choice['name'])
@@ -299,8 +365,10 @@ def library_path(item, parameters, configuration, fp):
             labels.append(next((o['name'] for o in parameter['options'] if str(o['id']) == value), value))
         elif parameter.get('type') == 'boolean':
             labels.append(('' if value == 'true' else 'no ') + parameter.get('name', ''))
-    clean = lambda text, limit: re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 _().&+,-]', '-', text)).strip(' .-')[:limit].strip()
-    name = clean(item['name'], 60) + (' (' + clean(', '.join(labels), 40) + ')' if labels else '')
+        elif _number(parameter):
+            labels.append('%s %s' % (parameter.get('name', ''), _number_label(parameter, value)))
+    clean = lambda text, limit, keep='': re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 _().&+,%s-]' % keep, '-', text)).strip(' .-')[:limit].strip()
+    name = clean(item['name'], 60) + (' (' + clean(', '.join(labels), 40, '.') + ')' if labels else '')
     if len(name) > 72:
         name = name[:64].rstrip() + ' ' + fp[:6]
     # Assemblies are flattened on export, so every FRCDesignLib item becomes one part file.

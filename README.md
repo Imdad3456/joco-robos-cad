@@ -55,4 +55,4 @@ The repository is public so students can download releases. It contains **no pas
 
 **v1.0 candidate.** Sign-in, updating, opening the robot, locking, the installer, and automatic updates are confirmed in SOLIDWORKS 2026. The rest is built and passes automated checks, and is being confirmed by hand with [TESTING.md](TESTING.md).
 
-Known limits: renaming or deleting team CAD is a mentor task; locking an assembly doesn't lock the parts inside it; FRCDesignLib options that take a number or text stay at their defaults for now.
+Known limits: renaming or deleting team CAD is a mentor task; locking an assembly doesn't lock the parts inside it; FRCDesignLib options that take text stay at their defaults for now (numbers like custom lengths work).
