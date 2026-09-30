@@ -39,6 +39,7 @@ namespace JocoRobos.Cad
         [DispId(17)] void RepairMovedReferences();
         [DispId(18)] void ChangePassword();
         [DispId(19)] void UpgradeRobotFiles();
+        [DispId(20)] void ShowLibrary();
     }
 
     [ComVisible(true)]
@@ -51,10 +52,10 @@ namespace JocoRobos.Cad
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591904;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903 };
+        private const int GroupId = 591905;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591914;
+        private const int LayoutVersion = 591915;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -78,6 +79,9 @@ namespace JocoRobos.Cad
         private string flash;
         private Timer flashTimer, savedTimer;
         private readonly HashSet<string> warnedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Background work the panel shows as a line of text instead of a window (automatic update).
+        private string working, autoUpdateProblem;
+        private long autoUpdateTried;
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -123,23 +127,26 @@ namespace JocoRobos.Cad
                 if (mains != null) group.MainIconList = mains;
                 int both = (int)swCommandItemType_e.swMenuItem | (int)swCommandItemType_e.swToolbarItem;
                 int menu = (int)swCommandItemType_e.swMenuItem;
-                int open = Add(group, "Open Robot", "Update the workspace and open the robot", nameof(OpenRobot), 1, both, 0);
-                int update = Add(group, "Update", "Download the latest robot and library files", nameof(UpdateRobot), 2, both, 1);
-                int edit = Add(group, "Edit", "Lock the active CAD document for editing", nameof(Edit), 3, both, 2);
-                int submit = Add(group, "Submit", "Upload your changed and new CAD files", nameof(Submit), 7, both, 3);
-                int insert = Add(group, "Insert from Library", "Copy a reusable part into the robot and insert it", nameof(InsertFromLibrary), 8, both, 4);
-                Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
-                Add(group, "Test Connection", "Verify your CAD account and repository", nameof(TestConnection), 5, menu, 6);
-                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
-                Add(group, "Release Edit", "Release your lock on an unchanged file", nameof(ReleaseEdit), 6, menu, 8);
+                // Everyday work first; the rest in sections below separators. Add-in menus can't reliably nest submenus.
+                int open = Add(group, "Open Robot", "Get the newest robot and open it", nameof(OpenRobot), 1, both, 0);
+                int edit = Add(group, "Edit", "Lock the active part (or the selected component) so you can change it", nameof(Edit), 3, both, 2);
+                int submit = Add(group, "Submit", "Send your changed and new CAD files to the team", nameof(Submit), 7, both, 3);
+                int library = Add(group, "Library", "Find a part: the team Library, FRCDesignLib, or a downloaded file", nameof(ShowLibrary), 19, both, 4);
+                group.AddSpacer2(-1, menu);
+                Add(group, "Update", "Get teammates' changes now (normally automatic)", nameof(UpdateRobot), 2, menu, 1);
+                Add(group, "Release Edit", "Give back your lock on an unchanged file (normally automatic when you close it)", nameof(ReleaseEdit), 6, menu, 8);
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu, 9);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu, 10);
-                Add(group, "Set Aside My Changes", "Save your version of changed files separately and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
-                Add(group, "Restore Deleted Files", "Bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu, 12);
-                Add(group, "Insert External Part", "Copy a downloaded part into the robot and insert it", nameof(InsertExternalPart), 14, menu, 13);
-                Add(group, "Import Outside References", "Copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu, 14);
-                Add(group, "Upgrade Robot Files", "Convert every robot file to this SOLIDWORKS version once, so opening parts stops marking them changed", nameof(UpgradeRobotFiles), 18, menu, 15);
-                Add(group, "Repair Moved References", "After reorganizing folders: repoint every file's links to the same-named file in the folder", nameof(RepairMovedReferences), 16, menu, 16);
+                group.AddSpacer2(-1, menu);
+                Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
+                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
+                Add(group, "Test Connection", "Check your CAD account and connection", nameof(TestConnection), 5, menu, 6);
+                group.AddSpacer2(-1, menu);
+                Add(group, "Set Aside My Changes", "Recovery: keep your version of changed files as a copy and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
+                Add(group, "Restore Deleted Files", "Recovery: bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu, 12);
+                Add(group, "Import Outside References", "Recovery: copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu, 14);
+                Add(group, "Repair Moved References", "Recovery: after reorganizing folders, repoint every file's links to the same-named file", nameof(RepairMovedReferences), 16, menu, 16);
+                Add(group, "Upgrade Robot Files", "Mentor: convert every robot file to this SOLIDWORKS version once", nameof(UpgradeRobotFiles), 18, menu, 15);
                 Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu, 17);
                 group.HasMenu = true;
                 group.HasToolbar = true;
@@ -153,7 +160,7 @@ namespace JocoRobos.Cad
                     if (tab == null) throw new InvalidOperationException("Could not create CommandManager tab.");
                     CommandTabBox box = tab.AddCommandTabBox();
                     int text = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextHorizontal;
-                    int[] ids = new[] { open, update, edit, submit, insert }.Select(x => group.get_CommandID(x)).ToArray();
+                    int[] ids = new[] { open, edit, submit, library }.Select(x => group.get_CommandID(x)).ToArray();
                     if (box == null || !box.AddCommands(ids, ids.Select(x => text).ToArray()))
                     {
                         commands.RemoveCommandTab(tab);
@@ -231,19 +238,18 @@ namespace JocoRobos.Cad
                 taskpane = application.CreateTaskpaneView2(icon, Title);
             }
             if (taskpane == null) throw new InvalidOperationException("SOLIDWORKS did not create the task pane.");
-            pane = new StatusPane(new[]
+            pane = new StatusPane(new PaneActions
             {
-                new KeyValuePair<string, Action>("Open Robot", OpenRobot),
-                new KeyValuePair<string, Action>("Update", UpdateRobot),
-                new KeyValuePair<string, Action>("Edit", Edit),
-                new KeyValuePair<string, Action>("Submit", Submit),
-                new KeyValuePair<string, Action>("Insert from Library", InsertFromLibrary),
-                new KeyValuePair<string, Action>("Release Edit", ReleaseEdit),
-            }, RefreshStatus, InstallUpdate, () =>
-            {
-                try { return CredentialStore.Read(); }
-                catch (Exception) { return null; }
-            }, InsertFromFrcDesign, InsertFromLibrary, ReleaseUnchangedLocks);
+                OpenRobot = OpenRobot, Edit = Edit, Submit = Submit, CloseAndUpdate = CloseAndUpdate, InstallUpdate = InstallUpdate,
+                Refresh = RefreshStatus, ReleaseUnchanged = ReleaseUnchangedLocks,
+                Login = () =>
+                {
+                    try { return CredentialStore.Read(); }
+                    catch (Exception) { return null; }
+                },
+                InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
+                BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
+            });
             pane.CreateControl();
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
@@ -297,16 +303,20 @@ namespace JocoRobos.Cad
             {
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
-                var state = StatusPane.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
-                    doc != null && doc.GetSaveFlag());
+                var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
+                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any());
+                state.Working = working;
+                if (autoUpdateProblem != null && state.CanAutoUpdate)
+                    state.Details += "\nCouldn't get them automatically: " + autoUpdateProblem + "\nTry Tools → JOCO ROBOS CAD → Update.";
                 var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
                 if (season != null && !season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name)
                 {
                     state.ActiveStatus = "Reference copy from " + season.Name + ". Read-only; your robot is " + robotSnapshot.Info.Name + ".";
-                    state.ActiveColor = System.Drawing.SystemColors.GrayText;
+                    state.ActiveTone = Tone.Muted;
                     state.EditTarget = null;
                 }
                 state.Flash = flash;
+                if (state.CanAutoUpdate) pane.BeginInvoke((Action)(() => StartAutoUpdate()));
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
             }
@@ -511,7 +521,7 @@ namespace JocoRobos.Cad
                     OperationDialog.Run("Changing your password…", () => { Accounts.ChangePassword(login, dialog.Password); return true; });
                     CredentialStore.Write(new NetworkCredential(login.UserName, dialog.Password));
                 }
-                Message("Password changed and saved in Windows.");
+                ShowFlash("✓ Password changed");
             });
         }
 
@@ -565,7 +575,7 @@ namespace JocoRobos.Cad
 
         public void SignIn()
         {
-            Execute(() => { if (GetLogin(true) != null) Message("Signed in. Your login is saved in Windows Credential Manager."); });
+            Execute(() => { if (GetLogin(true) != null) ShowFlash("✓ Signed in"); });
         }
 
         public void TestConnection()
@@ -688,7 +698,9 @@ namespace JocoRobos.Cad
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
                 string summary = UpdateAll(login, catalog);
-                Message(summary + (FindMaster(catalog.Robot) != null ? "" : "\n\nNo master assembly has been uploaded to this robot yet."));
+                if (summary.StartsWith("Switched", StringComparison.Ordinal) || summary.Contains("not updated") || FindMaster(catalog.Robot) == null)
+                    Message(summary + (FindMaster(catalog.Robot) != null ? "" : "\n\nNo master assembly has been uploaded to this robot yet."));
+                else ShowFlash("✓ Up to date");
             });
         }
 
@@ -807,8 +819,13 @@ namespace JocoRobos.Cad
                         ? "\n\nYour earlier changes are still here. Save to keep them." + (safety != null ? " (A backup copy is in " + safety + ")" : "")
                         : safety != null ? "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety
                         : "\n\nSOLIDWORKS reloaded the file; redo your last change.";
-                    // Nothing was lost: the Submit window shows what's next itself.
-                    if (quiet && (!unsaved || doc.GetSaveFlag())) return;
+                    // The usual case is quiet: the panel says it. A dialog only when changes were reloaded away or it's a component.
+                    bool changesLost = unsaved && !doc.GetSaveFlag();
+                    if (!changesLost && (quiet || !component))
+                    {
+                        ShowFlash("✎ You're editing " + Path.GetFileName(path) + (workspace.IsLibrary ? " (in the Library)" : ""));
+                        return;
+                    }
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
                         (workspace.IsLibrary ? " in the Library. Robots that already have a copy keep their own; only future first-time inserts get your version." : ".") +
                         (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
@@ -864,6 +881,124 @@ namespace JocoRobos.Cad
                 "\n\nIf you meant to change the team's file instead: close this one without saving, open the original, and click Edit.", MessageBoxIcon.Warning);
         }
 
+        // ---------- automatic update ----------
+
+        private IEnumerable<string> RobotDocuments(WorkspaceInfo robot)
+        {
+            return OpenDocuments().Select(d => d.GetPathName()).Where(p => !String.IsNullOrEmpty(p) && robot.Contains(p));
+        }
+
+        // Teammates' changes come in by themselves when nothing is in the way: no robot or Library documents open,
+        // no unsubmitted work (Update never merges into it), and nothing else running. Otherwise the panel says what's needed.
+        private void StartAutoUpdate()
+        {
+            try
+            {
+                if (busy || application == null || robotSnapshot == null || paneCatalog == null) return;
+                var robot = robotSnapshot.Info;
+                if (robotSnapshot.Head == autoUpdateTried) return; // Tried this revision already; the panel shows why it didn't work.
+                var library = paneCatalog.Library;
+                if (RobotDocuments(robot).Any() || (library != null && RobotDocuments(library).Any())) return;
+                var login = CredentialStore.Read();
+                if (login == null) return;
+                autoUpdateTried = robotSnapshot.Head;
+                int count = robotSnapshot.Incoming.Count;
+                busy = true;
+                working = "Getting " + count + (count == 1 ? " teammate change…" : " teammate changes…");
+                RenderStatus();
+                // The Library comes along only when it has news and no unsubmitted work of its own.
+                bool libraryToo = library != null && librarySnapshot != null && librarySnapshot.Incoming.Count > 0 &&
+                    librarySnapshot.Changed.Count + librarySnapshot.New.Count == 0;
+                var workspaces = new[] { robot, libraryToo ? library : null }.Where(w => w != null && !w.Archived)
+                    .Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
+                Task.Run(() => SvnWorkspace.Exclusive(() => { foreach (var svn in workspaces) svn.Update(); return true; })).ContinueWith(task => OnUi("auto update", () =>
+                {
+                    busy = false;
+                    working = null;
+                    if (task.Status == TaskStatus.RanToCompletion)
+                    {
+                        autoUpdateProblem = null;
+                        ShowFlash("✓ Got " + count + (count == 1 ? " teammate change" : " teammate changes"));
+                    }
+                    else
+                    {
+                        autoUpdateProblem = task.Exception?.GetBaseException().Message ?? "unknown error";
+                        ErrorLog.Write("auto update", task.Exception?.GetBaseException() ?? new Exception(autoUpdateProblem));
+                    }
+                    RefreshStatus();
+                }));
+            }
+            catch (Exception exception)
+            {
+                busy = false;
+                working = null;
+                ErrorLog.Write("auto update start", exception);
+            }
+        }
+
+        // The panel's "Close & Update": closes the robot's documents (never throwing away saved-able work), gets
+        // teammates' changes, and reopens what was on screen.
+        private void CloseAndUpdate()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var mine = new[] { catalog.Robot, catalog.Library }.Where(w => w != null).ToList();
+                var docs = OpenDocuments().Where(d => !String.IsNullOrEmpty(d.GetPathName()) && mine.Any(w => w.Contains(d.GetPathName()))).ToList();
+                var unsaved = docs.Where(d => d.GetSaveFlag() && !d.IsOpenedReadOnly()).Select(d => Path.GetFileName(d.GetPathName())).ToList();
+                if (unsaved.Count > 0)
+                    throw new InvalidOperationException("Save these first (they have changes you can keep):\n\n" + String.Join("\n", unsaved.Take(10)));
+                var lost = docs.Where(d => d.GetSaveFlag() && d.IsOpenedReadOnly() && d.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY)
+                    .Select(d => Path.GetFileName(d.GetPathName())).ToList();
+                if (lost.Count > 0 && MessageBox.Show(new SolidWorksWindow(), "These read-only files have unsaved changes that can't be kept:\n\n" +
+                    String.Join("\n", lost.Take(10)) + "\n\nClose them anyway and get teammates' changes?", Title, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK)
+                    return;
+                var active = application.ActiveDoc as ModelDoc2;
+                string reopen = active == null ? null : active.GetPathName();
+                foreach (var doc in docs) application.CloseDoc(doc.GetTitle());
+                var left = OpenDocuments().Select(d => d.GetPathName()).Where(p => !String.IsNullOrEmpty(p) && mine.Any(w => w.Contains(p))).ToList();
+                if (left.Count > 0)
+                    throw new InvalidOperationException("These are still open (probably used by another open document). Close that too, then try again:\n\n" +
+                        String.Join("\n", left.Take(10).Select(Path.GetFileName)));
+                string summary = UpdateAll(login, catalog);
+                if (summary.StartsWith("Switched", StringComparison.Ordinal) || summary.Contains("not updated")) Message(summary);
+                else ShowFlash("✓ Up to date");
+                if (!String.IsNullOrEmpty(reopen) && File.Exists(reopen))
+                {
+                    int errors = 0, warnings = 0;
+                    int type = reopen.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY
+                        : reopen.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocDRAWING : (int)swDocumentTypes_e.swDocPART;
+                    application.OpenDoc6(reopen, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+                }
+            });
+        }
+
+        // The Library tab's team results: local files, quick enough to search as the student types.
+        private List<string> SearchTeamLibrary(string query)
+        {
+            var library = paneCatalog?.Library;
+            if (library == null || !Directory.Exists(library.Root)) return new List<string>();
+            string frc = Path.Combine(library.Root, "FRCDesignLib") + "\\"; // FRCDesignLib parts come from its own search.
+            var words = query.ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            return SubmitCheck.CadByName(library.Root).SelectMany(g => g)
+                .Where(p => !p.StartsWith(frc, StringComparison.OrdinalIgnoreCase) && !p.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase))
+                .Where(p => { string relative = p.Substring(library.Root.Length + 1).ToLowerInvariant(); return words.All(relative.Contains); })
+                .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase).Take(20).ToList();
+        }
+
+        public void ShowLibrary()
+        {
+            try
+            {
+                if (taskpane == null || pane == null) { InsertFromLibrary(); return; }
+                taskpane.ShowView();
+                pane.ShowLibrary();
+            }
+            catch (Exception exception) { ErrorLog.Write("show library", exception); }
+        }
+
         // ---------- lock on first change, release on close ----------
 
         // A read-only team file was just changed (even if it was opened with File → Open): offer to lock it now,
@@ -894,11 +1029,17 @@ namespace JocoRobos.Cad
                     "Undo them (Ctrl+Z), or use File → Save As to keep a copy outside the robot folder and show it to " + owner + ".", MessageBoxIcon.Warning);
                 return;
             }
-            if (MessageBox.Show(new SolidWorksWindow(), "You're changing " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
-                "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                Execute(() => EditDocument(doc, false));
-            else
+            // Parts and drawings: free and (Edit checks) current, so lock it now, the same as clicking Edit. Closing it unchanged
+            // gives the lock back by itself; if the lock can't be taken, Edit says why and the change stays unsaved.
+            // Assemblies still ask: rebuilding can mark them changed by itself, and quietly locking a big assembly blocks everyone.
+            if (doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY &&
+                MessageBox.Show(new SolidWorksWindow(), "You're changing the assembly " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
+                "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            {
                 RenderStatus(); // The pane keeps showing the unsaved changes until they lock or undo.
+                return;
+            }
+            Execute(() => EditDocument(doc, false, null, true));
         }
 
         // Closing a locked file without saving changes gives it back, so forgotten locks don't block teammates.
@@ -995,9 +1136,8 @@ namespace JocoRobos.Cad
                 var done = new HashSet<string>(released, StringComparer.OrdinalIgnoreCase);
                 foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "") && !d.GetSaveFlag()))
                     doc.SetReadOnlyState(true);
-                Message(released.Count == 0 ? "You have no unchanged locked files. Files you changed stay locked until you Submit them."
-                    : "Released " + released.Count + " file(s): " + String.Join(", ", released.Take(8).Select(Path.GetFileName)) + (released.Count > 8 ? ", …" : "") +
-                      ".\n\nFiles you changed stay locked until you Submit them.");
+                ShowFlash(released.Count == 0 ? "Nothing to give back: files you changed stay yours until you Submit."
+                    : "✓ Gave back " + released.Count + (released.Count == 1 ? " file" : " files") + ". Files you changed stay yours until you Submit.");
             });
         }
 
@@ -1028,7 +1168,7 @@ namespace JocoRobos.Cad
                 int restored = 0;
                 foreach (var svn in workspaces.Where(w => chosen.Any(c => c.Workspace.Name == w.Info.Name)))
                     restored += OperationDialog.Run("Restoring…", () => SvnWorkspace.Exclusive(() => svn.RestoreDeleted(chosen)));
-                Message("Restored " + restored + " file(s) from the server.");
+                ShowFlash("✓ Restored " + restored + (restored == 1 ? " file" : " files") + " from the team");
             });
         }
 
@@ -1067,7 +1207,7 @@ namespace JocoRobos.Cad
                 var svn = new SvnWorkspace(login, workspace);
                 OperationDialog.Run("Releasing your unchanged file…", () => SvnWorkspace.Exclusive(() => { svn.ReleaseEdit(path); return true; }));
                 File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
-                Message("Edit lock released. The file is read-only.");
+                ShowFlash("✓ Gave back " + Path.GetFileName(path) + "; it's read-only again");
             });
         }
 
@@ -1308,6 +1448,12 @@ namespace JocoRobos.Cad
 
         public void InsertFromLibrary()
         {
+            InsertTeamPart(null);
+        }
+
+        // chosen: a Library file picked in the Library tab; null asks with a file dialog.
+        private void InsertTeamPart(string chosen)
+        {
             Execute(() =>
             {
                 var login = GetLogin(false);
@@ -1325,13 +1471,15 @@ namespace JocoRobos.Cad
                 try { UpdateWorkspace(login, library); }
                 catch (Exception) when (librarySvn.IsCheckedOut) { }
 
-                string source;
-                using (var dialog = new OpenFileDialog { Title = "Insert from Library", InitialDirectory = library.Root,
-                    Filter = "SOLIDWORKS parts and assemblies (*.sldprt;*.sldasm)|*.sldprt;*.sldasm", RestoreDirectory = true })
-                {
-                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                    source = Path.GetFullPath(dialog.FileName);
-                }
+                string source = chosen == null ? null : Path.GetFullPath(chosen);
+                if (source == null)
+                    using (var dialog = new OpenFileDialog { Title = "Insert from Library", InitialDirectory = library.Root,
+                        Filter = "SOLIDWORKS parts and assemblies (*.sldprt;*.sldasm)|*.sldprt;*.sldasm", RestoreDirectory = true })
+                    {
+                        if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                        source = Path.GetFullPath(dialog.FileName);
+                    }
+                if (!File.Exists(source)) throw new InvalidOperationException(Path.GetFileName(source) + " isn't in the team Library any more. Search again.");
                 if (!library.Contains(source)) throw new InvalidOperationException("Choose a part from the Library folder:\n" + library.Root);
                 bool cancelled;
                 var target = InsertTarget(catalog, Path.GetFileNameWithoutExtension(source), out cancelled);
@@ -1569,9 +1717,10 @@ namespace JocoRobos.Cad
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
                 RequireCurrentAddin(login, catalog);
-                var assemblyDoc = WritableRobotAssembly(catalog);
+                if (catalog.Robot.Archived) throw new InvalidOperationException(catalog.Robot.Name + " is archived and read-only.");
+                if (!new SvnWorkspace(login, catalog.Robot).IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the part has a robot to go into.");
                 string source;
-                using (var dialog = new OpenFileDialog { Title = "Insert External Part (vendor download, Desktop, USB…)",
+                using (var dialog = new OpenFileDialog { Title = "Import a downloaded CAD file (vendor download, Desktop, USB…)",
                     InitialDirectory = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile) + "\\Downloads",
                     Filter = "SOLIDWORKS parts and assemblies (*.sldprt;*.sldasm)|*.sldprt;*.sldasm", RestoreDirectory = true })
                 {
@@ -1579,14 +1728,15 @@ namespace JocoRobos.Cad
                     source = Path.GetFullPath(dialog.FileName);
                 }
                 var owner = catalog.Owning(source);
-                if (owner != null && owner.IsLibrary) throw new InvalidOperationException("That's a Library part: use Insert from Library instead.");
+                if (owner != null && owner.IsLibrary) throw new InvalidOperationException("That's a team Library part: search for it in the Library tab instead.");
                 if (owner != null) throw new InvalidOperationException("That file is already in " + owner.Name + ". Drag it into the assembly instead.");
+                bool cancelled;
+                var target = InsertTarget(catalog, Path.GetFileNameWithoutExtension(source), out cancelled);
+                if (cancelled) return;
                 var files = WithDependencies(source);
                 var map = CopyAndRepoint(catalog.Robot, files, ImportTarget(catalog.Robot, Path.GetDirectoryName(source), Path.GetFileNameWithoutExtension(source)),
                     CadByName(Path.GetDirectoryName(source)), reuseAny: false);
-                AddToAssembly(assemblyDoc, map[source]);
-                Message("Inserted " + Path.GetFileName(source) + ". It and " + (files.Count - 1) + " file(s) it needs were copied into:\n" +
-                    Path.GetDirectoryName(map[source]) + "\n\nMate it, save, and Submit. The original download isn't needed anymore.");
+                DeliverPart(target, map[source], Path.GetFileNameWithoutExtension(source));
             });
         }
 
@@ -1910,15 +2060,14 @@ namespace JocoRobos.Cad
             if (assemblyDoc != null)
             {
                 AddToAssembly(assemblyDoc, copy);
-                Message("Inserted " + name + ".\n\nIt's in your robot at:\n" + copy + "\n\nMate it, save, and Submit.");
+                ShowFlash("✓ Inserted " + name + ". Mate it, save, and Submit.");
                 return;
             }
             int errors = 0, warnings = 0;
             int type = copy.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY : (int)swDocumentTypes_e.swDocPART;
             if (application.OpenDoc6(copy, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings) == null)
                 throw new InvalidOperationException(name + " is in your robot at\n" + copy + "\nbut SOLIDWORKS couldn't open it (error " + errors + "). Open it from there.");
-            Message(name + " is in your robot at:\n" + copy + "\n\nIt's open now. Drag it into any assembly (or use Insert Component). " +
-                "It goes to the team with your next Submit; uncheck it there if you end up not using it.");
+            ShowFlash("✓ " + name + " is open and in your robot (90_COTS). Drag it into any assembly; it goes to the team with your next Submit (uncheck it there if you don't use it).");
         }
 
         private ModelDoc2 WritableRobotAssembly(Catalog catalog)

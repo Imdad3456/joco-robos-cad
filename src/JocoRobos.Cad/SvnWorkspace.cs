@@ -364,14 +364,4 @@ namespace JocoRobos.Cad
         }
     }
 
-    internal sealed class WorkspaceSnapshot
-    {
-        internal WorkspaceInfo Info;
-        internal long Local, Head;
-        internal readonly List<string> Incoming = new List<string>();
-        internal readonly Dictionary<string, string> Locks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        internal readonly HashSet<string> Mine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        internal readonly HashSet<string> Changed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        internal readonly HashSet<string> New = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    }
 }

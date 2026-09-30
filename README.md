@@ -11,13 +11,13 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 1. **Install:** download the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest) and run it. Windows warns about an unknown publisher; click **More info → Run anyway**.
 2. **Set up your account:** start SOLIDWORKS. Enter the **setup code** from a mentor, then choose your own username and password. You won't need to type it again.
 3. **Daily work:**
-   - **Open Robot** gets teammates' latest work and opens the robot. Everything is read-only.
-   - **Edit**: select the part or assembly you're working on and click Edit. It's yours until you Submit.
-   - **CAD normally**, and **Save**. New parts go anywhere inside your robot folder.
-   - **Submit**: one window lists your changed and new files. If something needs fixing (an unsaved file, a part from outside the robot…) it says so with a button that fixes it. Say what you changed, click **Submit**, done. The panel confirms it.
-4. **The JOCO ROBOS CAD panel** (right side): the **Robot** tab shows whether you're up to date, who's editing what, and your unsubmitted work (**Submit (3)** means three files are waiting). **Release Edit** gives back a file you didn't change, and **Release my unchanged files** (under your locked files) gives back all of them at once. The **Library** tab searches the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, gearboxes…) and inserts parts with one click: into the assembly you're editing, or, with anything else open, as a part opened by itself that you can use anywhere.
+   - **Open Robot** gets teammates' latest work and opens the robot. Everything is read-only until you change it.
+   - **Just start CADing.** The first change to a part locks it for you (or select a part and click **Edit**). If a teammate is editing it, you're told right away.
+   - **Save** normally. New parts go anywhere inside your robot folder.
+   - **Submit** when you're done: one window lists your files and fixes any problems. The panel confirms it.
+4. **The JOCO ROBOS CAD panel** (right side) shows what's going on and only the button you need right now: Open Robot, Edit, Submit 3, or Close & Update when teammates have new changes. Teammates' changes come in by themselves whenever none of your robot documents are open. The **Library** tab finds any part: the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, tube…) in one search, plus "Import a downloaded CAD file" for vendor downloads.
 
-Less common things live in **Tools → JOCO ROBOS CAD**: Change Password, Release Edit, Set Aside My Changes, Restore Deleted Files, Insert External Part, Import Outside References, Open Old Robot, Choose Robot, and Upgrade Robot Files (once, after importing an older robot).
+Everything else is in **Tools → JOCO ROBOS CAD**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot), your account (Sign In, Change Password, Test Connection), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
 ## For mentors
 

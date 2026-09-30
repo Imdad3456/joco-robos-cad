@@ -2,90 +2,69 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
-using System.Linq;
+using System.Net;
 using System.Windows.Forms;
 
 namespace JocoRobos.Cad
 {
-    /// <summary>What the pane shows; built from server snapshots plus the active SOLIDWORKS document.</summary>
-    internal sealed class PaneState
+    /// <summary>What the panel's buttons and links do; all of it lives in the add-in.</summary>
+    internal sealed class PaneActions
     {
-        internal string Robot = "";
-        internal string Sync = "Checking…";
-        internal Color SyncColor = SystemColors.GrayText;
-        internal string Details = "";
-        internal string ActiveFile = "";
-        internal string ActiveStatus = "";
-        internal Color ActiveColor = SystemColors.ControlText;
-        internal string Locks = "";
-        internal string Update;
-        internal string Pending = "";
-        internal bool HasLocks;
-        // Changed and new files waiting: shown on the Submit button.
-        internal int SubmitCount;
-        // A read-only part or drawing the student can lock: the Edit button names it.
-        internal string EditTarget;
-        // A short success line, like "✓ Submitted 3 files as r42".
-        internal string Flash;
+        internal Action OpenRobot, Edit, Submit, CloseAndUpdate, InstallUpdate, Refresh, ReleaseUnchanged;
+        internal Func<NetworkCredential> Login;
+        internal Action<FrcItem, Dictionary<string, string>> InsertFrc;
+        internal Func<string, List<string>> SearchTeam;
+        internal Action<string> InsertTeam;
+        internal Action BrowseTeam, ImportDownloaded;
     }
 
+    /// <summary>
+    /// The JOCO panel: a status card that answers "what can I do right now?" with one obvious action per section,
+    /// and the Library tab for every way of getting a part. Everything else lives in Tools → JOCO ROBOS CAD.
+    /// </summary>
     internal sealed class StatusPane : UserControl
     {
-        private readonly Label flash = Caption(10f, FontStyle.Bold, "", Color.ForestGreen);
-        private readonly Label robot = Caption(11f, FontStyle.Bold);
-        private readonly Dictionary<string, Button> commandButtons = new Dictionary<string, Button>();
-        private readonly Label sync = Caption(10f, FontStyle.Bold);
-        private readonly Label details = Caption(8.5f, FontStyle.Regular);
-        private readonly Label activeFile = Caption(9.5f, FontStyle.Bold);
-        private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
-        private readonly Label locks = Caption(8.5f, FontStyle.Regular);
-        private readonly Label pending = Caption(9.5f, FontStyle.Bold, "", Color.DarkOrange);
-        private readonly LinkLabel releaseLink = new LinkLabel { Text = "Release my unchanged files", AutoSize = true, Margin = new Padding(0, 4, 0, 0), Visible = false };
+        private readonly Label version = Caption(8.5f, FontStyle.Regular, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText);
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
-        private readonly Button install = new Button { Text = "Install update", Width = 200, Height = 30, FlatStyle = FlatStyle.System };
+        private readonly Button install = Action("Install update", null);
+        private readonly Label flash = Caption(10f, FontStyle.Bold, "", Color.ForestGreen);
+        private readonly Label working = Caption(9.5f, FontStyle.Italic, "", SystemColors.GrayText);
+        private readonly Label robot = Caption(12f, FontStyle.Bold);
+        private readonly Label sync = Caption(10f, FontStyle.Bold);
+        private readonly Label details = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
+        private readonly Button open = Action("Open Robot", "Open Robot");
+        private readonly Button closeUpdate = Action("Close & Update", "Update");
+        private readonly Label activeFile = Caption(10f, FontStyle.Bold);
+        private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
+        private readonly Button edit = Action("Edit", "Edit");
+        private readonly Label pending = Caption(10f, FontStyle.Bold, "", Color.DarkOrange);
+        private readonly Button submit = Action("Submit", "Submit");
+        private readonly Label locks = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
+        private readonly LinkLabel release = new LinkLabel { Text = "Give back the ones I didn't change", AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoScroll = true, Padding = new Padding(10) };
+            WrapContents = false, AutoScroll = true, Padding = new Padding(12, 10, 12, 10) };
+        private readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
+        private readonly TabPage libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
+        private readonly FrcLibraryPanel library;
 
-        internal StatusPane(IEnumerable<KeyValuePair<string, Action>> buttons, Action refresh, Action installUpdate,
-            Func<System.Net.NetworkCredential> login, Action<FrcItem, Dictionary<string, string>> insertFrc, Action teamLibrary, Action releaseUnchanged)
+        internal StatusPane(PaneActions actions)
         {
             BackColor = SystemColors.Window;
-            layout.Controls.Add(Caption(9f, FontStyle.Bold, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText));
-            layout.Controls.Add(update);
-            install.Click += (s, e) => installUpdate();
-            layout.Controls.Add(install);
-            layout.Controls.Add(flash);
-            layout.Controls.Add(robot);
-            layout.Controls.Add(sync);
-            layout.Controls.Add(details);
-            layout.Controls.Add(pending);
-            layout.Controls.Add(Spacer());
-            layout.Controls.Add(activeFile);
-            layout.Controls.Add(activeStatus);
-            layout.Controls.Add(Spacer());
-            foreach (var pair in buttons)
-            {
-                var button = new Button { Text = "  " + pair.Key, Width = 200, Height = 36, Margin = new Padding(0, 2, 0, 2),
-                    Image = ButtonIcon(pair.Key), ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText,
-                    TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0), AutoEllipsis = true };
-                commandButtons[pair.Key] = button;
-                Action action = pair.Value;
-                button.Click += (s, e) => action();
-                layout.Controls.Add(button);
-            }
-            layout.Controls.Add(Spacer());
-            layout.Controls.Add(locks);
-            releaseLink.LinkClicked += (s, e) => releaseUnchanged();
-            layout.Controls.Add(releaseLink);
-            var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
-            check.LinkClicked += (s, e) => refresh();
-            layout.Controls.Add(check);
-            // Robot: the existing status view. Library: FRCDesignLib search and the team Library.
-            var tabs = new TabControl { Dock = DockStyle.Fill };
+            install.Click += (s, e) => actions.InstallUpdate();
+            open.Click += (s, e) => actions.OpenRobot();
+            closeUpdate.Click += (s, e) => actions.CloseAndUpdate();
+            edit.Click += (s, e) => actions.Edit();
+            submit.Click += (s, e) => actions.Submit();
+            release.LinkClicked += (s, e) => actions.ReleaseUnchanged();
+            var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
+            check.LinkClicked += (s, e) => actions.Refresh();
+            foreach (var control in new Control[] { version, update, install, flash, working, robot, sync, details, open, closeUpdate, Spacer(),
+                activeFile, activeStatus, edit, Spacer(), pending, submit, Spacer(), locks, release, check })
+                layout.Controls.Add(control);
             var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
             robotTab.Controls.Add(layout);
-            var libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
-            libraryTab.Controls.Add(new FrcLibraryPanel(login, insertFrc, teamLibrary) { Dock = DockStyle.Fill });
+            library = new FrcLibraryPanel(actions) { Dock = DockStyle.Fill };
+            libraryTab.Controls.Add(library);
             tabs.TabPages.Add(robotTab);
             tabs.TabPages.Add(libraryTab);
             Controls.Add(tabs);
@@ -102,158 +81,82 @@ namespace JocoRobos.Cad
             Show(new PaneState());
         }
 
+        internal void ShowLibrary()
+        {
+            tabs.SelectedTab = libraryTab;
+            library.FocusSearch();
+        }
+
         private static Label Caption(float size, FontStyle style, string text = "", Color? color = null)
         {
             return new Label { AutoSize = true, MaximumSize = new Size(230, 0), Text = text, Margin = new Padding(0, 2, 0, 2),
                 Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size, style), ForeColor = color ?? SystemColors.ControlText };
         }
 
+        private static Button Action(string text, string icon)
+        {
+            return new Button { Text = "  " + text, Width = 200, Height = 38, Margin = new Padding(0, 6, 0, 2), Image = icon == null ? null : ButtonIcon(icon),
+                ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText, TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(6, 0, 0, 0), AutoEllipsis = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9.5f, FontStyle.Bold) };
+        }
+
         // Same artwork as the toolbar (Icons\button_*.png); buttons without a file just show text.
         internal static Image ButtonIcon(string label)
         {
-            string name = label.ToLowerInvariant().Replace("insert from library", "insert-library").Replace("team library…", "insert-library").Replace(' ', '-');
+            string name = label.ToLowerInvariant().Replace(' ', '-');
+            if (name == "library" || name == "insert-from-library") name = "insert-library";
             string path = System.IO.Path.Combine(Addin.IconFolder, "button_" + name + ".png");
             try { return File.Exists(path) ? Image.FromFile(path) : null; }
             catch (OutOfMemoryException) { return null; } // Unreadable image file.
         }
 
-        private static Control Spacer() { return new Panel { Height = 8, Width = 10 }; }
+        private static Control Spacer() { return new Panel { Height = 10, Width = 10 }; }
+
+        private static Color ColorOf(Tone tone)
+        {
+            switch (tone)
+            {
+                case Tone.Muted: return SystemColors.GrayText;
+                case Tone.Good: return Color.ForestGreen;
+                case Tone.Warn: return Color.DarkOrange;
+                case Tone.Bad: return Color.Firebrick;
+                case Tone.Info: return Color.RoyalBlue;
+                default: return SystemColors.ControlText;
+            }
+        }
 
         internal void Show(PaneState state)
         {
-            flash.Text = state.Flash ?? "";
-            flash.Visible = !String.IsNullOrEmpty(state.Flash);
-            Button button;
-            if (commandButtons.TryGetValue("Submit", out button))
-            {
-                button.Text = "  " + (state.SubmitCount > 0 ? "Submit (" + state.SubmitCount + ")" : "Submit");
-                if (button.Font.Bold != state.SubmitCount > 0) button.Font = new Font(button.Font, state.SubmitCount > 0 ? FontStyle.Bold : FontStyle.Regular);
-            }
-            if (commandButtons.TryGetValue("Edit", out button))
-                button.Text = "  " + (state.EditTarget != null ? "Edit " + state.EditTarget : "Edit");
-            robot.Text = state.Robot;
-            sync.Text = state.Sync;
-            sync.ForeColor = state.SyncColor;
-            details.Text = state.Details;
-            details.Visible = state.Details.Length > 0;
-            activeFile.Text = state.ActiveFile;
-            activeStatus.Text = state.ActiveStatus;
-            activeStatus.ForeColor = state.ActiveColor;
-            locks.Text = state.Locks;
-            pending.Text = state.Pending;
-            releaseLink.Visible = state.HasLocks;
-            pending.Visible = state.Pending.Length > 0;
+            layout.SuspendLayout();
             update.Text = state.Update ?? "";
             update.Visible = install.Visible = state.Update != null;
-        }
-
-        /// <summary>Plain-language status for the pane. Pure so it can be reasoned about without SOLIDWORKS.</summary>
-        internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
-            string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false)
-        {
-            var state = new PaneState();
-            if (user == null)
-            {
-                state.Sync = "Not signed in";
-                state.Details = "Click Open Robot to sign in.";
-                return state;
-            }
-            if (robotSnapshot == null)
-            {
-                state.Sync = error == null ? "Checking…" : "Can't reach the server";
-                state.SyncColor = error == null ? SystemColors.GrayText : Color.DarkOrange;
-                state.Details = error ?? "";
-                return state;
-            }
-            var info = robotSnapshot.Info;
-            state.Robot = info.Name + (info.Archived ? " (archived, read-only)" : "");
-            if (robotSnapshot.Local == 0)
-            {
-                state.Sync = "Not downloaded yet";
-                state.SyncColor = Color.DarkOrange;
-                state.Details = "Click Open Robot.";
-            }
-            else if (robotSnapshot.Incoming.Count == 0)
-            {
-                state.Sync = "✓ Up to date";
-                state.SyncColor = Color.ForestGreen;
-            }
-            else
-            {
-                int count = robotSnapshot.Incoming.Count;
-                state.Sync = "⬇ " + count + (count == 1 ? " update" : " updates") + " available";
-                state.SyncColor = Color.DarkOrange;
-                state.Details = String.Join("\n", robotSnapshot.Incoming.AsEnumerable().Reverse().Take(3)) +
-                    "\nSave, close your documents, and click Update.";
-            }
-            state.Details += (state.Details.Length > 0 ? "\n" : "") + "Checked " + checkedAt.ToString("h:mm tt") +
-                (error != null ? " — offline: " + error : "");
-
-            var snapshots = new[] { robotSnapshot, librarySnapshot }.Where(x => x != null).ToList();
-            if (activePath == null)
-            {
-                state.ActiveFile = "No document open";
-            }
-            else
-            {
-                state.ActiveFile = Path.GetFileName(activePath);
-                var owner = snapshots.FirstOrDefault(x => x.Info.Contains(activePath));
-                string lockedBy;
-                if (owner == null)
-                {
-                    state.ActiveStatus = "Not in the robot folder. Teammates can't see this file.";
-                    state.ActiveColor = Color.DarkOrange;
-                }
-                else if (owner.Mine.Contains(activePath))
-                {
-                    state.ActiveStatus = "✎ You are editing this" + (owner.Changed.Contains(activePath) ? " (changes not submitted)" : "") +
-                        (activeReadOnly ? "\nStill read-only in SOLIDWORKS: click Edit again." : "");
-                    state.ActiveColor = Color.ForestGreen;
-                }
-                else if (owner.Locks.TryGetValue(activePath, out lockedBy) && lockedBy == user)
-                {
-                    state.ActiveStatus = "🔒 Locked by you on another computer.\nSubmit it there, or ask a mentor to release it.";
-                    state.ActiveColor = Color.DarkOrange;
-                }
-                else if (activeReadOnly && activeDirty)
-                {
-                    // Changes the student can't save yet: stay visible until they lock or undo.
-                    bool taken = owner.Locks.TryGetValue(activePath, out lockedBy);
-                    state.ActiveStatus = taken
-                        ? "⚠ Unsaved changes, but " + lockedBy + " is editing this file.\nUndo them, or Save As a copy outside the robot folder."
-                        : "⚠ Unsaved changes in a read-only file.\nClick Edit to lock it and keep them. Don't press Ctrl+S: on a read-only file it makes a copy.";
-                    state.ActiveColor = Color.DarkOrange;
-                    if (!taken && !owner.Info.Archived) state.EditTarget = Path.GetFileNameWithoutExtension(activePath);
-                }
-                else if (owner.Locks.TryGetValue(activePath, out lockedBy))
-                {
-                    state.ActiveStatus = "🔒 Locked by " + lockedBy + "\nYou can look, measure, and reference it.";
-                    state.ActiveColor = Color.Firebrick;
-                }
-                else if (owner.New.Contains(activePath))
-                {
-                    state.ActiveStatus = "New file: Submit adds it to " + owner.Info.Label + ".";
-                    state.ActiveColor = Color.RoyalBlue;
-                }
-                else
-                {
-                    state.ActiveStatus = owner.Info.Archived ? "Read-only (archived season)" : "Read-only. Click Edit to change it" +
-                        (owner.Info.IsLibrary ? " in the Library." : ".");
-                    // An assembly's Edit button also works on the selected component, so only parts and drawings are named.
-                    if (!owner.Info.Archived && activeReadOnly && !activePath.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase))
-                        state.EditTarget = Path.GetFileNameWithoutExtension(activePath);
-                }
-            }
-            int unsubmitted = snapshots.Sum(x => x.Changed.Count + x.New.Count);
-            state.SubmitCount = unsubmitted;
-            if (unsubmitted > 0)
-                state.Pending = unsubmitted + (unsubmitted == 1 ? " change" : " changes") + " waiting to submit";
-            var mine = snapshots.SelectMany(x => x.Mine).ToList();
-            state.HasLocks = mine.Count > 0;
-            state.Locks = mine.Count == 0 ? "You have no files locked." :
-                "Your locked files (" + mine.Count + "):\n" + String.Join("\n", mine.Take(8).Select(Path.GetFileName)) +
-                (mine.Count > 8 ? "\n…" : "") + "\nSubmit when done so others can edit them.";
-            return state;
+            flash.Text = state.Flash ?? "";
+            flash.Visible = !String.IsNullOrEmpty(state.Flash);
+            working.Text = state.Working ?? "";
+            working.Visible = !String.IsNullOrEmpty(state.Working);
+            robot.Text = state.Robot;
+            robot.Visible = state.Robot.Length > 0;
+            sync.Text = state.Sync;
+            sync.ForeColor = ColorOf(state.SyncTone);
+            details.Text = state.Details;
+            details.Visible = state.Details.Length > 0;
+            open.Visible = state.ShowOpen;
+            closeUpdate.Visible = state.ShowCloseAndUpdate;
+            activeFile.Text = state.ActiveFile;
+            activeFile.Visible = state.ActiveFile.Length > 0;
+            activeStatus.Text = state.ActiveStatus;
+            activeStatus.ForeColor = ColorOf(state.ActiveTone);
+            activeStatus.Visible = state.ActiveStatus.Length > 0;
+            edit.Visible = state.EditTarget != null;
+            edit.Text = "  " + (String.IsNullOrEmpty(state.EditTarget) ? "Edit" : "Edit " + state.EditTarget);
+            pending.Text = state.Pending;
+            pending.Visible = state.Pending.Length > 0;
+            submit.Visible = state.SubmitCount > 0;
+            submit.Text = "  Submit " + state.SubmitCount;
+            locks.Text = state.Locks;
+            locks.Visible = state.Locks.Length > 0;
+            release.Visible = state.HasLocks;
+            layout.ResumeLayout();
         }
     }
 }

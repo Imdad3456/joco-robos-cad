@@ -125,9 +125,44 @@ static class Program
             Check(shaft.CheckNumber("abc", out typed) != null && shaft.CheckNumber("NaN", out typed) != null, "Non-number length");
             Check(new FrcChoice { Name = "Teeth", Integer = true, Min = "0", Max = "255" }.CheckNumber("3.5", out typed) != null, "Fractional whole number");
             SubmitChecks(temp);
+            PaneChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
         finally { Directory.Delete(temp, true); }
+    }
+
+    // The panel shows one obvious next action for the situation, never a wall of commands.
+    static void PaneChecks()
+    {
+        var season = new WorkspaceInfo("1997-Robot", Guid.NewGuid(), false, false);
+        string part = Path.Combine(season.Root, "30_Shooter", "ShooterPlate.SLDPRT");
+        string asm = Path.Combine(season.Root, "30_Shooter", "Shooter.SLDASM");
+        Func<WorkspaceSnapshot> fresh = () => new WorkspaceSnapshot { Info = season, Local = 10, Head = 10 };
+        var now = DateTime.Now;
+
+        var s = PaneState.Describe(null, null, null, null, false, null, now);
+        Check(s.ShowOpen && s.SubmitCount == 0 && s.EditTarget == null, "Not signed in: only Open Robot");
+        var snap = fresh();
+        s = PaneState.Describe("sam", snap, null, null, false, null, now);
+        Check(s.ShowOpen && !s.ShowCloseAndUpdate && s.EditTarget == null && s.SubmitCount == 0, "Nothing open: Open Robot");
+        s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
+        Check(!s.ShowOpen && s.EditTarget == "ShooterPlate" && s.ActiveStatus.Contains("Nobody else"), "Free read-only part: Edit it");
+        s = PaneState.Describe("sam", snap, null, asm, true, null, now, robotOpen: true);
+        Check(s.EditTarget == "", "Assembly: generic Edit (may lock the selected part)");
+        snap.Locks[part] = "sarah";
+        s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
+        Check(s.EditTarget == null && s.ActiveStatus.Contains("sarah is editing") && s.ActiveTone == Tone.Bad, "Teammate's file: no button");
+        snap = fresh(); snap.Locks[part] = "sam"; snap.Mine.Add(part); snap.Changed.Add(part);
+        s = PaneState.Describe("sam", snap, null, part, false, null, now, robotOpen: true);
+        Check(s.EditTarget == null && s.SubmitCount == 1 && s.ActiveStatus.Contains("editing this (saved)") && s.Locks.Contains("ShooterPlate"), "Editing: Submit 1");
+        snap = fresh(); snap.Head = 12; snap.Incoming.Add("r11 sarah: intake"); snap.Incoming.Add("r12 sarah: arm");
+        s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
+        Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync.Contains("2 teammate"), "Teammate changes with robot open: Close & Update");
+        s = PaneState.Describe("sam", snap, null, null, false, null, now);
+        Check(s.CanAutoUpdate && !s.ShowCloseAndUpdate, "Nothing open: teammate changes come in by themselves");
+        snap.New.Add(Path.Combine(season.Root, "New.SLDPRT"));
+        s = PaneState.Describe("sam", snap, null, null, false, null, now);
+        Check(!s.CanAutoUpdate && !s.ShowCloseAndUpdate && s.Details.Contains("after you Submit") && s.SubmitCount == 1, "Own unsubmitted work: Submit first");
     }
 
     // The Submit window's preflight: every predictable problem, as structured issues with the right fix buttons.

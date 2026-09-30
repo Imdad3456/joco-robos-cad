@@ -10,13 +10,16 @@ using System.Windows.Forms;
 namespace JocoRobos.Cad
 {
     /// <summary>
-    /// Library tab: search FRCDesignLib and insert parts with one click. All network work runs in the
+    /// Library tab: every way of getting a part. One search covers the team Library and FRCDesignLib; downloaded files are
+    /// imported from the bottom of the tab. Insert with one click. All network work runs in the
     /// background and is marshalled back to this control; SOLIDWORKS calls happen only in the insert callback.
     /// </summary>
     internal sealed class FrcLibraryPanel : UserControl
     {
         private readonly Func<NetworkCredential> login;
         private readonly Action<FrcItem, Dictionary<string, string>> insert;
+        private readonly PaneActions actions;
+        private string selectedTeam;
         // Everything stretches with the task pane: results take the top half, details the bottom half.
         private const int Thumb = 72;
         private readonly TextBox search = new TextBox { Dock = DockStyle.Fill };
@@ -37,20 +40,22 @@ namespace JocoRobos.Cad
         private FrcItem selected;
         private int generation;
 
-        internal FrcLibraryPanel(Func<NetworkCredential> login, Action<FrcItem, Dictionary<string, string>> insert, Action jocoLibrary)
+        internal FrcLibraryPanel(PaneActions actions)
         {
-            this.login = login;
-            this.insert = insert;
+            this.actions = actions;
+            login = actions.Login;
+            insert = actions.InsertFrc;
             BackColor = SystemColors.Window;
-            var team = new Button { Text = "  Team Library…", Dock = DockStyle.Fill, Height = 36, Image = StatusPane.ButtonIcon("Team Library…"),
-                ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText, TextAlign = ContentAlignment.MiddleLeft };
-            team.Click += (s, e) => jocoLibrary();
-            var heading = new Label { Text = "FRCDesignLib", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 8, 0, 2) };
-            var hint = new Label { Text = "The first time anyone on the team uses a part (and configuration), it's prepared for the team Library. That takes a little longer.",
+            var heading = new Label { Text = "Find a part", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 4, 0, 2) };
+            var hint = new Label { Text = "Team Library parts come first, then FRCDesignLib (motors, bearings, gears, tube…). The first time anyone uses an FRCDesignLib part and size, it's prepared for the team, which takes a little longer.",
                 AutoSize = true, ForeColor = SystemColors.GrayText, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
+            var browse = new LinkLabel { Text = "Browse the team Library folder…", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
+            browse.LinkClicked += (s, e) => actions.BrowseTeam();
+            var import = new LinkLabel { Text = "Import a downloaded CAD file (McMaster, vendor site…)…", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+            import.LinkClicked += (s, e) => actions.ImportDownloaded();
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(8) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            foreach (var row in new[] { team, (Control)heading, search, status }) { grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); grid.Controls.Add(row); }
+            foreach (var row in new[] { (Control)heading, search, status }) { grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); grid.Controls.Add(row); }
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             grid.Controls.Add(results);
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
@@ -59,6 +64,10 @@ namespace JocoRobos.Cad
             grid.Controls.Add(insertButton);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(hint);
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(browse);
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(import);
             details.Controls.Add(picture);
             details.Controls.Add(title);
             details.Controls.Add(subtitle);
@@ -73,6 +82,7 @@ namespace JocoRobos.Cad
             results.SelectedIndexChanged += (s, e) => ShowSelected();
             insertButton.Click += (s, e) =>
             {
+                if (selectedTeam != null) { actions.InsertTeam(selectedTeam); return; }
                 if (selected == null) return;
                 // A mistyped length is caught here, next to the box, instead of after the server round trip.
                 foreach (Control holder in choices.Controls)
@@ -88,7 +98,13 @@ namespace JocoRobos.Cad
                 }
                 insert(selected, CurrentChoices(true));
             };
-            status.Text = "Search motors, bearings, gears, gearboxes…";
+            status.Text = "Search the team Library and FRCDesignLib…";
+        }
+
+        internal void FocusSearch()
+        {
+            search.Focus();
+            search.SelectAll();
         }
 
         // FlowLayoutPanels don't stretch their children, so size them to the pane's width by hand.
@@ -141,17 +157,29 @@ namespace JocoRobos.Cad
             int mine = ++generation;
             if (query.Length < 2) { results.Items.Clear(); status.Text = "Type at least 2 letters."; return; }
             status.Text = "Searching…";
+            // The team Library is local files: quick, and shown even when FRCDesignLib can't be reached.
+            List<string> team;
+            try { team = actions.SearchTeam(query); }
+            catch (Exception) { team = new List<string>(); }
+            results.BeginUpdate();
+            results.Items.Clear();
+            foreach (string path in team)
+                results.Items.Add(new ListViewItem(new[] { Path.GetFileNameWithoutExtension(path), "Team Library · " + Path.GetFileName(Path.GetDirectoryName(path)) })
+                    { Tag = path, ImageKey = "placeholder" });
+            results.EndUpdate();
             Background(client => client.Search(query), found =>
             {
                 if (mine != generation) return; // A newer search is on its way.
                 results.BeginUpdate();
-                results.Items.Clear();
+                foreach (var row in results.Items.Cast<ListViewItem>().Where(r => r.Tag is FrcItem).ToList()) results.Items.Remove(row);
                 foreach (var item in found)
                     results.Items.Add(new ListViewItem(new[] { item.Name, item.Vendor + " · " + item.Group }) { Tag = item, ImageKey = pictures.Images.ContainsKey(item.Id) ? item.Id : "placeholder" });
                 results.EndUpdate();
-                status.Text = found.Count == 0 ? "Nothing found." : found.Count + " found" + (found.Count >= 40 ? " (showing 40; be more specific)" : "");
+                int total = found.Count + team.Count;
+                status.Text = total == 0 ? "Nothing found." : (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
+                    (found.Count >= 40 ? " (showing 40; be more specific)" : "");
                 LoadSmallPictures(found.Where(i => !pictures.Images.ContainsKey(i.Id)).ToList(), mine);
-            }, error => { if (mine == generation) status.Text = error?.Message ?? "Search failed."; });
+            }, error => { if (mine == generation) status.Text = (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
         }
 
         // One after another, so 40 results don't open 40 connections; stops if the student searches again.
@@ -167,7 +195,7 @@ namespace JocoRobos.Cad
                     using (var image = Image.FromStream(stream))
                         pictures.Images.Add(item.Id, new Bitmap(image, Thumb, Thumb));
                     foreach (ListViewItem row in results.Items)
-                        if (((FrcItem)row.Tag).Id == item.Id) row.ImageKey = item.Id;
+                        if (row.Tag is FrcItem && ((FrcItem)row.Tag).Id == item.Id) row.ImageKey = item.Id;
                 }
                 catch (ArgumentException) { }
                 LoadSmallPictures(items.Skip(1).ToList(), mine);
@@ -177,6 +205,20 @@ namespace JocoRobos.Cad
         private void ShowSelected()
         {
             if (results.SelectedItems.Count == 0) return;
+            selectedTeam = results.SelectedItems[0].Tag as string;
+            if (selectedTeam != null)
+            {
+                // A team Library part: nothing to configure.
+                selected = null;
+                title.Text = Path.GetFileNameWithoutExtension(selectedTeam);
+                subtitle.Text = "Team Library · " + Path.GetFileName(Path.GetDirectoryName(selectedTeam));
+                choices.Controls.Clear();
+                inputs.Clear();
+                hidden.Clear();
+                picture.Image = null;
+                insertButton.Enabled = true;
+                return;
+            }
             var item = (FrcItem)results.SelectedItems[0].Tag;
             selected = null;
             insertButton.Enabled = false;
@@ -193,7 +235,8 @@ namespace JocoRobos.Cad
             });
             Background(client => client.Details(item.Id), details =>
             {
-                if (results.SelectedItems.Count == 0 || ((FrcItem)results.SelectedItems[0].Tag).Id != details.Id) return;
+                var current = results.SelectedItems.Count == 0 ? null : results.SelectedItems[0].Tag as FrcItem;
+                if (current == null || current.Id != details.Id) return;
                 selected = details;
                 subtitle.Text = details.Vendor + (String.IsNullOrEmpty(details.PartNumber) ? "" : " · " + details.PartNumber) + " · " + details.Group;
                 BuildChoices(details);

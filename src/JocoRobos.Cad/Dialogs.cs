@@ -18,6 +18,21 @@ namespace JocoRobos.Cad
     {
         internal static T Run<T>(string message, Func<T> action)
         {
+            // Most operations finish in a moment: only show the window (which blocks SOLIDWORKS while files change) if one doesn't.
+            var quick = Task.Run(action);
+            try
+            {
+                if (quick.Wait(500)) return quick.Result;
+            }
+            catch (AggregateException error)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.GetBaseException()).Throw();
+            }
+            return Show(message, quick);
+        }
+
+        private static T Show<T>(string message, Task<T> running)
+        {
             T result = default(T);
             Exception failure = null;
             bool completed = false;
@@ -30,7 +45,7 @@ namespace JocoRobos.Cad
                 form.FormClosing += (s, e) => { if (!completed) e.Cancel = true; };
                 form.Shown += async (s, e) =>
                 {
-                    try { result = await Task.Run(action); }
+                    try { result = await running; }
                     catch (Exception exception) { failure = exception; }
                     finally { completed = true; form.Close(); }
                 };
