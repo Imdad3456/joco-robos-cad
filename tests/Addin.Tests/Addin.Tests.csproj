@@ -9,5 +9,6 @@
     <Compile Include="../../src/JocoRobos.Cad/WorkspacePolicy.cs" Link="WorkspacePolicy.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Catalog.cs" Link="Catalog.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Updater.cs" Link="Updater.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/FrcClient.cs" Link="FrcClient.cs" />
   </ItemGroup>
 </Project>

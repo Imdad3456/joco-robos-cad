@@ -218,17 +218,43 @@ namespace JocoRobos.Cad
             FitWidths();
         }
 
-        // FRCDesignLib hides options that don't apply to the current choices (for example a case only for one cap type).
+        // FRCDesignLib hides settings and individual options that don't apply to the current choices
+        // (for example a case only for one cap type, or bore sizes that only exist for some bearing sizes).
+        private bool updating;
         private void UpdateVisibility(FrcItem item)
         {
-            var current = CurrentChoices(false);
-            foreach (Control holder in choices.Controls)
+            if (updating) return;
+            updating = true;
+            try
             {
-                var choice = (FrcChoice)holder.Tag;
-                bool show = choice.VisibleWhen == null || choice.VisibleWhen.Holds(current);
-                holder.Visible = show;
-                if (show) hidden.Remove(choice.Id); else hidden.Add(choice.Id);
+                var all = item.Choices ?? new List<FrcChoice>();
+                for (int pass = 0; pass < 3; pass++) // A changed option can change what else is visible.
+                {
+                    var current = CurrentChoices(false);
+                    foreach (Control holder in choices.Controls)
+                    {
+                        var choice = (FrcChoice)holder.Tag;
+                        var combo = inputs.ContainsKey(choice.Id) ? inputs[choice.Id] as ComboBox : null;
+                        if (combo != null)
+                        {
+                            var visible = choice.VisibleOptions(current, all);
+                            var selected = combo.SelectedItem as FrcOption;
+                            if (!visible.Select(o => o.Id).SequenceEqual(combo.Items.Cast<FrcOption>().Select(o => o.Id)))
+                            {
+                                combo.Items.Clear();
+                                foreach (var option in visible) combo.Items.Add(option);
+                                // Keep the choice if still offered, else the default, else the first (FRCDesignApp's rule).
+                                combo.SelectedItem = visible.FirstOrDefault(o => selected != null && o.Id == selected.Id)
+                                    ?? visible.FirstOrDefault(o => o.Id == choice.Default) ?? visible.FirstOrDefault();
+                            }
+                        }
+                        bool show = (choice.VisibleWhen == null || choice.VisibleWhen.Holds(current, all)) && (combo == null || combo.Items.Count > 0);
+                        holder.Visible = show;
+                        if (show) hidden.Remove(choice.Id); else hidden.Add(choice.Id);
+                    }
+                }
             }
+            finally { updating = false; }
         }
 
         private Dictionary<string, string> CurrentChoices(bool visibleOnly)

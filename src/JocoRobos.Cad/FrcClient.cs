@@ -24,14 +24,34 @@ namespace JocoRobos.Cad
         [DataMember(Name = "id")] public string Id { get; set; }
         [DataMember(Name = "value")] public string Value { get; set; }
         [DataMember(Name = "children")] public List<FrcCondition> Children { get; set; }
+        [DataMember(Name = "start")] public string Start { get; set; }
+        [DataMember(Name = "end")] public string End { get; set; }
 
-        internal bool Holds(IDictionary<string, string> chosen)
+        /// <summary>Same rules as FRCDesignApp (and the JOCO server): all / any / equals / range over an enum's option order.</summary>
+        internal bool Holds(IDictionary<string, string> chosen, IList<FrcChoice> choices)
         {
             string current;
             if (Mode == "equals") return chosen.TryGetValue(Id ?? "", out current) && current == Value;
-            var results = (Children ?? new List<FrcCondition>()).Select(c => c.Holds(chosen)).ToList();
+            if (Mode == "range")
+            {
+                var target = choices.FirstOrDefault(c => c.Id == Id && c.Kind == "enum");
+                if (target == null) return true;
+                var ids = (target.Options ?? new List<FrcOption>()).Select(o => o.Id).ToList();
+                int start = ids.IndexOf(Start), end = ids.IndexOf(End);
+                if (start < 0 || end < start) return true;
+                return chosen.TryGetValue(Id ?? "", out current) && ids.GetRange(start, end - start + 1).Contains(current);
+            }
+            var results = (Children ?? new List<FrcCondition>()).Select(c => c.Holds(chosen, choices)).ToList();
+            if (results.Count == 0) return true;
             return Mode == "any" ? results.Any(x => x) : results.All(x => x);
         }
+    }
+
+    [DataContract]
+    internal sealed class FrcOptionRule
+    {
+        [DataMember(Name = "options")] public List<string> Options { get; set; }
+        [DataMember(Name = "visibleWhen")] public FrcCondition VisibleWhen { get; set; }
     }
 
     [DataContract]
@@ -43,6 +63,24 @@ namespace JocoRobos.Cad
         [DataMember(Name = "default")] public string Default { get; set; }
         [DataMember(Name = "options")] public List<FrcOption> Options { get; set; }
         [DataMember(Name = "visibleWhen")] public FrcCondition VisibleWhen { get; set; }
+        [DataMember(Name = "optionRules")] public List<FrcOptionRule> OptionRules { get; set; }
+
+        /// <summary>Options no rule names are always offered; a named option shows while any of its rules holds.</summary>
+        internal List<FrcOption> VisibleOptions(IDictionary<string, string> chosen, IList<FrcChoice> choices)
+        {
+            var controlled = new HashSet<string>();
+            var shown = new HashSet<string>();
+            foreach (var rule in OptionRules ?? new List<FrcOptionRule>())
+            {
+                bool holds = rule.VisibleWhen == null || rule.VisibleWhen.Holds(chosen, choices);
+                foreach (string option in rule.Options ?? new List<string>())
+                {
+                    controlled.Add(option);
+                    if (holds) shown.Add(option);
+                }
+            }
+            return (Options ?? new List<FrcOption>()).Where(o => !controlled.Contains(o.Id) || shown.Contains(o.Id)).ToList();
+        }
     }
 
     [DataContract]
@@ -63,6 +101,7 @@ namespace JocoRobos.Cad
     {
         [DataMember(Name = "status")] public string Status { get; set; }
         [DataMember(Name = "fingerprint")] public string Fingerprint { get; set; }
+        [DataMember(Name = "token")] public string Token { get; set; }
         [DataMember(Name = "libraryPath")] public string LibraryPath { get; set; }
         [DataMember(Name = "name")] public string Name { get; set; }
         [DataMember(Name = "by")] public string By { get; set; }
@@ -110,29 +149,47 @@ namespace JocoRobos.Cad
             return data;
         }
 
+        /// <summary>Identifies this Windows user on this PC, so the same account on two computers can't both import one part.</summary>
+        internal static string ClientId
+        {
+            get
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
+                {
+                    string id = key.GetValue("ClientId") as string;
+                    if (String.IsNullOrEmpty(id))
+                    {
+                        id = Guid.NewGuid().ToString("N");
+                        key.SetValue("ClientId", id, Microsoft.Win32.RegistryValueKind.String);
+                    }
+                    return id;
+                }
+            }
+        }
+
         internal FrcClaim Claim(string id, IDictionary<string, string> configuration)
         {
-            var body = new StringBuilder("{\"id\": ").Append(Json(id)).Append(", \"configuration\": {");
+            var body = new StringBuilder("{\"id\": ").Append(Json(id)).Append(", \"client\": ").Append(Json(ClientId)).Append(", \"configuration\": {");
             body.Append(String.Join(", ", configuration.Select(pair => Json(pair.Key) + ": " + Json(pair.Value)))).Append("}}");
             return Read<FrcClaim>(Send("POST", "claim", Encoding.UTF8.GetBytes(body.ToString())));
         }
 
-        internal void Download(string fingerprint, string target)
+        internal void Download(FrcClaim claim, string target)
         {
-            byte[] data = Send("GET", "download/" + Uri.EscapeDataString(fingerprint), null, 300000);
+            byte[] data = Send("GET", "download/" + Uri.EscapeDataString(claim.Fingerprint), null, 300000, claim.Token);
             if (data.Length == 0) throw new InvalidOperationException("The server sent an empty file.");
             Directory.CreateDirectory(Path.GetDirectoryName(target));
             File.WriteAllBytes(target, data);
         }
 
-        internal void Complete(string fingerprint)
+        internal void Complete(FrcClaim claim)
         {
-            Send("POST", "complete", Encoding.UTF8.GetBytes("{\"fingerprint\": " + Json(fingerprint) + "}"));
+            Send("POST", "complete", Encoding.UTF8.GetBytes("{\"fingerprint\": " + Json(claim.Fingerprint) + ", \"token\": " + Json(claim.Token) + "}"));
         }
 
-        internal void Abandon(string fingerprint)
+        internal void Abandon(FrcClaim claim)
         {
-            try { Send("POST", "abandon", Encoding.UTF8.GetBytes("{\"fingerprint\": " + Json(fingerprint) + "}")); }
+            try { Send("POST", "abandon", Encoding.UTF8.GetBytes("{\"fingerprint\": " + Json(claim.Fingerprint) + ", \"token\": " + Json(claim.Token) + "}")); }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO FRC abandon: " + exception.Message); }
         }
 
@@ -154,7 +211,7 @@ namespace JocoRobos.Cad
                 return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream);
         }
 
-        private byte[] Send(string method, string path, byte[] body, int timeout = 60000)
+        private byte[] Send(string method, string path, byte[] body, int timeout = 60000, string token = null)
         {
             var request = (HttpWebRequest)WebRequest.Create(new Uri(WorkspaceInfo.Server, "admin/api/frcdesign/" + path));
             request.Method = method;
@@ -163,6 +220,7 @@ namespace JocoRobos.Cad
             request.AllowAutoRedirect = false;
             request.UserAgent = "JOCO-ROBOS-CAD";
             request.Headers["X-Joco-Client"] = "addin";
+            if (token != null) request.Headers["X-Joco-Token"] = token;
             request.Headers[HttpRequestHeader.Authorization] = "Basic " +
                 Convert.ToBase64String(Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
             if (body != null)

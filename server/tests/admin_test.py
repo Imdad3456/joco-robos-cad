@@ -277,8 +277,9 @@ config = {'parameters': [{'id': 'Cap', 'name': 'Back Cap', 'type': 'enum', 'defa
 seed = {'catalog.json': json.dumps(catalog), 'config-t-motor-m2.json': json.dumps(config), 'thumb-e1-m1-300x300': 'GIF89a-fake'}
 for name, text in seed.items():
     subprocess.run(['docker', 'exec', '-i', 'joco-test', 'sh', '-c', f"mkdir -p /var/lib/svn/.frcdesign && cat > '/var/lib/svn/.frcdesign/{name}' && chown -R www-data:www-data /var/lib/svn/.frcdesign"], input=text.encode())
-def frc(user, method, path, body=None, client='addin'):
+def frc(user, method, path, body=None, client='addin', token=None):
     r = urllib.request.Request(BASE + '/admin/api/frcdesign/' + path, data=json.dumps(body).encode() if body is not None else None, method=method)
+    if token: r.add_header('X-Joco-Token', token)
     r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
     if client: r.add_header('X-Joco-Client', client)
     r.add_header('Content-Type', 'application/json')
@@ -293,21 +294,26 @@ s_, body = frc(U, 'GET', 'search?q=bearing'); check(s_ == 200 and [r['name'] for
 s_, body = frc(U, 'GET', 'search?q=ctre'); check(s_ == 200 and body['results'][0]['kind'] == 'assembly', 'search by vendor')
 s_, body = frc(U, 'GET', 'item/t-motor'); check(s_ == 200 and body['parameters'][0]['id'] == 'Cap' and body['partNumber'] == 'TM-1', 'item details')
 check(body['choices'][1] == {'id': 'Case', 'name': 'Include Case', 'kind': 'boolean', 'default': 'true', 'options': [],
-                             'visibleWhen': {'mode': 'equals', 'id': 'Cap', 'value': 'Std'}}, 'choices in JOCO shape ' + str(body['choices']))
+                             'visibleWhen': {'mode': 'equals', 'id': 'Cap', 'value': 'Std'}, 'optionRules': []}, 'choices in JOCO shape ' + str(body['choices']))
 check(frc(U, 'GET', 'item/../../etc/passwd')[0] in (400, 403, 404) and frc(U, 'GET', 'item/not-a-real-id')[0] == 404, 'unknown item refused')
 s_, body = frc(U, 'GET', 'thumb/t-bearing'); check(s_ == 200 and body.startswith(b'GIF89a'), 'thumbnail proxied from cache')
 s_, body = frc(U, 'POST', 'claim', {'id': 't-motor', 'configuration': {'Cap': 'Nope'}}); check(s_ == 400 and 'Invalid choice' in body, 'invalid configuration refused')
 s_, body = frc(U, 'POST', 'claim', {'id': 't-motor', 'configuration': {'Cap': 'Std'}})
 check(s_ == 200 and body['status'] == 'yours' and body['libraryPath'] == 'FRCDesignLib/Motors & Servos/Test Motor (Standard).SLDPRT', 'claim configured motor ' + str(body))
-s_, body = frc(U, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'yours' and body['libraryPath'] == 'FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT', 'claim bearing')
-fp = body['fingerprint']
-s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'busy' and body['by'] == 'sarah', 'second student sees busy')
+s_, body = frc(U, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-a'}); check(s_ == 200 and body['status'] == 'yours' and body['libraryPath'] == 'FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT' and body['token'], 'claim bearing')
+fp, tok = body['fingerprint'], body['token']
+s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-m'}); check(s_ == 200 and body['status'] == 'busy' and body['by'] == 'sarah', 'second student sees busy')
+s_, body = frc(U, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-b'}); check(s_ == 200 and body['status'] == 'busy' and 'another computer' in body['by'], 'same account on another computer sees busy')
+s_, body = frc(U, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-a'}); check(s_ == 200 and body['status'] == 'yours' and body['token'] != tok, 'same computer can retry (new token)')
+old_tok, tok = tok, body['token']
+s_, body = frc(U, 'GET', 'download/' + fp, token=old_tok); check(s_ == 409, 'old reservation token refused')
 s_, body = frc(M, 'GET', 'download/' + fp); check(s_ == 409, 'only the claimant can download')
-s_, body = frc(U, 'GET', 'download/' + fp); check(s_ == 503 and 'not set up' in body, 'no Onshape key: clear message, no export')
-s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp}); check(s_ == 409 and 'Submit it first' in body, 'complete requires the Library file')
+s_, body = frc(U, 'GET', 'download/' + fp, token=tok); check(s_ == 503 and 'not set up' in body, 'no Onshape key: clear message, no export')
+s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp, 'token': tok}); check(s_ == 409 and 'Submit it first' in body, 'complete requires the Library file')
 sh('rm -rf /tmp/lib2 && svn co -q http://localhost/svn/Library /tmp/lib2' + AUTH + ' && mkdir -p "/tmp/lib2/FRCDesignLib/Bearings" && printf part > "/tmp/lib2/FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && cd /tmp/lib2 && svn add -q --parents "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ps -q svn:needs-lock "*" "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ps -q svn:mime-type application/octet-stream "FRCDesignLib/Bearings/Test Flanged Bearing.SLDPRT" && svn ci -q -m "Import from FRCDesignLib"' + AUTH)
-s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp}); check(s_ == 200 and body['status'] == 'ready', 'complete after Library submit ' + str(body))
-s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing'}); check(s_ == 200 and body['status'] == 'ready' and body['libraryPath'].endswith('Test Flanged Bearing.SLDPRT'), 'next student reuses the Library copy')
-page = req('/admin/library', *M)[2]; check('FRCDesignLib imports' in page and 'Test Flanged Bearing' in page and 'no Onshape key' in page, 'mentor sees FRCDesignLib imports')
+# "complete" never arrives (network died after the commit): the next claim heals the registry by itself.
+s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-m'}); check(s_ == 200 and body['status'] == 'ready' and body['libraryPath'].endswith('Test Flanged Bearing.SLDPRT'), 'next student reuses the Library copy (self-healed) ' + str(body))
+s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp, 'token': tok}); check(s_ == 200 and body['status'] == 'ready', 'late complete is harmless ' + str(body))
+page = req('/admin/library', *M)[2]; check('FRCDesignLib imports' in page and 'Test Flanged Bearing' in page and 'no Onshape key' in page and 'Onshape API calls this year' in page, 'mentor sees FRCDesignLib imports')
 s_, body = frc(U, 'POST', 'abandon', {'fingerprint': 'nothing'}); check(s_ == 200, 'abandon is harmless')
 print(f'PASS: {n} server/admin checks')

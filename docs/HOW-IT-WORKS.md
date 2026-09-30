@@ -27,7 +27,9 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 | **Edit** | Checks you have the newest version, takes a non-stealing SVN lock, confirms both the server's lock owner and this PC's lock token, then makes the document writable without reloading it. Works on the component selected in an assembly (lightweight ones are resolved first). |
 | **Submit** | Lists changed, new, and still-locked files; checks every reference is inside the robot and new names are unique; adds new files with the lock properties; commits one revision; releases only the submitted files' locks. A dropped connection is journaled: the next attempt compares the server's bytes with yours, so work is never lost or submitted twice. |
 | **Insert from Library** | Copies the Library part (and an assembly's parts) into `90_COTS\<library folder>` the first time; later inserts reuse that copy. The robot's copy never changes when the Library does. |
-| **FRCDesignLib Insert** | Asks the server whether the team already imported this part + configuration. If yes, it's a Library insert. If not, the server exports it from Onshape once (Parasolid; assemblies flattened to one multi-body part), SOLIDWORKS saves it as a native `.SLDPRT` in `Library\FRCDesignLib\<category>`, it's submitted to the Library, then inserted. The first student to request an item reserves it, so there are no duplicates. |
+| **FRCDesignLib Insert** | Asks the server whether the team already imported this part + configuration. If yes, it's a Library insert. If not, the server exports it from Onshape once (Parasolid; assemblies flattened to one multi-body part), SOLIDWORKS saves it as a native `.SLDPRT` in `Library\FRCDesignLib\<category>`, it's submitted to the Library, then inserted. The first request reserves the item for that student **on that computer** (a token per claim), so there are no duplicates, even from the same account on two PCs. It heals itself: if the file reached the Library but the last step failed, the next request just uses it; if it didn't, leftovers are cleared. Configuration choices follow FRCDesignApp's own rules (conditions, ranges, per-option visibility). The server counts real Onshape API calls and stops new imports before the yearly allowance runs out; parts already in the Library keep working. |
+
+**Limits on purpose:** new file paths longer than 240 characters are refused (Windows and SOLIDWORKS get unreliable near 260). Only SOLIDWORKS files (`.SLDPRT`, `.SLDASM`, `.SLDDRW`) are managed. Design-table spreadsheets, decals, Toolbox, and similar non-CAD dependencies aren't synced yet; report any you run into.
 
 **Safety nets:**
 - The first change to a read-only team file offers to lock it.
@@ -58,7 +60,7 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 
 - Push a `v*` tag, and GitHub Actions (`.github/workflows/build.yml`) builds the installer, attaches it to a Release, and stages it on the server with its SHA-256.
 - A mentor clicks **Release to students**. Each add-in offers the update once and checks the SHA-256. The installer waits for SOLIDWORKS to close, installs silently (logging to `%LOCALAPPDATA%\JocoRobos.Cad\updates`), and reopens SOLIDWORKS.
-- A *required* update blocks Edit, Submit, and inserts until installed.
+- A *required* update blocks **new** edits and inserts until installed. Submit, Set Aside, and Release Edit always work, so nobody's unfinished work is trapped behind an update.
 - Every add-in reports its version, so the Accounts tab shows who has what.
 
 ## Backups

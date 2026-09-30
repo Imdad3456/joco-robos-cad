@@ -43,6 +43,20 @@ namespace JocoRobos.Cad
             catch (ArgumentException) { return false; }
         }
 
+        /// <summary>A folder name that doesn't exist yet: the timestamp to the second, then " (2)", " (3)"… if needed.</summary>
+        internal static string UniqueFolder(string parent, DateTime now)
+        {
+            string stamp = now.ToString("yyyy-MM-dd HHmmss", System.Globalization.CultureInfo.InvariantCulture);
+            string candidate = Path.Combine(parent, stamp);
+            for (int i = 2; Directory.Exists(candidate) || File.Exists(candidate); i++)
+                candidate = Path.Combine(parent, stamp + " (" + i + ")");
+            return candidate;
+        }
+
+        // Windows and SOLIDWORKS can misbehave near the classic 260-character path limit; leave room for SVN and temp files.
+        internal const int MaxPath = 240;
+        internal static bool TooLong(string path) { return path != null && path.Length > MaxPath; }
+
         // SOLIDWORKS owner/lock files ("~$Part.SLDPRT") share CAD extensions but are never submitted.
         internal static bool IsSubmittableCad(string path)
         {

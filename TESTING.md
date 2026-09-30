@@ -42,6 +42,7 @@ A works in `50_Electrical\battery holder.SLDASM` and B works in `50_Electrical\M
 | 2.6 | Both | **Edit** your assembly, save a new part named `Claw.SLDPRT` into `80_Unsorted`, insert it, save → **Submit** | Refused: "same name as 40_Climber\Coil climb\Claw.SLDPRT". Delete that part from the assembly, save, delete the file in Explorer, then **Release Edit** your assembly | ☐ |
 | 2.7 | Both | **File → Open** `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B), without Edit. Wait 10 seconds, change a dimension | "You're changing … Lock it now?" → **No** → the panel turns yellow: "⚠ Unsaved changes in a read-only file" | ☐ |
 | 2.8 | Both | Now click **Edit** | Locked; your change is still there (tell A if SOLIDWORKS reloaded it instead). Close **without saving** | ☐ |
+| 2.8b | Both | Open `80_Unsorted\id2_1.SLDPRT` and change a dimension **right away** (within 5 seconds), without Edit | A few seconds later you are still asked "Lock it now?" → **No**, close without saving | ☐ |
 | 2.9 | Both | Look at "Your locked files" in the panel | That part disappears within a few seconds (unchanged file closed → lock released) | ☐ |
 | 2.10 | Both | Close SOLIDWORKS documents. In Explorer, delete `2026-Robot\80_Unsorted\pvc1intube.SLDPRT`. **Tools → Restore Deleted Files** | Lists `pvc1intube.SLDPRT` → Restore → it's back | ☐ |
 
@@ -62,6 +63,7 @@ This is the test that proves nobody can overwrite anyone.
 | 3.9 | A | Web **Locks** → **Release** B's `TPU_MotorCover_v2` lock. Then in SOLIDWORKS, **Edit** `TPU_MotorCover_v2` | A now holds it | ☐ |
 | 3.10 | B | **Submit** | `TPU_MotorCover_v2` is under "Cannot be submitted — imdad is editing it" | ☐ |
 | 3.11 | B | Close it. **Tools → Set Aside My Changes** → check it → Set aside | Copy saved in `C:\JOCO-ROBOS\Set Aside\…`; the team's version is back. A: **Release Edit** it | ☐ |
+| 3.12 | B | Change and save `TPU_MotorCover_v2` again without Edit, then **Set Aside** it again right away | A second, separate folder in `Set Aside` (no error) | ☐ |
 
 ## 4. Library and FRCDesignLib
 
@@ -74,6 +76,7 @@ This is the test that proves nobody can overwrite anyone.
 | 4.5 | B | **Insert** (with *Standard*) | Prepared, then inserted as one part: `Kraken X44 Brushless Motor (Standard).SLDPRT` | ☐ |
 | 4.6 | A | Insert the same Kraken with the same options into `battery holder` | **Instant**: no "Preparing" (it's in the team Library now) | ☐ |
 | 4.7 | Both | At the same moment, both pick **Kraken X60** (default options) and click **Insert** | One of you prepares it; the other gets "being prepared by …". The second try is instant | ☐ |
+| 4.7b | Both | Search `flanged radial bearing` → change its size options | Some choices disappear or reappear as other options change, like in FRCDesignApp | ☐ |
 | 4.8 | A | Panel → **Team Library…** → pick any Library part | Copied into `90_COTS` and inserted | ☐ |
 | 4.9 | B | Download any vendor `.SLDPRT` (for example from McMaster) → **Tools → Insert External Part** | Lands in `90_COTS\Imported\<name>\` and inserts | ☐ |
 | 4.10 | B | Save a part to your **Desktop**, insert it the normal way (Insert → Component), save → **Submit** | Refused: "uses a file outside 2026-Robot" | ☐ |

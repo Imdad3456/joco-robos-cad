@@ -729,16 +729,17 @@ class Admin(BaseHTTPRequestHandler):
                 data, kind = frcdesign.thumbnail(parts[1], '70x40' if size == '70x40' else '300x300')
                 return self.bytes_reply(data, kind, 'public, max-age=86400')
             if method == 'GET' and parts[0] == 'download' and len(parts) == 2:
-                data, name = frcdesign.download(self.user, parts[1])
+                data, name = frcdesign.download(self.user, parts[1], self.headers.get('X-Joco-Token', ''))
                 return self.bytes_reply(data, 'application/octet-stream', 'no-store', name)
             if method == 'POST' and parts[0] in ('claim', 'complete', 'abandon'):
                 body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 65536)) or b'{}')
                 with Locked():
                     if parts[0] == 'claim':
-                        return self.json_reply(frcdesign.claim(self.user, str(body.get('id', '')), body.get('configuration') or {}))
+                        return self.json_reply(frcdesign.claim(self.user, str(body.get('id', '')), body.get('configuration') or {},
+                                                               str(body.get('client', ''))[:64]))
                     if parts[0] == 'complete':
-                        return self.json_reply(frcdesign.complete(self.user, str(body.get('fingerprint', ''))))
-                    return self.json_reply(frcdesign.abandon(self.user, str(body.get('fingerprint', ''))))
+                        return self.json_reply(frcdesign.complete(self.user, str(body.get('fingerprint', '')), str(body.get('token', ''))))
+                    return self.json_reply(frcdesign.abandon(self.user, str(body.get('fingerprint', '')), str(body.get('token', ''))))
             return self.reply(404, 'Unknown request.')
         except frcdesign.FrcError as exc:
             return self.reply(exc.status, str(exc))
@@ -1091,14 +1092,15 @@ class Admin(BaseHTTPRequestHandler):
         day = time.strftime('%Y-%m-%d', time.gmtime())
         today = sum(1 for e in registry.get('exports', []) if e.get('day') == day)
         configured = bool(os.environ.get('ONSHAPE_ACCESS_KEY')) and bool(os.environ.get('ONSHAPE_SECRET_KEY'))
+        calls = frcdesign.calls_this_year()
         rows = ''.join('<tr><td>%s<div class="muted">%s %s</div></td><td>%s</td><td><code>%s</code></td></tr>' % (
             esc(e['name']), esc(e.get('vendor', '')), esc(e.get('partNumber', '')), esc(e.get('by', '')), esc(e['libraryPath']))
             for e in ready[:15])
         return ('<section><h2>FRCDesignLib imports</h2><p class="muted">Students search FRCDesignLib in SOLIDWORKS; the first person to use a part and '
                 'configuration imports it into <code>Library/FRCDesignLib</code>, and everyone after reuses it. Onshape export: %s. '
-                'Exports today: %d of %d. Imported so far: %d%s.</p><div class="scroll"><table><tr><th>Part</th><th>Imported by</th><th>Library file</th></tr>%s</table></div></section>') % (
+                'Exports today: %d of %d. Imported so far: %d%s. Onshape API calls this year: <b>%d</b> (imports stop at %d; Onshape allows 2,500).</p><div class="scroll"><table><tr><th>Part</th><th>Imported by</th><th>Library file</th></tr>%s</table></div></section>') % (
                     '<span class="ok">ready</span>' if configured else '<span class="bad">no Onshape key on the server</span>',
-                    today, frcdesign.DAILY_EXPORTS, len(ready), (', %d in progress' % len(pending)) if pending else '',
+                    today, frcdesign.DAILY_EXPORTS, len(ready), (', %d in progress' % len(pending)) if pending else '', calls, frcdesign.ANNUAL_CALLS,
                     rows or '<tr><td colspan="3" class="muted">Nothing imported yet.</td></tr>')
 
     def users_page(self, state):

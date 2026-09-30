@@ -3,6 +3,7 @@
 // (CI runs this on every push). SOLIDWORKS behavior itself is tested by hand with TESTING.md.
 using System;
 using System.IO;
+using System.Linq;
 using JocoRobos.Cad;
 
 static class Program
@@ -93,7 +94,27 @@ static class Program
             Check(WorkspacePolicy.IsTemporary(Path.Combine(tempRoot, "swx14316", "IC~~", "Screw3.step.SLDPRT"), tempRoot), "Imported temp part not recognized");
             Check(!WorkspacePolicy.IsTemporary(Path.Combine(temp, "Temporary", "Plate.SLDPRT"), tempRoot), "Sibling-prefix folder treated as temp");
             Check(!WorkspacePolicy.IsTemporary(part, tempRoot), "Robot part treated as temp");
-            Console.WriteLine("PASS: " + assertions + " workspace and lock-ownership checks");
+            // Set Aside folders never collide, even twice in the same second.
+            string aside = Path.Combine(temp, "Set Aside");
+            var now = new DateTime(2026, 9, 30, 10, 43, 5);
+            string first = WorkspacePolicy.UniqueFolder(aside, now);
+            Directory.CreateDirectory(first);
+            string second = WorkspacePolicy.UniqueFolder(aside, now);
+            Check(first.EndsWith("2026-09-30 104305") && second.EndsWith("2026-09-30 104305 (2)"), "Set Aside folder collision");
+            Check(WorkspacePolicy.TooLong(@"C:\" + new string('a', 250)) && !WorkspacePolicy.TooLong(@"C:\JOCO-ROBOS\2026-Robot\x.SLDPRT"), "Path length rule");
+            // FRCDesignLib rules match FRCDesignApp: range conditions and per-option visibility.
+            var size = new FrcChoice { Id = "Size", Kind = "enum", Default = "S", Options = new System.Collections.Generic.List<FrcOption> {
+                new FrcOption { Id = "S" }, new FrcOption { Id = "M" }, new FrcOption { Id = "L" }, new FrcOption { Id = "XL" } } };
+            var bore = new FrcChoice { Id = "Bore", Kind = "enum", Default = "Round", Options = new System.Collections.Generic.List<FrcOption> {
+                new FrcOption { Id = "Round" }, new FrcOption { Id = "Hex" }, new FrcOption { Id = "Big" } },
+                OptionRules = new System.Collections.Generic.List<FrcOptionRule> {
+                    new FrcOptionRule { Options = new System.Collections.Generic.List<string> { "Big" }, VisibleWhen = new FrcCondition { Mode = "range", Id = "Size", Start = "L", End = "XL" } },
+                    new FrcOptionRule { Options = new System.Collections.Generic.List<string> { "Hex" }, VisibleWhen = new FrcCondition { Mode = "equals", Id = "Size", Value = "M" } } } };
+            var all = new System.Collections.Generic.List<FrcChoice> { size, bore };
+            Func<string, string> visible = s => String.Join(",", bore.VisibleOptions(new System.Collections.Generic.Dictionary<string, string> { { "Size", s } }, all).Select(o => o.Id));
+            Check(visible("S") == "Round" && visible("M") == "Round,Hex" && visible("XL") == "Round,Big", "Option visibility rules");
+            Check(new FrcCondition { Mode = "any", Children = new System.Collections.Generic.List<FrcCondition>() }.Holds(new System.Collections.Generic.Dictionary<string, string>(), all), "Empty rule never hides");
+            Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
         finally { Directory.Delete(temp, true); }
     }

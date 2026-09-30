@@ -30,7 +30,11 @@ CATALOG_TTL = 3600
 DAILY_EXPORTS = int(os.environ.get('JOCO_FRC_DAILY_EXPORTS', '40'))
 USER_DAILY_EXPORTS = int(os.environ.get('JOCO_FRC_USER_DAILY_EXPORTS', '12'))
 RESERVATION_MINUTES = 20
+# Onshape meters successful API calls per year (2,500 on Free/EDU). Stop a little early to keep a margin.
+ANNUAL_CALLS = int(os.environ.get('JOCO_ONSHAPE_ANNUAL_CALLS', '2300'))
+CALLS_PER_EXPORT = {'PARTSTUDIO': 2, 'ASSEMBLY': 10}  # Worst case, checked before starting an export.
 _lock = threading.Lock()
+_registry_lock = threading.RLock()  # Every read-modify-write of frcdesign.json.
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -136,15 +140,38 @@ def details(insertable_id):
 
 
 def _condition(node):
-    """JOCO's own shape for visibility rules: {all|any: [...]} or {id, equals}, values always strings."""
+    """JOCO's shape for FRCDesignApp visibility rules; values always strings. None means always shown."""
     if not node:
         return None
-    if node.get('type') == 'logical':
+    kind = node.get('type')
+    if kind == 'logical':
         children = [c for c in (_condition(child) for child in node.get('children', [])) if c]
+        if not children:
+            return None  # FRCDesignApp: an empty rule never hides anything.
         return {'mode': 'all' if node.get('operation') == 'AND' else 'any', 'children': children}
-    if node.get('type') == 'equal':
+    if kind == 'equal':
         return {'mode': 'equals', 'id': str(node.get('id')), 'value': str(node.get('value'))}
-    return None
+    if kind == 'range':
+        return {'mode': 'range', 'id': str(node.get('id')), 'start': str(node.get('start')), 'end': str(node.get('end'))}
+    return None  # ALWAYS_SHOWN and anything newer.
+
+
+def _option_rules(parameter):
+    """Per-option rules: [{options: [ids], visibleWhen: condition}]. Options no rule names are always offered."""
+    ids = [str(o['id']) for o in parameter.get('options', [])]
+    rules = []
+    for rule in parameter.get('optionConditions') or []:
+        condition = _condition(rule.get('condition'))
+        if condition is None:
+            continue
+        if rule.get('type') == 'list':
+            controlled = [str(x) for x in rule.get('controlledOptions', [])]
+        elif rule.get('type') == 'range' and str(rule.get('start')) in ids and str(rule.get('end')) in ids:
+            controlled = ids[ids.index(str(rule['start'])):ids.index(str(rule['end'])) + 1]
+        else:
+            continue
+        rules.append({'options': controlled, 'visibleWhen': condition})
+    return rules
 
 
 def _choice(parameter):
@@ -154,7 +181,8 @@ def _choice(parameter):
             'kind': kind if kind in ('enum', 'boolean') else 'fixed',
             'default': str(parameter.get('default', '')),
             'options': [{'id': str(o['id']), 'name': str(o.get('name', o['id']))} for o in parameter.get('options', [])],
-            'visibleWhen': _condition(parameter.get('condition'))}
+            'visibleWhen': _condition(parameter.get('condition')),
+            'optionRules': _option_rules(parameter)}
 
 
 def thumbnail(insertable_id, size='300x300'):
@@ -185,39 +213,71 @@ def _cached(name, fetch):
 
 # ---------- configurations ----------
 
-def _visible(parameter, chosen):
-    """Evaluates FRCDesignApp's logical/equal visibility conditions against the current choices."""
-    def check(node):
-        kind = node.get('type')
-        if kind == 'logical':
-            results = [check(child) for child in node.get('children', [])]
-            return all(results) if node.get('operation') == 'AND' else any(results)
-        if kind == 'equal':
-            return str(chosen.get(node.get('id'))) == str(node.get('value'))
+def holds(condition, chosen, choices):
+    """Same rules as FRCDesignApp's evaluateCondition, on JOCO-shaped conditions."""
+    if condition is None:
         return True
-    condition = parameter.get('condition')
-    return True if not condition else check(condition)
+    mode = condition['mode']
+    if mode == 'all':
+        return all(holds(c, chosen, choices) for c in condition['children'])
+    if mode == 'any':
+        return any(holds(c, chosen, choices) for c in condition['children'])
+    if mode == 'equals':
+        return chosen.get(condition['id']) == condition['value']
+    if mode == 'range':
+        target = next((c for c in choices if c['id'] == condition['id'] and c['kind'] == 'enum'), None)
+        if target is None:
+            return True
+        ids = [o['id'] for o in target['options']]
+        if condition['start'] not in ids or condition['end'] not in ids:
+            return True
+        return chosen.get(condition['id']) in ids[ids.index(condition['start']):ids.index(condition['end']) + 1]
+    return True
+
+
+def visible_options(choice, chosen, choices):
+    controlled, shown = set(), set()
+    for rule in choice.get('optionRules', []):
+        ok = holds(rule['visibleWhen'], chosen, choices)
+        for option in rule['options']:
+            controlled.add(option)
+            if ok:
+                shown.add(option)
+    return [o for o in choice['options'] if o['id'] not in controlled or o['id'] in shown]
 
 
 def normalize_configuration(parameters, requested):
-    """Validated choices for every visible parameter, defaults filled in. Refuses types we can't export correctly."""
+    """
+    The configuration FRCDesignLib itself would export: each visible parameter in order, a visible option
+    (the requested one, else the default, else the first, like FRCDesignApp's resolveSelectedOption),
+    hidden parameters left out. Values the add-in can't edit yet must stay at their default.
+    """
+    choices = [_choice(p) for p in parameters]
     chosen = {}
-    for parameter in parameters:
-        pid, kind = parameter['id'], parameter.get('type')
-        value = requested.get(pid, parameter.get('default'))
-        if kind == 'enum':
-            if str(value) not in {str(o['id']) for o in parameter.get('options', [])}:
-                raise FrcError('Invalid choice for %s.' % parameter.get('name', pid))
-            chosen[pid] = str(value)
-        elif kind == 'boolean':
-            chosen[pid] = 'true' if str(value).lower() in ('true', '1', 'yes') else 'false'
-        else:
-            # Quantity/string parameters: only their defaults until the add-in has proper inputs for them.
-            if pid in requested and str(requested[pid]) != str(parameter.get('default')):
-                raise FrcError('%s can only use its default value for now.' % parameter.get('name', pid))
-            chosen[pid] = str(parameter.get('default', ''))
-    return {pid: value for pid, value in chosen.items()
-            if _visible(next(p for p in parameters if p['id'] == pid), chosen)}
+    for _ in range(len(choices) + 1):  # Visibility can depend on later choices; settle to a fixed point.
+        previous = dict(chosen)
+        chosen = {}
+        for choice in choices:
+            kind, cid = choice['kind'], choice['id']
+            value = str(requested.get(cid, previous.get(cid, choice['default'])))
+            if kind == 'enum':
+                options = [o['id'] for o in visible_options(choice, dict(previous, **chosen), choices)]
+                if not options:
+                    continue
+                if cid in requested and str(requested[cid]) not in [o['id'] for o in choice['options']]:
+                    raise FrcError('Invalid choice for %s.' % choice['name'])
+                chosen[cid] = value if value in options else (choice['default'] if choice['default'] in options else options[0])
+            elif kind == 'boolean':
+                chosen[cid] = 'true' if value.lower() in ('true', '1', 'yes') else 'false'
+            else:
+                if cid in requested and str(requested[cid]) != choice['default']:
+                    raise FrcError('%s can only use its default value for now.' % choice['name'])
+                chosen[cid] = choice['default']
+        chosen = {cid: v for cid, v in chosen.items()
+                  if holds(next(c for c in choices if c['id'] == cid)['visibleWhen'], chosen, choices)}
+        if chosen == previous:
+            break
+    return chosen
 
 
 def fingerprint(item, configuration):
@@ -227,7 +287,8 @@ def fingerprint(item, configuration):
 
 
 def library_path(item, parameters, configuration, fp):
-    """Library\\FRCDesignLib\\<group>\\<name> [choices].SLDPRT — readable, and unique per configuration."""
+    """Library/FRCDesignLib/<group>/<name> [choices].SLDPRT — readable, unique per configuration, and short
+    enough that the robot copy stays well under Windows' 260-character path limit."""
     labels = []
     for parameter in parameters:
         value = configuration.get(parameter['id'])
@@ -237,15 +298,13 @@ def library_path(item, parameters, configuration, fp):
             labels.append(next((o['name'] for o in parameter['options'] if str(o['id']) == value), value))
         elif parameter.get('type') == 'boolean':
             labels.append(('' if value == 'true' else 'no ') + parameter.get('name', ''))
-    clean = lambda text: re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 _().&+,-]', '-', text)).strip(' .-')[:80]
-    name = clean(item['name']) + (' (' + clean(', '.join(labels)) + ')' if labels else '')
-    if len(name) > 110:
-        name = name[:100].rstrip() + ' ' + fp[:6]
+    clean = lambda text, limit: re.sub(r'\s+', ' ', re.sub(r'[^A-Za-z0-9 _().&+,-]', '-', text)).strip(' .-')[:limit].strip()
+    name = clean(item['name'], 60) + (' (' + clean(', '.join(labels), 40) + ')' if labels else '')
+    if len(name) > 72:
+        name = name[:64].rstrip() + ' ' + fp[:6]
     # Assemblies are flattened on export, so every FRCDesignLib item becomes one part file.
-    return 'FRCDesignLib/%s/%s.SLDPRT' % (clean(_group_name(item)), name)
+    return 'FRCDesignLib/%s/%s.SLDPRT' % (clean(_group_name(item), 40), name)
 
-
-# ---------- Onshape (signed requests) ----------
 
 def _keys():
     access, secret = os.environ.get('ONSHAPE_ACCESS_KEY', ''), os.environ.get('ONSHAPE_SECRET_KEY', '')
@@ -266,11 +325,35 @@ def onshape(method, path, query=None, accept='application/json', timeout=120, ba
     request = urllib.request.Request(base + path + ('?' + query_string if query_string else ''), method=method, headers={
         'Date': date, 'On-Nonce': nonce, 'Content-Type': content_type, 'Accept': accept, 'User-Agent': USER_AGENT,
         'Authorization': 'On %s:HmacSHA256:%s' % (access, signature)})
+    return _send(request, timeout)
+
+
+def _send(request, timeout):
     try:
         with _onshape_opener.open(request, timeout=timeout) as response:
-            return response.status, response.read(), response.headers
+            status, body, headers = response.status, response.read(), response.headers
     except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()[:2000], exc.headers
+        status, body, headers = exc.code, exc.read()[:2000], exc.headers
+    if 200 <= status < 400:
+        _count_call()  # Onshape bills 2xx and 3xx responses.
+    return status, body, headers
+
+
+def _count_call():
+    with _registry_lock:
+        registry = _registry()
+        calls = registry.setdefault('onshapeCalls', {})
+        year, day = time.strftime('%Y', time.gmtime()), time.strftime('%Y-%m-%d', time.gmtime())
+        calls[year] = calls.get(year, 0) + 1
+        days = calls.setdefault('days', {})
+        days[day] = days.get(day, 0) + 1
+        for old in sorted(days)[:-60]:
+            del days[old]
+        _save(registry)
+
+
+def calls_this_year():
+    return _registry().get('onshapeCalls', {}).get(time.strftime('%Y', time.gmtime()), 0)
 
 
 def configuration_string(configuration):
@@ -334,11 +417,7 @@ def onshape_json(method, path, body):
     request = urllib.request.Request(ONSHAPE + path, data=body, method=method, headers={
         'Date': date, 'On-Nonce': nonce, 'Content-Type': content_type, 'Accept': 'application/json', 'User-Agent': USER_AGENT,
         'Authorization': 'On %s:HmacSHA256:%s' % (access, signature)})
-    try:
-        with _onshape_opener.open(request, timeout=120) as response:
-            return response.status, response.read(), response.headers
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()[:2000], exc.headers
+    return _send(request, 120)
 
 
 # ---------- export cache, reservations, and rate limits ----------
@@ -364,86 +443,117 @@ def library_has(path):
     return result.returncode == 0
 
 
-def claim(user, insertable_id, requested):
+def _entry(fp, token):
+    """The reservation this caller holds; the token ties it to one claim on one computer."""
+    entry = _registry()['imports'].get(fp)
+    if not entry or entry.get('status') != 'importing' or not token or not hmac.compare_digest(entry.get('token', ''), token):
+        raise FrcError('This import is no longer reserved for you. Click Insert again.', 409)
+    return entry
+
+
+def claim(user, insertable_id, requested, client_id=''):
     """
     ready    → the Library already has this exact part and configuration: use libraryPath.
-    yours    → this student prepares it: download the export, save natively at libraryPath, submit, then complete().
-    busy     → someone else is preparing it right now.
+    yours    → this computer prepares it (download with the token, save natively at libraryPath, submit, complete).
+    busy     → someone (or this account on another computer) is preparing it right now.
     """
     item = _item(insertable_id)
     info = details(insertable_id)
     configuration = normalize_configuration(info['parameters'], requested or {})
     fp = fingerprint(item, configuration)
     now = time.time()
-    registry = _registry()
-    entry = registry['imports'].get(fp)
-    if entry and entry.get('status') == 'ready' and library_has(entry['libraryPath']):
-        return {'status': 'ready', 'fingerprint': fp, 'libraryPath': entry['libraryPath'], 'name': entry['name']}
-    if entry and entry.get('status') == 'importing' and entry.get('by') != user and now - entry.get('at', 0) < RESERVATION_MINUTES * 60:
-        return {'status': 'busy', 'by': entry['by'], 'name': entry['name']}
-    path = library_path(item, info['parameters'], configuration, fp)
-    taken = [e for k, e in registry['imports'].items() if k != fp and e.get('libraryPath', '').lower() == path.lower()]
-    if taken:
-        path = path.rsplit('.', 1)[0] + ' ' + fp[:6] + '.' + path.rsplit('.', 1)[1]
-    registry['imports'][fp] = {
-        'status': 'importing', 'by': user, 'at': now, 'name': os.path.splitext(os.path.basename(path))[0],
-        'insertable': item['id'], 'documentId': item['documentId'], 'versionId': item['versionId'],
-        'microversionId': item['microversionId'], 'elementId': item['elementId'], 'elementType': item.get('elementType'),
-        'configuration': configuration, 'vendor': ', '.join(item.get('vendors') or []), 'partNumber': info.get('partNumber', ''),
-        'group': _group_name(item), 'libraryPath': path}
-    _save(registry)
-    return {'status': 'yours', 'fingerprint': fp, 'libraryPath': path, 'name': registry['imports'][fp]['name'],
-            'download': '/admin/api/frcdesign/download/' + fp}
+    with _registry_lock:
+        registry = _registry()
+        entry = registry['imports'].get(fp)
+        # Self-healing: if the file reached the Library (even when "complete" never arrived), it's ready.
+        if entry and library_has(entry['libraryPath']):
+            if entry.get('status') != 'ready':
+                entry.update(status='ready', completedAt=entry.get('completedAt') or now)
+                entry.pop('token', None)
+                _save(registry)
+            return {'status': 'ready', 'fingerprint': fp, 'libraryPath': entry['libraryPath'], 'name': entry['name']}
+        fresh = entry and entry.get('status') == 'importing' and now - entry.get('at', 0) < RESERVATION_MINUTES * 60
+        if fresh and (entry.get('by') != user or entry.get('client') != client_id):
+            by = entry['by'] + (' on another computer' if entry.get('by') == user else '')
+            return {'status': 'busy', 'by': by, 'name': entry['name']}
+        path = library_path(item, info['parameters'], configuration, fp)
+        taken = [e for k, e in registry['imports'].items() if k != fp and e.get('libraryPath', '').lower() == path.lower()]
+        if taken:
+            path = path.rsplit('.', 1)[0] + ' ' + fp[:6] + '.' + path.rsplit('.', 1)[1]
+        if not entry and library_has(path):
+            # Registry lost but the file is there (for example restored from a backup).
+            registry['imports'][fp] = {'status': 'ready', 'libraryPath': path, 'name': os.path.splitext(os.path.basename(path))[0],
+                                       'insertable': item['id'], 'configuration': configuration, 'completedAt': now}
+            _save(registry)
+            return {'status': 'ready', 'fingerprint': fp, 'libraryPath': path, 'name': registry['imports'][fp]['name']}
+        token = secrets.token_hex(16)
+        registry['imports'][fp] = {
+            'status': 'importing', 'by': user, 'client': client_id, 'token': token, 'at': now,
+            'name': os.path.splitext(os.path.basename(path))[0],
+            'insertable': item['id'], 'documentId': item['documentId'], 'versionId': item['versionId'],
+            'microversionId': item['microversionId'], 'elementId': item['elementId'], 'elementType': item.get('elementType'),
+            'configuration': configuration, 'vendor': ', '.join(item.get('vendors') or []), 'partNumber': info.get('partNumber', ''),
+            'group': _group_name(item), 'libraryPath': path}
+        _save(registry)
+        return {'status': 'yours', 'fingerprint': fp, 'token': token, 'libraryPath': path, 'name': registry['imports'][fp]['name']}
 
 
-def download(user, fp):
-    """The neutral file for a claimed import: from cache, or one Onshape export within the rate limits."""
-    registry = _registry()
-    entry = registry['imports'].get(fp)
-    if not entry or entry.get('by') != user or entry.get('status') != 'importing':
-        raise FrcError('This import is not reserved for you. Click Insert again.', 409)
+def download(user, fp, token):
+    """The neutral file for a reserved import: from cache, or one Onshape export within the limits."""
+    entry = _entry(fp, token)
     os.makedirs(CACHE, exist_ok=True)
     path = os.path.join(CACHE, 'export-%s.x_t' % fp)
     if not os.path.exists(path):
-        day = time.strftime('%Y-%m-%d', time.gmtime())
-        today = [e for e in registry.get('exports', []) if e.get('day') == day]
-        if len(today) >= DAILY_EXPORTS:
-            raise FrcError('The team has used today\'s FRCDesignLib imports. Try again tomorrow, or ask a mentor.', 429)
-        if sum(1 for e in today if e.get('by') == user) >= USER_DAILY_EXPORTS:
-            raise FrcError('You\'ve imported a lot of new parts today. Try again tomorrow.', 429)
+        with _registry_lock:
+            registry = _registry()
+            day = time.strftime('%Y-%m-%d', time.gmtime())
+            today = [e for e in registry.get('exports', []) if e.get('day') == day]
+            if len(today) >= DAILY_EXPORTS:
+                raise FrcError('The team has used today\'s FRCDesignLib imports. Try again tomorrow, or ask a mentor.', 429)
+            if sum(1 for e in today if e.get('by') == user) >= USER_DAILY_EXPORTS:
+                raise FrcError('You\'ve imported a lot of new parts today. Try again tomorrow.', 429)
+            if calls_this_year() + CALLS_PER_EXPORT.get(entry.get('elementType'), 10) > ANNUAL_CALLS:
+                raise FrcError('The team\'s Onshape allowance for this year is almost used up, so new FRCDesignLib parts can\'t be '
+                               'imported. Parts already in the team Library still work. Ask a mentor.', 429)
         item = _item(entry['insertable'])
         export = export_assembly if item.get('elementType') == 'ASSEMBLY' else export_part_studio
-        data = export(item, entry['configuration'])
+        data = export(item, entry['configuration'])  # Slow: outside the lock.
         with open(path + '.tmp', 'wb') as handle:
             handle.write(data)
         os.replace(path + '.tmp', path)
-        registry = _registry()
-        registry.setdefault('exports', []).append({'day': day, 'by': user, 'fingerprint': fp})
-        registry['exports'] = registry['exports'][-500:]
-        registry['imports'][fp]['neutralSha256'] = hashlib.sha256(data).hexdigest()
-        _save(registry)
+        with _registry_lock:
+            registry = _registry()
+            registry.setdefault('exports', []).append({'day': time.strftime('%Y-%m-%d', time.gmtime()), 'by': user, 'fingerprint': fp})
+            registry['exports'] = registry['exports'][-500:]
+            if fp in registry['imports']:
+                registry['imports'][fp]['neutralSha256'] = hashlib.sha256(data).hexdigest()
+            _save(registry)
     with open(path, 'rb') as handle:
         return handle.read(), entry['name'] + '.x_t'
 
 
-def complete(user, fp):
-    registry = _registry()
-    entry = registry['imports'].get(fp)
-    if not entry or entry.get('by') != user:
-        raise FrcError('This import is not reserved for you.', 409)
-    if not library_has(entry['libraryPath']):
-        raise FrcError('The Library does not have %s yet. Submit it first.' % entry['libraryPath'], 409)
-    entry.update(status='ready', completedAt=time.time())
-    _save(registry)
-    return {'status': 'ready', 'libraryPath': entry['libraryPath']}
-
-
-def abandon(user, fp):
-    registry = _registry()
-    entry = registry['imports'].get(fp)
-    if entry and entry.get('by') == user and entry.get('status') == 'importing':
-        del registry['imports'][fp]
+def complete(user, fp, token=''):
+    with _registry_lock:
+        registry = _registry()
+        entry = registry['imports'].get(fp)
+        if entry and entry.get('status') == 'ready':
+            return {'status': 'ready', 'libraryPath': entry['libraryPath']}  # Already healed by a later claim.
+        _entry(fp, token)
+        if not library_has(entry['libraryPath']):
+            raise FrcError('The Library does not have %s yet. Submit it first.' % entry['libraryPath'], 409)
+        entry.update(status='ready', completedAt=time.time())
+        entry.pop('token', None)
         _save(registry)
+        return {'status': 'ready', 'libraryPath': entry['libraryPath']}
+
+
+def abandon(user, fp, token=''):
+    with _registry_lock:
+        registry = _registry()
+        entry = registry['imports'].get(fp)
+        if entry and entry.get('status') == 'importing' and token and hmac.compare_digest(entry.get('token', ''), token):
+            del registry['imports'][fp]
+            _save(registry)
     return {'status': 'abandoned'}
 
 

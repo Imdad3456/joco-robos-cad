@@ -35,6 +35,8 @@ namespace JocoRobos.Cad
         internal string Notice;
     }
 
+    internal enum ImportPathState { Free, Committed, Unknown }
+
     internal sealed class SubmitResult
     {
         internal long Revision;
@@ -239,6 +241,53 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>
+        /// For an FRCDesignLib import at a server-assigned Library path: Committed if the Library already has the file
+        /// (updating it here if needed), otherwise clears any leftover from an earlier failed attempt and returns Free.
+        /// </summary>
+        internal ImportPathState PrepareImportPath(string path)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            using (var client = Client())
+            {
+                RequireWorkspace(client);
+                var args = new SvnInfoArgs();
+                args.AddExpectedError(SvnErrorCode.SVN_ERR_RA_ILLEGAL_URL, SvnErrorCode.SVN_ERR_FS_NOT_FOUND);
+                System.Collections.ObjectModel.Collection<SvnInfoEventArgs> infos;
+                client.GetInfo(new SvnUriTarget(UrlFor(path), SvnRevision.Head), args, out infos);
+                bool onServer = infos != null && infos.Count > 0;
+                var status = IsVersioned(client, System.IO.Path.GetDirectoryName(path)) ? Status(client, path, false, SvnDepth.Empty).FirstOrDefault() : null;
+                if (onServer)
+                {
+                    if (status == null || status.LocalNodeStatus != SvnStatus.Normal)
+                    {
+                        // Our own leftover (never someone's work): replace it with the committed copy.
+                        if (status != null && status.LocalNodeStatus == SvnStatus.Added) client.Revert(path, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                        if (File.Exists(path)) File.Delete(path);
+                        client.Update(Root, new SvnUpdateArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
+                        ReconcileReadOnly(client);
+                    }
+                    return ImportPathState.Committed;
+                }
+                if (status != null && status.LocalNodeStatus == SvnStatus.Added) client.Revert(path, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                if (File.Exists(path)) File.Delete(path);
+                RemoveEmptyAddedFolders(client, System.IO.Path.GetDirectoryName(path));
+                return ImportPathState.Free;
+            }
+        }
+
+        private void RemoveEmptyAddedFolders(SvnClient client, string folder)
+        {
+            while (folder != null && folder.Length > Root.Length && Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+            {
+                var status = IsVersioned(client, folder) ? Status(client, folder, false, SvnDepth.Empty).FirstOrDefault() : null;
+                if (status != null && status.LocalNodeStatus != SvnStatus.Added) break; // A real Library folder: keep it.
+                if (status != null) client.Revert(folder, new SvnRevertArgs { Depth = SvnDepth.Empty });
+                Directory.Delete(folder);
+                folder = System.IO.Path.GetDirectoryName(folder);
+            }
+        }
+
         /// <summary>Brings back the team's copy of files deleted or missing on this computer. Never touches other files.</summary>
         internal int RestoreDeleted(IList<SubmitItem> items)
         {
@@ -265,7 +314,7 @@ namespace JocoRobos.Cad
             using (var client = Client())
             {
                 RequireWorkspace(client);
-                string folder = Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside", DateTime.Now.ToString("yyyy-MM-dd HHmm"), Info.Name);
+                string folder = Path.Combine(WorkspacePolicy.UniqueFolder(Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside"), DateTime.Now), Info.Name);
                 foreach (var item in items.Where(x => x.Workspace.Name == Info.Name))
                 {
                     string path = WorkspacePolicy.RequireInside(Root, item.Path);

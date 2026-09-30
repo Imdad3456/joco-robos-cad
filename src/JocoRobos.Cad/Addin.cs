@@ -371,7 +371,7 @@ namespace JocoRobos.Cad
         private void InstallUpdate(NetworkCredential login, Catalog.AddinRelease offer)
         {
             string question = "JOCO ROBOS CAD " + offer.Version + " is available (you have " + Updater.Current + ")." +
-                (offer.Required ? "\nMentors marked it required: Edit and Submit need it." : "") +
+                (offer.Required ? "\nMentors marked it required: new edits and inserts need it (you can still Submit your current work)." : "") +
                 "\n\nInstall it now? It downloads first; Windows then asks for permission. " +
                 "When you close SOLIDWORKS it installs and SOLIDWORKS reopens. Your files and locks are not touched.";
             if (MessageBox.Show(new SolidWorksWindow(), question, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -391,8 +391,8 @@ namespace JocoRobos.Cad
             var offer = Updater.Offer(catalog.Addin, Updater.Current);
             if (offer == null || !offer.Required) return;
             InstallUpdate(login, offer);
-            throw new InvalidOperationException("JOCO ROBOS CAD " + offer.Version + " is required before you can edit or submit. " +
-                "Close SOLIDWORKS to finish installing it, or use Tools → JOCO ROBOS CAD → Install Add-in Update.");
+            throw new InvalidOperationException("JOCO ROBOS CAD " + offer.Version + " is required before you start new edits or inserts. " +
+                "Your current work is safe: Submit, Set Aside, and Release Edit still work. Close SOLIDWORKS to finish installing the update.");
         }
 
         // ---------- sign-in and seasons ----------
@@ -843,7 +843,7 @@ namespace JocoRobos.Cad
         private string SaveSafetyCopy(ModelDoc2 doc, WorkspaceInfo workspace)
         {
             string path = doc.GetPathName();
-            string copy = Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside", DateTime.Now.ToString("yyyy-MM-dd HHmm"), workspace.Name,
+            string copy = Path.Combine(WorkspacePolicy.UniqueFolder(Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside"), DateTime.Now), workspace.Name,
                 path.Substring(workspace.Root.Length + 1));
             Directory.CreateDirectory(Path.GetDirectoryName(copy));
             int errors = 0, warnings = 0;
@@ -978,7 +978,7 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
-                RequireCurrentAddin(login, catalog);
+                // No required-update check here: an outdated add-in can always finish (Submit) the work it already has.
                 var workspaces = new[] { catalog.Robot, catalog.Library }
                     .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
                 if (workspaces.Count == 0) throw new InvalidOperationException("Click Update first to download the robot.");
@@ -1043,6 +1043,10 @@ namespace JocoRobos.Cad
         // SOLIDWORKS mixes up different files with the same name (even in different folders), so new files need unique names.
         private static void RequireUniqueNames(List<SubmitItem> selected)
         {
+            var tooLong = selected.Where(x => x.Kind == SubmitKind.New && WorkspacePolicy.TooLong(x.Path)).Select(x => x.Relative).ToList();
+            if (tooLong.Count > 0)
+                throw new InvalidOperationException("These paths are too long for Windows and SOLIDWORKS to handle reliably (over " + WorkspacePolicy.MaxPath + " characters):\n\n" +
+                    String.Join("\n", tooLong.Take(6)) + "\n\nUse shorter folder or file names (Save As), then Submit again. Nothing was submitted.");
             var problems = new List<string>();
             foreach (var group in selected.Where(x => x.Kind == SubmitKind.New).GroupBy(x => x.Workspace.Name))
             {
@@ -1213,14 +1217,23 @@ namespace JocoRobos.Cad
             });
         }
 
+        // Self-healing: the server-assigned Library path is ours for this reservation, so anything left there
+        // by an earlier failed attempt is our own import artifact and safe to clear. A copy already committed
+        // to the Library is simply used.
         private void ImportIntoLibrary(FrcClient client, FrcClaim claim, FrcItem item, WorkspaceInfo library, string libraryFile, NetworkCredential login)
         {
             string staging = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
                 "JocoRobos.Cad", "imports", claim.Fingerprint, "export.x_t");
-            bool saved = false, submitting = false;
+            var svn = new SvnWorkspace(login, library);
+            var state = OperationDialog.Run("Checking the team Library…", () => SvnWorkspace.Exclusive(() => svn.PrepareImportPath(libraryFile)));
+            if (state == ImportPathState.Committed)
+            {
+                FinishImport(client, claim);
+                return;
+            }
             try
             {
-                OperationDialog.Run("Preparing " + claim.Name + " for the team (first time only)…", () => { client.Download(claim.Fingerprint, staging); return true; });
+                OperationDialog.Run("Preparing " + claim.Name + " for the team (first time only)…", () => { client.Download(claim, staging); return true; });
                 int errors = 0;
                 var imported = application.LoadFile4(staging, "r", null, ref errors) as ModelDoc2;
                 if (imported == null)
@@ -1229,11 +1242,9 @@ namespace JocoRobos.Cad
                 {
                     if (imported.GetType() != (int)swDocumentTypes_e.swDocPART)
                         throw new InvalidOperationException(claim.Name + " came in as an assembly, which isn't supported yet. Nothing was inserted.");
-                    if (File.Exists(libraryFile))
-                        throw new InvalidOperationException("The team Library already has a file at " + libraryFile + ". Click Update and try again.");
                     Directory.CreateDirectory(Path.GetDirectoryName(libraryFile));
                     int saveErrors = 0, warnings = 0;
-                    saved = imported.Extension.SaveAs3(libraryFile, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
+                    bool saved = imported.Extension.SaveAs3(libraryFile, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
                         (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, null, ref saveErrors, ref warnings) && File.Exists(libraryFile);
                     if (!saved) throw new InvalidOperationException("Could not save " + claim.Name + " as a SOLIDWORKS part (error " + saveErrors + "). Nothing was inserted.");
                 }
@@ -1241,21 +1252,36 @@ namespace JocoRobos.Cad
                 {
                     application.CloseDoc(imported.GetTitle());
                 }
-                var svn = new SvnWorkspace(login, library);
                 var newItem = new SubmitItem { Kind = SubmitKind.New, Path = libraryFile, Workspace = library };
-                submitting = true; // From here, Submit's own interrupted-commit recovery owns the file.
                 OperationDialog.Run("Adding " + claim.Name + " to the team Library…", () => SvnWorkspace.Exclusive(() =>
                     svn.Submit(new List<SubmitItem> { newItem }, "Import " + claim.Name + " from FRCDesignLib (" + item.Vendor + ")")));
-                OperationDialog.Run("Finishing…", () => { client.Complete(claim.Fingerprint); return true; });
             }
-            catch
+            catch (Exception failure)
             {
-                // Library and robot stay unchanged: remove an uncommitted save, release the reservation, keep the download for diagnosis.
-                if (saved && !submitting && File.Exists(libraryFile))
-                    try { File.Delete(libraryFile); } catch (IOException) { }
-                client.Abandon(claim.Fingerprint);
+                // Did the Library commit land anyway (for example the connection dropped during the response)?
+                ImportPathState after;
+                try { after = OperationDialog.Run("Checking what reached the team Library…", () => SvnWorkspace.Exclusive(() => svn.PrepareImportPath(libraryFile))); }
+                catch (Exception) { after = ImportPathState.Unknown; }
+                if (after == ImportPathState.Committed)
+                {
+                    FinishImport(client, claim);
+                    return;
+                }
+                // Not in the Library: PrepareImportPath cleared any local leftovers, so the Library and robot are unchanged.
+                client.Abandon(claim);
+                if (after == ImportPathState.Unknown)
+                    throw new InvalidOperationException(failure.Message + "\n\nThe server couldn't be checked, so a partial import may remain in the Library folder. " +
+                        "Click Insert again when you're connected; it cleans up after itself.", failure);
                 throw;
             }
+            FinishImport(client, claim);
+        }
+
+        // Marks the import done. If this fails, the server notices the committed file on the next request by itself.
+        private static void FinishImport(FrcClient client, FrcClaim claim)
+        {
+            try { OperationDialog.Run("Finishing…", () => { client.Complete(claim); return true; }); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO FRC complete (server self-heals): " + exception.Message); }
         }
 
         // Copies a library part (and an assembly's library parts) into the robot and points copied
@@ -1295,6 +1321,10 @@ namespace JocoRobos.Cad
             ILookup<string, string> index, bool reuseAny)
         {
             var map = files.ToDictionary(f => f, targetFor, StringComparer.OrdinalIgnoreCase);
+            var tooLong = map.Values.Where(WorkspacePolicy.TooLong).ToList();
+            if (tooLong.Count > 0)
+                throw new InvalidOperationException("The copy would have a path longer than " + WorkspacePolicy.MaxPath + " characters, which Windows and SOLIDWORKS don't handle reliably:\n\n" +
+                    String.Join("\n", tooLong.Take(4)) + "\n\nRename the file with a shorter name first. Nothing was copied.");
             var robotIndex = CadByName(robot.Root);
             var clashes = map.Values.SelectMany(t => robotIndex[Path.GetFileName(t)].Where(p => !p.Equals(t, StringComparison.OrdinalIgnoreCase))
                 .Select(p => Path.GetFileName(t) + " already exists at " + p)).ToList();

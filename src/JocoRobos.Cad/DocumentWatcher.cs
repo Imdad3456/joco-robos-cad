@@ -17,6 +17,7 @@ namespace JocoRobos.Cad
             internal string Path;
             internal DateTime LoadedAt;
             internal bool Reported;
+            internal bool ChangedWhileSettling;
             internal Action Unhook;
         }
 
@@ -27,6 +28,7 @@ namespace JocoRobos.Cad
         private readonly Action<ModelDoc2> firstChange;
         private readonly Action<string> closed;
         private readonly Dictionary<string, Watched> documents = new Dictionary<string, Watched>(StringComparer.OrdinalIgnoreCase);
+        private readonly System.Windows.Forms.Timer settleCheck = new System.Windows.Forms.Timer { Interval = 2000 };
 
         internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed)
         {
@@ -35,6 +37,30 @@ namespace JocoRobos.Cad
             this.firstChange = firstChange;
             this.closed = closed;
             application.DocumentLoadNotify2 += OnLoad;
+            settleCheck.Tick += (s, e) => CheckSettled();
+            settleCheck.Start();
+        }
+
+        // A student who edits within the first seconds would otherwise never be asked. Once a document has settled,
+        // a part or drawing that changed meanwhile and is still unsaved and read-only gets the question after all.
+        // Assemblies are skipped: loading and rebuilding them is exactly what marks them changed by itself.
+        private void CheckSettled()
+        {
+            foreach (var watched in new List<Watched>(documents.Values)) // A close event may change the list.
+            {
+                try
+                {
+                    if (watched.Reported || !watched.ChangedWhileSettling || DateTime.UtcNow - watched.LoadedAt < Settle) continue;
+                    watched.ChangedWhileSettling = false;
+                    if (watched.Doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY) continue;
+                    if (watched.Doc.GetSaveFlag() && watched.Doc.IsOpenedReadOnly())
+                    {
+                        watched.Reported = true;
+                        firstChange(watched.Doc);
+                    }
+                }
+                catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
+            }
         }
 
         private int OnLoad(string title, string path)
@@ -88,7 +114,8 @@ namespace JocoRobos.Cad
         {
             try
             {
-                if (watched.Reported || DateTime.UtcNow - watched.LoadedAt < Settle || !watched.Doc.IsOpenedReadOnly()) return 0;
+                if (watched.Reported || !watched.Doc.IsOpenedReadOnly()) return 0;
+                if (DateTime.UtcNow - watched.LoadedAt < Settle) { watched.ChangedWhileSettling = true; return 0; }
                 watched.Reported = true;
                 firstChange(watched.Doc);
             }
@@ -111,6 +138,8 @@ namespace JocoRobos.Cad
 
         public void Dispose()
         {
+            settleCheck.Stop();
+            settleCheck.Dispose();
             try { application.DocumentLoadNotify2 -= OnLoad; }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
             foreach (var watched in documents.Values)

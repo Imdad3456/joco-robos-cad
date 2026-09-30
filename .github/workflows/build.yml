@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: FRCDesignLib configuration rules
+        run: python3 server/tests/frcdesign_test.py
       - name: Build server image
         run: docker build -f server/Containerfile -t joco-svn:test server
       - name: Start a disposable server
