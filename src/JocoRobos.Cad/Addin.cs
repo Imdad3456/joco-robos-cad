@@ -1313,6 +1313,7 @@ namespace JocoRobos.Cad
                 if (library == null) throw new InvalidOperationException("The server has no parts library yet. Ask a mentor.");
                 var robot = catalog.Robot;
                 if (robot.Archived) throw new InvalidOperationException(robot.Name + " is archived and read-only.");
+                if (!new SvnWorkspace(login, robot).IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the part has a robot to go into.");
 
                 // Keep the library fresh; a local copy is fine if the update cannot run right now.
                 var librarySvn = new SvnWorkspace(login, library);
@@ -1350,6 +1351,7 @@ namespace JocoRobos.Cad
                 var library = catalog.Library;
                 if (library == null) throw new InvalidOperationException("The server has no team Library yet. Ask a mentor.");
                 if (catalog.Robot.Archived) throw new InvalidOperationException(catalog.Robot.Name + " is archived and read-only.");
+                if (!new SvnWorkspace(login, catalog.Robot).IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the part has a robot to go into.");
                 bool cancelled;
                 var assemblyDoc = InsertTarget(catalog, item.Name, out cancelled);
                 if (cancelled) return;
