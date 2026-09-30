@@ -85,58 +85,6 @@ namespace JocoRobos.Cad
         }
     }
 
-    internal sealed class SubmitDialog : Form
-    {
-        private readonly CheckedListBox files = new CheckedListBox();
-        private readonly TextBox comment = new TextBox();
-        internal List<SubmitItem> Selected { get { return files.CheckedItems.Cast<SubmitItem>().ToList(); } }
-        internal string Comment { get { return comment.Text.Trim(); } }
-
-        internal SubmitDialog(SubmitPlan plan)
-        {
-            Text = "JOCO ROBOS CAD — Submit CAD Changes";
-            ClientSize = new Size(640, plan.Blocked.Count > 0 ? 560 : 440);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            int y = 15;
-            Controls.Add(new Label { Text = "Files to submit (unchecked files stay on your computer and stay locked):", Location = new Point(20, y), AutoSize = true });
-            files.SetBounds(20, y += 25, 600, 190);
-            files.CheckOnClick = true;
-            files.HorizontalScrollbar = true;
-            foreach (var item in plan.Items.OrderBy(x => x.Kind).ThenBy(x => x.Relative, StringComparer.OrdinalIgnoreCase))
-                files.Items.Add(item, true);
-            Controls.Add(files);
-            y += 200;
-            if (plan.Blocked.Count > 0)
-            {
-                Controls.Add(new Label { Text = "Cannot be submitted:", Location = new Point(20, y), AutoSize = true });
-                Controls.Add(new TextBox { Text = String.Join("\r\n", plan.Blocked), ReadOnly = true, Multiline = true,
-                    ScrollBars = ScrollBars.Both, WordWrap = false, Location = new Point(20, y + 22), Size = new Size(600, 90) });
-                y += 120;
-            }
-            Controls.Add(new Label { Text = "What did you change?", Location = new Point(20, y), AutoSize = true });
-            comment.SetBounds(20, y += 22, 600, 60);
-            comment.Multiline = true;
-            comment.ScrollBars = ScrollBars.Vertical;
-            Controls.Add(comment);
-            var submit = new Button { Text = "Submit", Location = new Point(420, y += 75), Size = new Size(95, 30) };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(525, y), Size = new Size(95, 30) };
-            submit.Click += (s, e) =>
-            {
-                if (files.CheckedItems.Count == 0) { MessageBox.Show(this, "Select at least one file."); return; }
-                if (Comment.Length < 3) { MessageBox.Show(this, "Describe what you changed."); comment.Focus(); return; }
-                DialogResult = DialogResult.OK;
-                Close();
-            };
-            Controls.Add(submit);
-            Controls.Add(cancel);
-            CancelButton = cancel;
-            Shown += (s, e) => comment.Focus();
-        }
-    }
-
     internal sealed class ChooseRobotDialog : Form
     {
         private readonly ListBox robots = new ListBox();

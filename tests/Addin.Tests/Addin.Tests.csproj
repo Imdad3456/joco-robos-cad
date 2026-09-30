@@ -10,5 +10,6 @@
     <Compile Include="../../src/JocoRobos.Cad/Catalog.cs" Link="Catalog.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Updater.cs" Link="Updater.cs" />
     <Compile Include="../../src/JocoRobos.Cad/FrcClient.cs" Link="FrcClient.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/SubmitCheck.cs" Link="SubmitCheck.cs" />
   </ItemGroup>
 </Project>

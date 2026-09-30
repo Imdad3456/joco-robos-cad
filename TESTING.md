@@ -35,11 +35,13 @@ A works in `50_Electrical\battery holder.SLDASM` and B works in `50_Electrical\M
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 2.1 | Both | In `Robot.SLDASM`'s tree, A clicks `batterymount3dmount` and B clicks `underplate electronics`. Then **Edit** | "Locked by <you>"; with that part open, the panel shows ✎ **You are editing this** | ☐ |
-| 2.2 | Both | Change a dimension on that part → **File → Save All** | Panel: "⚠ 1 saved change not submitted" | ☐ |
+| 2.2 | Both | Change a dimension on that part → **File → Save All** | Within a few seconds the panel says "1 change waiting to submit" and the button reads **Submit (1)** | ☐ |
 | 2.3 | Both | Open your assembly (A: `battery holder`, B: `motor cover asssewmbly`) → **Edit** → make a small new part, save it as `C:\JOCO-ROBOS\2026-Robot\80_Unsorted\Test-Spacer-<yourname>.SLDPRT`, insert it, **Save All** | Saves normally | ☐ |
-| 2.4 | Both | **Submit** | Modified: your part + assembly; New: your spacer. Comment "TEST ..." → "2026-Robot: submitted as revision N"; those files become read-only | ☐ |
-| 2.5 | Both | **Edit** your part again, change it, **don't save** → **Submit** | "Save these documents first" → nothing submitted. Close without saving | ☐ |
-| 2.6 | Both | **Edit** your assembly, save a new part named `Claw.SLDPRT` into `80_Unsorted`, insert it, save → **Submit** | Refused: "same name as 40_Climber\Coil climb\Claw.SLDPRT". Delete that part from the assembly, save, delete the file in Explorer, then **Release Edit** your assembly | ☐ |
+| 2.4 | Both | **Submit** | One window: "✓ Ready to submit", **Changed**: your part + assembly, **New**: your spacer. Comment "TEST ..." → **Submit 3** → the window closes, no OK box; the panel shows "✓ Submitted 3 files as rN" for a few seconds; those files become read-only | ☐ |
+| 2.5 | Both | **Edit** your part again, change it, **don't save** → **Submit**. Type the comment "TEST unsaved" first | The window says "1 document needs to be saved" and **Submit** is greyed out → **Save it and continue** → the warning disappears, your part appears under Changed, the comment is still there → **Submit 1** | ☐ |
+| 2.5b | Both | **Edit** your part, change it, save, **Submit**, but leave the window open. Click back into SOLIDWORKS, change the part again and save, then click the Submit window | It rechecks by itself (you can also click **Check again**). **Cancel**, then **Submit** again from the panel: your comment is still there. Submit it | ☐ |
+| 2.6 | Both | **Edit** your assembly, save a new part named `Claw.SLDPRT` into `80_Unsorted` | Right after saving: "A team file named Claw.SLDPRT already exists … 40_Climber\Coil climb\Claw.SLDPRT" | ☐ |
+| 2.6b | Both | Insert it, save → **Submit** | The window shows "Claw.SLDPRT has the same name as another file" with **Show mine** / **Show existing** (each opens Explorer on the file); Submit is greyed out. **Cancel**, delete that part from the assembly, save, delete the file in Explorer, then **Release Edit** your assembly | ☐ |
 | 2.7 | Both | **File → Open** `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B), without Edit. Wait 10 seconds, change a dimension | "You're changing … Lock it now?" → **No** → the panel turns yellow: "⚠ Unsaved changes in a read-only file" | ☐ |
 | 2.8 | Both | Now click **Edit** | Locked; your change is still there (tell A if SOLIDWORKS reloaded it instead). Close **without saving** | ☐ |
 | 2.8b | Both | Open `80_Unsorted\id2_1.SLDPRT` and change a dimension **right away** (within 5 seconds), without Edit | A few seconds later you are still asked "Lock it now?" → **No**, close without saving | ☐ |
@@ -62,7 +64,7 @@ This is the test that proves nobody can overwrite anyone.
 | 3.7 | B | Close documents → **Update** → **Open Robot** → **Edit** `ABS_MotorCover_v2` | Has A's change; the lock now works for B. **Tools → Release Edit** | ☐ |
 | 3.8 | B | **Edit** `TPU_MotorCover_v2`, change it, **save**, don't Submit | | ☐ |
 | 3.9 | A | Web **Locks** → **Release** B's `TPU_MotorCover_v2` lock. Then in SOLIDWORKS, **Edit** `TPU_MotorCover_v2` | A now holds it | ☐ |
-| 3.10 | B | **Submit** | `TPU_MotorCover_v2` is under "Cannot be submitted — imdad is editing it" | ☐ |
+| 3.10 | B | **Submit** | A yellow note: "TPU_MotorCover_v2.SLDPRT can't be submitted … imdad is editing it". It doesn't block anything else. **Cancel** | ☐ |
 | 3.11 | B | Close it. **Tools → Set Aside My Changes** → check it → Set aside | Copy saved in `C:\JOCO-ROBOS\Set Aside\…`; the team's version is back. A: **Release Edit** it | ☐ |
 | 3.12 | B | Change and save `TPU_MotorCover_v2` again without Edit, then **Set Aside** it again right away | A second, separate folder in `Set Aside` (no error) | ☐ |
 
@@ -80,8 +82,8 @@ This is the test that proves nobody can overwrite anyone.
 | 4.7b | Both | Search `flanged radial bearing` → change its size options | Some choices disappear or reappear as other options change, like in FRCDesignApp | ☐ |
 | 4.8 | A | Panel → **Team Library…** → pick any Library part | Copied into `90_COTS` and inserted | ☐ |
 | 4.9 | B | Download any vendor `.SLDPRT` (for example from McMaster) → **Tools → Insert External Part** | Lands in `90_COTS\Imported\<name>\` and inserts | ☐ |
-| 4.10 | B | Save a part to your **Desktop**, insert it the normal way (Insert → Component), save → **Submit** | Refused: "uses a file outside 2026-Robot" | ☐ |
-| 4.11 | B | **Tools → Import Outside References** → then **Submit** | Copied into `90_COTS\Imported\…`; Submit now works | ☐ |
+| 4.10 | B | Save a part to your **Desktop**, insert it the normal way (Insert → Component), save → **Submit**, type a comment | "motor cover asssewmbly.SLDASM uses a file outside 2026-Robot", Submit greyed out | ☐ |
+| 4.11 | B | Click **Import into robot** in that window | "Copied 1 outside file(s) into 2026-Robot\90_COTS…", the part appears under New, the comment is kept. If it asks to save, **Save it and continue**. Then **Submit** | ☐ |
 | 4.12 | Both | Save and **Submit** everything from this section | Submitted | ☐ |
 
 ## 5. Mentor web page (A, B watching)

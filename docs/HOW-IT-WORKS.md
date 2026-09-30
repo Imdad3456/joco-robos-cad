@@ -25,7 +25,7 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 | **Open Robot** | Reads the season catalog, runs Update on the season and the Library, then opens the master assembly (a mentor-set path, `00_Master\Robot.SLDASM`, or the only top-level assembly in `00_Master`). |
 | **Update** | `svn update`, only when nothing from that folder is open. Refuses to touch local changes, unknown files, or conflicts, and never merges or reverts CAD. |
 | **Edit** | Checks you have the newest version, takes a non-stealing SVN lock, confirms both the server's lock owner and this PC's lock token, then makes the document writable without reloading it. Works on the component selected in an assembly (lightweight ones are resolved first). |
-| **Submit** | Lists changed, new, and still-locked files; checks every reference is inside the robot and new names are unique; adds new files with the lock properties; commits one revision; releases only the submitted files' locks. A dropped connection is journaled: the next attempt compares the server's bytes with yours, so work is never lost or submitted twice. |
+| **Submit** | Opens one window that first checks everything it can know in advance (`SubmitCheck.cs`): unsaved documents, references outside the robot, new files a checked assembly needs, duplicate names, long paths, files someone else holds, missing files. Each problem has its own fix button (Save these and continue, Lock this file, Import into robot, Include…, Restore) and the window rechecks by itself, keeping the comment. Then the unchanged commit path (`SvnWorkspace.Submit`) rechecks status and locks, adds new files with the lock properties, commits one revision, and releases only the submitted files' locks. A dropped connection is journaled: the next attempt compares the server's bytes with yours, so work is never lost or submitted twice. Success shows in the panel instead of a dialog. |
 | **Insert from Library** | Copies the Library part (and an assembly's parts) into `90_COTS\<library folder>` the first time; later inserts reuse that copy. The robot's copy never changes when the Library does. |
 | **FRCDesignLib Insert** | Asks the server whether the team already imported this part + configuration. If yes, it's a Library insert. If not, the server exports it from Onshape once (Parasolid; assemblies flattened to one multi-body part), SOLIDWORKS saves it as a native `.SLDPRT` in `Library\FRCDesignLib\<category>`, it's submitted to the Library, then inserted. The first request reserves the item for that student **on that computer** (a token per claim), so there are no duplicates, even from the same account on two PCs. It heals itself: if the file reached the Library but the last step failed, the next request just uses it; if it didn't, leftovers are cleared. Configuration choices follow FRCDesignApp's own rules (conditions, ranges, per-option visibility). The server counts real Onshape API calls and stops new imports before the yearly allowance runs out; parts already in the Library keep working. |
 
@@ -33,6 +33,8 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 
 **Safety nets:**
 - The first change to a read-only team file offers to lock it.
+- Saving a **new** file with the same name as a team file warns right away (Ctrl+S on a read-only file opens Save As, which is how this usually happens).
+- Submit's Save button saves only writable robot and Library documents that have unsaved changes, never Save All.
 - Closing a locked, unchanged file releases the lock.
 - The panel warns about unsaved or unsubmitted work, and SOLIDWORKS asks once on exit.
 - **Set Aside My Changes** keeps your version when someone else holds the file.
@@ -73,7 +75,7 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 
 | What | How |
 |---|---|
-| Add-in logic without SOLIDWORKS | `tests/Addin.Tests` (paths, locks, catalog, updates, library naming) |
+| Add-in logic without SOLIDWORKS | `tests/Addin.Tests` (paths, locks, catalog, updates, library naming, Submit checks) |
 | Mentor page, APIs, permissions, undo, accounts, FRCDesignLib (fake catalog) | `server/tests/admin_test.py` against a disposable container |
 | Lock hooks and backup restore with a real SVN client | `server/tests/integration.py` |
 | SOLIDWORKS itself | by hand, with [TESTING.md](../TESTING.md) |

@@ -7,34 +7,6 @@ using SharpSvn;
 
 namespace JocoRobos.Cad
 {
-    internal enum SubmitKind { Modified, New, ReleaseOnly }
-
-    internal sealed class SubmitItem
-    {
-        internal SubmitKind Kind;
-        internal string Path;
-        internal WorkspaceInfo Workspace;
-        // Changed without Edit, but free and current: Submit locks it first.
-        internal bool NeedsLock;
-        internal string Relative { get { return Path.Substring(Workspace.Root.Length + 1); } }
-        public override string ToString()
-        {
-            string label = Kind == SubmitKind.Modified ? "Modified" : Kind == SubmitKind.New ? "New" : "Unchanged — release lock";
-            return label + ":  " + (Workspace.IsLibrary ? "Library\\" : "") + Relative + (NeedsLock ? "   (not locked yet; Submit locks it)" : "");
-        }
-    }
-
-    internal sealed class SubmitPlan
-    {
-        internal readonly List<SubmitItem> Items = new List<SubmitItem>();
-        internal readonly List<string> Blocked = new List<string>();
-        // Changed files that can't be submitted (someone else's lock, or a newer server version): Set Aside can move them out of the way.
-        internal readonly List<SubmitItem> SetAside = new List<SubmitItem>();
-        // Deleted or missing team files that Restore Deleted Files can bring back.
-        internal readonly List<SubmitItem> Restore = new List<SubmitItem>();
-        internal string Notice;
-    }
-
     internal enum ImportPathState { Free, Committed, Unknown }
 
     internal sealed class SubmitResult
@@ -53,6 +25,11 @@ namespace JocoRobos.Cad
         private SubmitItem Item(SubmitKind kind, string path)
         {
             return new SubmitItem { Kind = kind, Path = path, Workspace = Info };
+        }
+
+        private SubmitItem Held(string path, string reason)
+        {
+            return new SubmitItem { Kind = SubmitKind.Modified, Path = path, Workspace = Info, Reason = reason };
         }
 
         internal SubmitPlan PrepareSubmit()
@@ -115,20 +92,11 @@ namespace JocoRobos.Cad
                         else if (!WorkspacePolicy.IsCad(path) || owned)
                             plan.Items.Add(Item(SubmitKind.Modified, path));
                         else if (item.RemoteLock != null && item.RemoteLock.Owner == login.UserName)
-                        {
-                            plan.Blocked.Add(relative + " — changed, but you locked it from another computer. Submit it there, or ask a mentor to release that lock");
-                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
-                        }
+                            plan.SetAside.Add(Held(path, "Changed, but you locked it from another computer. Submit it there, or ask a mentor to release that lock."));
                         else if (item.RemoteLock != null)
-                        {
-                            plan.Blocked.Add(relative + " — changed, but " + item.RemoteLock.Owner + " is editing it. Use Set Aside My Changes to keep your version separately");
-                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
-                        }
+                            plan.SetAside.Add(Held(path, "Changed, but " + item.RemoteLock.Owner + " is editing it. Use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep your version separately."));
                         else if (item.IsRemoteUpdated)
-                        {
-                            plan.Blocked.Add(relative + " — changed, but a teammate submitted a newer version. Use Set Aside My Changes, then Update");
-                            plan.SetAside.Add(Item(SubmitKind.Modified, path));
-                        }
+                            plan.SetAside.Add(Held(path, "Changed, but a teammate submitted a newer version. Use Tools → JOCO ROBOS CAD → Set Aside My Changes, then Update."));
                         else
                         {
                             var free = Item(SubmitKind.Modified, path);
@@ -138,8 +106,7 @@ namespace JocoRobos.Cad
                         break;
                     case SvnStatus.Missing:
                     case SvnStatus.Deleted:
-                        plan.Blocked.Add(relative + " — missing. If it was deleted by accident, use Tools → JOCO ROBOS CAD → Restore Deleted Files. Renaming or removing team CAD is a mentor task");
-                        plan.Restore.Add(Item(SubmitKind.Modified, path));
+                        plan.Restore.Add(Held(path, "Missing. If it was deleted by accident, Restore brings it back. Renaming or removing team CAD is a mentor task."));
                         break;
                     default:
                         plan.Blocked.Add(relative + " — " + local.ToString().ToLowerInvariant() + "; ask a mentor");

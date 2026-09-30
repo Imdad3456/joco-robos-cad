@@ -69,6 +69,12 @@ namespace JocoRobos.Cad
         private bool updateChecked;
         private volatile bool heartbeatSent;
         private DocumentWatcher watcher;
+        private SubmitWindow submitWindow;
+        private readonly SubmitDraft submitDraft = new SubmitDraft();
+        // A short success line at the top of the pane instead of another OK dialog.
+        private string flash;
+        private Timer flashTimer, savedTimer;
+        private readonly HashSet<string> warnedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public bool ConnectToSW(object ThisSW, int Cookie)
         {
@@ -231,7 +237,13 @@ namespace JocoRobos.Cad
             watcher = new DocumentWatcher(application,
                 path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
                 doc => pane.BeginInvoke((Action)(() => OfferLock(doc))),
-                path => pane.BeginInvoke((Action)(() => ReleaseIfUnchanged(path))));
+                path => pane.BeginInvoke((Action)(() => ReleaseIfUnchanged(path))),
+                path => pane.BeginInvoke((Action)(() => OnDocumentSaved(path))));
+            // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
+            savedTimer = new Timer { Interval = 2500 };
+            savedTimer.Tick += (s, e) => { savedTimer.Stop(); RefreshStatus(); };
+            flashTimer = new Timer { Interval = 15000 };
+            flashTimer.Tick += (s, e) => { flashTimer.Stop(); flash = null; RenderStatus(); };
             // Just installed and never signed in: welcome the student and let them set up their own password.
             bool signedIn;
             try { signedIn = CredentialStore.Read() != null; }
@@ -263,7 +275,9 @@ namespace JocoRobos.Cad
                 {
                     state.ActiveStatus = "Reference copy from " + season.Name + ". Read-only; your robot is " + robotSnapshot.Info.Name + ".";
                     state.ActiveColor = System.Drawing.SystemColors.GrayText;
+                    state.EditTarget = null;
                 }
+                state.Flash = flash;
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
             }
@@ -721,16 +735,17 @@ namespace JocoRobos.Cad
 
         public void Edit()
         {
-            Execute(() => EditDocument(null));
+            Execute(() => EditDocument(null, true));
         }
 
-        // target null: the active document or selected component (Edit button). Otherwise a document the watcher saw change.
-        private void EditDocument(ModelDoc2 target)
+        // target null: the active document or selected component (Edit button). Otherwise a document the watcher saw change,
+        // or one the Submit window locks. backup: save unsaved changes as a copy first. quiet: no message unless something needs attention.
+        private void EditDocument(ModelDoc2 target, bool backup, Catalog known = null, bool quiet = false)
         {
             {
                 var login = GetLogin(false);
                 if (login == null) return;
-                var catalog = LoadCatalog(login);
+                var catalog = known ?? LoadCatalog(login);
                 RequireCurrentAddin(login, catalog);
                 WorkspaceInfo workspace;
                 ModelDoc2 doc = target ?? ActiveCad(catalog, out workspace);
@@ -747,7 +762,7 @@ namespace JocoRobos.Cad
                 if (unsaved && !doc.IsOpenedReadOnly())
                     throw new InvalidOperationException("Save this document first, then click Edit.");
                 // A change noticed seconds ago doesn't need a backup file; one from the Edit button might be long work.
-                string safety = unsaved && target == null ? SaveSafetyCopy(doc, workspace) : null;
+                string safety = unsaved && backup ? SaveSafetyCopy(doc, workspace) : null;
                 var svn = new SvnWorkspace(login, workspace);
                 try
                 {
@@ -762,6 +777,8 @@ namespace JocoRobos.Cad
                         ? "\n\nYour earlier changes are still here. Save to keep them." + (safety != null ? " (A backup copy is in " + safety + ")" : "")
                         : safety != null ? "\n\nSOLIDWORKS reloaded the file, so your earlier changes aren't in this window. They are safe in:\n" + safety
                         : "\n\nSOLIDWORKS reloaded the file; redo your last change.";
+                    // Nothing was lost: the Submit window shows what's next itself.
+                    if (quiet && (!unsaved || doc.GetSaveFlag())) return;
                     Message("Locked by " + owner + ". You can now edit " + Path.GetFileName(path) +
                         (workspace.IsLibrary ? " in the Library. Robots that already have a copy keep their own; only future first-time inserts get your version." : ".") +
                         (component ? "\n\nEdit it in place (Edit Part) or open it. Save it with File → Save All; the assembly itself stays read-only." : "") +
@@ -776,6 +793,45 @@ namespace JocoRobos.Cad
                         "\n\nYou can close this document without saving; your work is in that copy. Show it to whoever is editing the file.", exception);
                 }
             }
+        }
+
+        private void ShowFlash(string text)
+        {
+            flash = text;
+            if (flashTimer != null) { flashTimer.Stop(); flashTimer.Start(); }
+            RenderStatus();
+        }
+
+        private void OnDocumentSaved(string path)
+        {
+            if (application == null) return;
+            if (savedTimer != null) { savedTimer.Stop(); savedTimer.Start(); }
+            try { WarnDuplicateName(path); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO duplicate check: " + exception); }
+        }
+
+        // Right after a new file is saved with the same name as a team file (Ctrl+S on a read-only file opens Save As,
+        // which is the usual way this happens), rather than twenty minutes later at Submit. Never renames or deletes anything.
+        private void WarnDuplicateName(string path)
+        {
+            path = Path.GetFullPath(path);
+            var catalog = paneCatalog;
+            if (catalog == null || !WorkspacePolicy.IsSubmittableCad(path) || warnedNames.Contains(path)) return;
+            var workspace = new[] { catalog.Robot, catalog.Library }.FirstOrDefault(w => w != null && !w.Archived && w.Contains(path));
+            if (workspace == null) return;
+            var others = SubmitCheck.CadByName(workspace.Root)[Path.GetFileName(path)]
+                .Where(p => !p.Equals(path, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (others.Count == 0) return;
+            // Two team files sharing a name is an older problem for a mentor; only newly created files get the warning.
+            var login = CredentialStore.Read();
+            if (login == null || !new SvnWorkspace(login, workspace).IsNewFile(path)) return;
+            warnedNames.Add(path);
+            string name = Path.GetFileName(path);
+            Message("A team file named " + name + " already exists:\n   " + others[0].Substring(workspace.Root.Length + 1) +
+                "\n\nYou just saved a new file with the same name:\n   " + path.Substring(workspace.Root.Length + 1) +
+                "\n\nSOLIDWORKS can confuse files with identical names. Choose a unique name: File → Save As with a new name (for example " +
+                Path.GetFileNameWithoutExtension(name) + "_2" + Path.GetExtension(name) + "), then delete this copy." +
+                "\n\nIf you meant to change the team's file instead: close this one without saving, open the original, and click Edit.", MessageBoxIcon.Warning);
         }
 
         // ---------- lock on first change, release on close ----------
@@ -810,7 +866,7 @@ namespace JocoRobos.Cad
             }
             if (MessageBox.Show(new SolidWorksWindow(), "You're changing " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
                 "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
-                Execute(() => EditDocument(doc));
+                Execute(() => EditDocument(doc, false));
             else
                 RenderStatus(); // The pane keeps showing the unsaved changes until they lock or undo.
         }
@@ -959,7 +1015,7 @@ namespace JocoRobos.Cad
                 if (MessageBox.Show(new SolidWorksWindow(), "You still have unsubmitted team CAD:\n\n" + String.Join("\n", work.Take(10)) +
                     (work.Count > 10 ? "\n…" : "") + "\n\nYour locks stay until you Submit, which can block teammates.\n\nSubmit now before exiting?",
                     Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
-                    Submit();
+                    Execute(() => OpenSubmit(true));
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO closing check: " + exception); }
             return 0;
@@ -988,168 +1044,214 @@ namespace JocoRobos.Cad
 
         public void Submit()
         {
-            Execute(() =>
+            Execute(() => OpenSubmit(false));
+        }
+
+        // One Submit window at a time. Modeless, so the student can save or rename in SOLIDWORKS and come back;
+        // modal only while SOLIDWORKS is closing.
+        private void OpenSubmit(bool modal)
+        {
+            if (submitWindow != null && !submitWindow.IsDisposed)
             {
-                // SOLIDWORKS keeps edits in memory; only saved bytes can be submitted.
-                // Read-only documents can look modified after a rebuild, but their changes can never be saved or submitted.
-                var unsaved = OpenDocuments().Where(d => d.GetSaveFlag() && !d.IsOpenedReadOnly()).Select(d =>
-                    String.IsNullOrEmpty(d.GetPathName()) ? d.GetTitle() + " (never saved)" : d.GetPathName()).ToList();
-                if (unsaved.Count > 0)
-                    throw new InvalidOperationException("Save these documents first (Save As into your robot folder for new files):\n\n" +
-                        String.Join("\n", unsaved) + "\n\nNothing was submitted.");
-                var login = GetLogin(false);
-                if (login == null) return;
-                var catalog = LoadCatalog(login);
-                // No required-update check here: an outdated add-in can always finish (Submit) the work it already has.
-                var workspaces = new[] { catalog.Robot, catalog.Library }
-                    .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
-                if (workspaces.Count == 0) throw new InvalidOperationException("Click Update first to download the robot.");
-                var plan = new SubmitPlan();
-                OperationDialog.Run("Checking your changes…", () => SvnWorkspace.Exclusive(() =>
+                if (!modal) { submitWindow.Activate(); return; }
+                submitWindow.Close();
+            }
+            var login = GetLogin(false);
+            if (login == null) return;
+            var catalog = LoadCatalog(login);
+            // No required-update check here: an outdated add-in can always finish (Submit) the work it already has.
+            var workspaces = new[] { catalog.Robot, catalog.Library }
+                .Where(w => w != null && !w.Archived).Select(w => new SvnWorkspace(login, w)).Where(w => w.IsCheckedOut).ToList();
+            if (workspaces.Count == 0) throw new InvalidOperationException("Click Update first to download the robot.");
+            var infos = workspaces.Select(w => w.Info).ToList();
+            bool wasBusy = false;
+            var host = new SubmitHost
+            {
+                Target = catalog.Robot.Name,
+                Scan = () => Task.Run(() => SvnWorkspace.Exclusive(() =>
                 {
-                    foreach (var part in workspaces.Select(w => w.PrepareSubmit()))
-                    {
-                        plan.Items.AddRange(part.Items);
-                        plan.Blocked.AddRange(part.Blocked);
-                        plan.SetAside.AddRange(part.SetAside);
-                        if (part.Notice != null) plan.Notice = (plan.Notice == null ? "" : plan.Notice + "\n\n") + part.Notice;
-                    }
-                    return true;
-                }));
-                if (plan.Notice != null) Message(plan.Notice);
-                if (plan.Items.Count == 0)
+                    var plan = new SubmitPlan();
+                    foreach (var svn in workspaces) plan.Add(svn.PrepareSubmit());
+                    return plan;
+                })),
+                Check = (plan, selected, acknowledged) => SubmitCheck.Run(new SubmitCheckInput
                 {
-                    Message(plan.Blocked.Count == 0 ? "Nothing to submit. Your workspace matches the server." :
-                        "Nothing can be submitted:\n\n" + String.Join("\n", plan.Blocked), plan.Blocked.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
-                    return;
+                    Plan = plan, Selected = selected, Workspaces = infos, Documents = DocumentStates(), References = CachedDependencies,
+                    Owning = catalog.Owning, LockedBy = KnownLocks(), User = login.UserName, Acknowledged = acknowledged,
+                }),
+                Fix = (issue, action) => FixSubmitIssue(issue, action, catalog, workspaces),
+                Commit = (selected, comment) => CommitSubmit(selected, comment, workspaces),
+                Busy = value =>
+                {
+                    if (value) { wasBusy = busy; busy = true; }
+                    else { busy = wasBusy; RenderStatus(); }
+                },
+            };
+            var window = new SubmitWindow(host, submitDraft);
+            window.FormClosed += (s, e) =>
+            {
+                if (submitWindow == window) submitWindow = null;
+                try { SubmitFinished(window.Outcome, login, catalog); }
+                catch (Exception exception) { Message(exception.Message, MessageBoxIcon.Error); }
+            };
+            submitWindow = window;
+            if (modal) using (window) window.ShowDialog(new SolidWorksWindow());
+            else window.Show(new SolidWorksWindow());
+        }
+
+        private void SubmitFinished(SubmitOutcome outcome, NetworkCredential login, Catalog catalog)
+        {
+            if (outcome == null) return;
+            // Normal success is quiet: the pane says so. Only warnings need a dialog.
+            ShowFlash(outcome.Summary);
+            if (outcome.Warnings.Count > 0) Message(outcome.Summary + "\n\n" + String.Join("\n\n", outcome.Warnings), MessageBoxIcon.Warning);
+            ReleaseSeasonHold(login, catalog);
+            RefreshStatus();
+        }
+
+        private List<OpenDocument> DocumentStates()
+        {
+            var states = new List<OpenDocument>();
+            foreach (var doc in OpenDocuments())
+            {
+                string path = doc.GetPathName();
+                // Virtual components ("Part1^Shooter") are saved inside their assembly.
+                if (!String.IsNullOrEmpty(path) && Path.GetFileName(path).Contains("^")) continue;
+                states.Add(new OpenDocument { Path = String.IsNullOrEmpty(path) ? null : Path.GetFullPath(path), Title = doc.GetTitle(),
+                    Dirty = doc.GetSaveFlag(), ReadOnly = doc.IsOpenedReadOnly() });
+            }
+            return states;
+        }
+
+        // Reading references is the slow part of the checks; a file's references only change when it's saved.
+        private readonly Dictionary<string, Tuple<DateTime, List<string>>> dependencyCache =
+            new Dictionary<string, Tuple<DateTime, List<string>>>(StringComparer.OrdinalIgnoreCase);
+
+        private IEnumerable<string> CachedDependencies(string path)
+        {
+            DateTime written = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+            Tuple<DateTime, List<string>> cached;
+            if (dependencyCache.TryGetValue(path, out cached) && cached.Item1 == written) return cached.Item2;
+            var list = Dependencies(path).ToList();
+            dependencyCache[path] = Tuple.Create(written, list);
+            return list;
+        }
+
+        // From the last status check; SvnWorkspace.Submit asks the server again when it commits.
+        private Dictionary<string, string> KnownLocks()
+        {
+            var locks = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var snapshot in new[] { robotSnapshot, librarySnapshot }.Where(x => x != null))
+                foreach (var pair in snapshot.Locks) locks[pair.Key] = pair.Value;
+            return locks;
+        }
+
+        private ModelDoc2 FindOpen(string path)
+        {
+            return OpenDocuments().FirstOrDefault(d => !String.IsNullOrEmpty(d.GetPathName()) &&
+                String.Equals(Path.GetFullPath(d.GetPathName()), path, StringComparison.OrdinalIgnoreCase));
+        }
+
+        // The Submit window's fix buttons, reusing the same code as the commands.
+        private string FixSubmitIssue(SubmitIssue issue, IssueAction action, Catalog catalog, List<SvnWorkspace> workspaces)
+        {
+            switch (action)
+            {
+                case IssueAction.SaveDocuments:
+                    SaveTeamDocuments(issue.Files, workspaces.Select(w => w.Info).ToList());
+                    return null;
+                case IssueAction.LockFile:
+                {
+                    var doc = FindOpen(issue.Files[0]);
+                    if (doc == null) throw new InvalidOperationException(Path.GetFileName(issue.Files[0]) + " isn't open any more.");
+                    EditDocument(doc, true, catalog, true);
+                    return null;
                 }
-                List<SubmitItem> selected;
-                string comment;
-                using (var dialog = new SubmitDialog(plan))
+                case IssueAction.ImportIntoRobot:
+                    return ImportIntoRobot(issue.Files[0], catalog, workspaces.Select(w => w.Info).ToList());
+                case IssueAction.RestoreFiles:
                 {
-                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                    selected = dialog.Selected;
-                    comment = dialog.Comment;
+                    int restored = 0;
+                    foreach (var svn in workspaces.Where(w => issue.Items.Any(x => x.Workspace.Name == w.Info.Name)))
+                        restored += SvnWorkspace.Exclusive(() => svn.RestoreDeleted(issue.Items));
+                    return "Restored " + restored + (restored == 1 ? " file" : " files") + " from the server.";
                 }
-                if (!RequireReferencesIncluded(selected, plan, catalog)) return;
-                RequireUniqueNames(selected);
+                default:
+                    return null;
+            }
+        }
+
+        // Saves only what the student asked for, and only writable robot or Library documents that still have
+        // unsaved changes. Never Save All: rebuilds dirty unrelated files, and read-only team files must be locked first.
+        private void SaveTeamDocuments(IEnumerable<string> paths, IList<WorkspaceInfo> workspaces)
+        {
+            var wanted = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            var failed = new List<string>();
+            foreach (var doc in OpenDocuments().ToList())
+            {
+                string path = doc.GetPathName();
+                if (String.IsNullOrEmpty(path)) continue;
+                path = Path.GetFullPath(path);
+                if (!wanted.Contains(path) || !doc.GetSaveFlag() || doc.IsOpenedReadOnly() || !workspaces.Any(w => w.Contains(path))) continue;
+                int errors = 0, warnings = 0;
+                if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
+                    failed.Add(Path.GetFileName(path) + " (SOLIDWORKS error " + errors + ")");
+            }
+            if (failed.Count > 0)
+                throw new InvalidOperationException("SOLIDWORKS couldn't save:\n" + String.Join("\n", failed) +
+                    "\n\nSave it yourself with File → Save. This window checks again when you come back to it.");
+        }
+
+        // Submit would lock and save this assembly anyway, so the Import button does both before importing.
+        private string ImportIntoRobot(string assembly, Catalog catalog, IList<WorkspaceInfo> workspaces)
+        {
+            if (!catalog.Robot.Contains(assembly)) throw new InvalidOperationException("Only " + catalog.Robot.Name + " assemblies can import outside files.");
+            var doc = FindOpen(assembly);
+            if (doc == null)
+            {
+                int errors = 0, warnings = 0;
+                doc = application.OpenDoc6(assembly, (int)swDocumentTypes_e.swDocASSEMBLY, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings);
+                if (doc == null) throw new InvalidOperationException("SOLIDWORKS couldn't open " + Path.GetFileName(assembly) + " (error " + errors + ").");
+            }
+            if (doc.IsOpenedReadOnly()) EditDocument(doc, true, catalog, true);
+            if (doc.IsOpenedReadOnly()) throw new InvalidOperationException(Path.GetFileName(assembly) + " is still read-only. Click Edit on it, then try again.");
+            if (doc.GetSaveFlag()) SaveTeamDocuments(new[] { assembly }, workspaces);
+            return ImportOutsideReferencesOf(doc, catalog);
+        }
+
+        private async Task<SubmitOutcome> CommitSubmit(List<SubmitItem> selected, string comment, List<SvnWorkspace> workspaces)
+        {
+            var outcome = await Task.Run(() =>
+            {
+                var result = new SubmitOutcome();
                 // One revision per repository. The library goes last so a robot failure stops before it.
-                var lines = new List<string>();
-                bool warned = false;
                 foreach (var svn in workspaces.Where(w => selected.Any(x => x.Workspace.Name == w.Info.Name)).OrderBy(w => w.Info.IsLibrary))
                 {
                     var mine = selected.Where(x => x.Workspace.Name == svn.Info.Name).ToList();
-                    SubmitResult result;
-                    try
+                    try { result.Record(svn.Info, mine, SvnWorkspace.Exclusive(() => svn.Submit(mine, comment))); }
+                    catch (Exception exception)
                     {
-                        result = OperationDialog.Run("Submitting " + mine.Count + " file(s) to " + svn.Info.Label + "…",
-                            () => SvnWorkspace.Exclusive(() => svn.Submit(mine, comment)));
+                        result.Error = (result.Done.Count > 0 ? result.Summary + ".\n\n" : "") + svn.Info.Label + " was not submitted:\n" + exception.Message;
+                        break;
                     }
-                    catch (Exception exception) when (lines.Count > 0)
-                    {
-                        throw new InvalidOperationException(String.Join("\n", lines) + "\n\n" + svn.Info.Label + " was not submitted:\n" + exception.Message, exception);
-                    }
-                    // Submitted files are no longer locked; stop SOLIDWORKS from saving over them.
-                    var done = new HashSet<string>(mine.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
-                    foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "")))
-                        doc.SetReadOnlyState(true);
-                    lines.Add(svn.Info.Label + ": " + (result.Revision > 0 ? "submitted as revision " + result.Revision + "." : "locks released."));
-                    lines.AddRange(result.Warnings);
-                    warned |= result.Warnings.Count > 0;
                 }
-                Message(String.Join("\n\n", lines), warned ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
-                ReleaseSeasonHold(login, catalog);
+                return result;
             });
+            // Submitted files are no longer locked; stop SOLIDWORKS from saving over them.
+            var done = new HashSet<string>(outcome.Done, StringComparer.OrdinalIgnoreCase);
+            foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "")))
+                doc.SetReadOnlyState(true);
+            return outcome;
         }
 
-        // SOLIDWORKS mixes up different files with the same name (even in different folders), so new files need unique names.
-        private static void RequireUniqueNames(List<SubmitItem> selected)
-        {
-            var tooLong = selected.Where(x => x.Kind == SubmitKind.New && WorkspacePolicy.TooLong(x.Path)).Select(x => x.Relative).ToList();
-            if (tooLong.Count > 0)
-                throw new InvalidOperationException("These paths are too long for Windows and SOLIDWORKS to handle reliably (over " + WorkspacePolicy.MaxPath + " characters):\n\n" +
-                    String.Join("\n", tooLong.Take(6)) + "\n\nUse shorter folder or file names (Save As), then Submit again. Nothing was submitted.");
-            var problems = new List<string>();
-            foreach (var group in selected.Where(x => x.Kind == SubmitKind.New).GroupBy(x => x.Workspace.Name))
-            {
-                var index = CadByName(group.First().Workspace.Root);
-                foreach (var item in group)
-                    foreach (string other in index[Path.GetFileName(item.Path)].Where(p => !p.Equals(item.Path, StringComparison.OrdinalIgnoreCase)))
-                        problems.Add(item.Relative + "  has the same name as  " + other.Substring(item.Workspace.Root.Length + 1));
-            }
-            if (problems.Count > 0)
-                throw new InvalidOperationException("SOLIDWORKS can't tell apart different files with the same name, even in different folders:\n\n" +
-                    String.Join("\n", problems.Distinct().Take(8)) + "\n\nRename your new file with File → Save As (for example Intake_Plate.SLDPRT), " +
-                    "replace it in the assembly, save, and Submit again. Nothing was submitted.");
-        }
-
-        // Teammates must be able to open what is submitted: every reference inside the same robot
-        // (library parts are copied in, never linked), and no new files left behind on this computer.
-        // Returns false if the student chose not to continue.
-        private bool RequireReferencesIncluded(List<SubmitItem> selected, SubmitPlan plan, Catalog catalog)
-        {
-            var chosen = new HashSet<string>(selected.Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
-            var newFiles = new HashSet<string>(plan.Items.Where(x => x.Kind == SubmitKind.New).Select(x => x.Path), StringComparer.OrdinalIgnoreCase);
-            var problems = new List<string>();
-            var temporary = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
-            var indexes = new Dictionary<string, ILookup<string, string>>();
-            foreach (var item in selected.Where(x => x.Kind != SubmitKind.ReleaseOnly && WorkspacePolicy.IsCad(x.Path)))
-            {
-                ILookup<string, string> index;
-                if (!indexes.TryGetValue(item.Workspace.Name, out index)) indexes[item.Workspace.Name] = index = CadByName(item.Workspace.Root);
-                var mine = new List<string>();
-                foreach (string reference in Dependencies(item.Path).Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    string resolved = Resolve(reference, item.Path, index);
-                    if (resolved == null)
-                    {
-                        // Imported (3D Interconnect) or virtual data that only lives in SOLIDWORKS' temp folder.
-                        if (WorkspacePolicy.IsTemporary(reference, Path.GetTempPath())) temporary.Add(Path.GetFileName(reference));
-                        continue; // Otherwise missing here too; Submit doesn't make that worse.
-                    }
-                    if (!item.Workspace.Contains(resolved))
-                    {
-                        var other = catalog.Owning(resolved);
-                        mine.Add(other != null && other.IsLibrary
-                            ? "links directly to the Library part " + Path.GetFileName(resolved) + " (use Insert from Library)"
-                            : "uses " + resolved);
-                    }
-                    else if (newFiles.Contains(resolved) && !chosen.Contains(resolved))
-                        mine.Add("uses the new file " + Path.GetFileName(resolved) + ", which is unchecked");
-                }
-                if (mine.Count > 0)
-                    problems.Add(Path.GetFileName(item.Path) + ":\n" + String.Join("\n", mine.Take(6).Select(x => "   • " + x)) +
-                        (mine.Count > 6 ? "\n   • …and " + (mine.Count - 6) + " more" : ""));
-            }
-            if (problems.Count > 0)
-                throw new InvalidOperationException("Teammates would not be able to open this submission:\n\n" +
-                    String.Join("\n\n", problems.Take(5)) + (problems.Count > 5 ? "\n\n…and " + (problems.Count - 5) + " more files" : "") +
-                    "\n\nFix it automatically: open the assembly, click Edit, then Tools → JOCO ROBOS CAD → Import Outside References. Nothing was submitted.");
-            if (temporary.Count == 0) return true;
-            string examples = String.Join(", ", temporary.Take(4)) + (temporary.Count > 4 ? ", …" : "");
-            return MessageBox.Show(new SolidWorksWindow(),
-                temporary.Count + " imported part(s) exist only in SOLIDWORKS' temporary folder (" + examples + ").\n\n" +
-                "This happens with parts inserted from STEP or other CAD formats. They open on this computer, but teammates may see them as missing.\n" +
-                "To make them permanent: right-click each imported part → Break Link, or open it and Save As into the robot folder.\n\n" +
-                "Submit anyway?", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) == DialogResult.Yes;
-        }
-
-        // Where SOLIDWORKS will actually find a reference: the stored path if it exists (outside the temp folder),
-        // otherwise a file with the same name, preferring the referencing document's own folder.
         private static string Resolve(string reference, string referencing, ILookup<string, string> index)
         {
-            if (File.Exists(reference) && !WorkspacePolicy.IsTemporary(reference, Path.GetTempPath())) return Path.GetFullPath(reference);
-            var matches = index[Path.GetFileName(reference)].ToList();
-            string folder = Path.GetDirectoryName(referencing);
-            return matches.FirstOrDefault(m => String.Equals(Path.GetDirectoryName(m), folder, StringComparison.OrdinalIgnoreCase)) ?? matches.FirstOrDefault();
+            return SubmitCheck.Resolve(reference, referencing, index, Path.GetTempPath());
         }
 
         private static ILookup<string, string> CadByName(string root)
         {
-            if (!Directory.Exists(root)) return new string[0].ToLookup(x => x);
-            return Directory.EnumerateFiles(root, "*.sld*", SearchOption.AllDirectories)
-                .Where(f => WorkspacePolicy.IsSubmittableCad(f) && f.IndexOf(@"\.svn\", StringComparison.OrdinalIgnoreCase) < 0)
-                .ToLookup(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase);
+            return SubmitCheck.CadByName(root);
         }
 
         // ---------- library ----------
@@ -1440,45 +1542,51 @@ namespace JocoRobos.Cad
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
                 RequireCurrentAddin(login, catalog);
-                var robot = catalog.Robot;
                 var assemblyDoc = WritableRobotAssembly(catalog);
                 if (assemblyDoc.GetSaveFlag()) throw new InvalidOperationException("Save the assembly first, then try again.");
-                string assembly = Path.GetFullPath(assemblyDoc.GetPathName());
-                var robotIndex = CadByName(robot.Root);
-                var outside = Dependencies(assembly).Select(r => File.Exists(r) ? Path.GetFullPath(r) : Resolve(r, assembly, robotIndex))
-                    .Where(r => r != null && !robot.Contains(r) && File.Exists(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                if (outside.Count == 0) { Message("Everything " + Path.GetFileName(assembly) + " uses is already inside " + robot.Name + "."); return; }
-                var files = outside.SelectMany(WithDependencies).Where(f => !robot.Contains(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                var library = catalog.Library;
-                var importTarget = ImportTarget(robot, Path.GetDirectoryName(outside[0]), Path.GetFileNameWithoutExtension(assembly) + " imports");
-                Func<string, string> target = f => library != null && library.Contains(f) ? WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f) : importTarget(Path.Combine(Path.GetDirectoryName(outside[0]), Path.GetFileName(f)));
-                var map = CopyAndRepoint(robot, files, target, CadByName(Path.GetDirectoryName(outside[0])), reuseAny: false);
-                // SOLIDWORKS can only repoint a closed file: close, repoint this assembly and its writable sub-assemblies, reopen.
-                var writable = new[] { assembly }.Concat(Dependencies(assembly).Where(d => robot.Contains(d) && File.Exists(d) && d.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase)
-                    && (File.GetAttributes(d) & FileAttributes.ReadOnly) == 0)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-                application.CloseDoc(assemblyDoc.GetTitle());
-                var notFixed = new List<string>();
-                try
-                {
-                    foreach (string file in writable)
-                        foreach (string reference in Dependencies(file))
-                        {
-                            string resolved = File.Exists(reference) ? Path.GetFullPath(reference) : Resolve(reference, file, robotIndex);
-                            string copy;
-                            if (resolved != null && map.TryGetValue(resolved, out copy))
-                                application.ReplaceReferencedDocument(file, reference, copy);
-                        }
-                    notFixed = Dependencies(assembly).Where(d => File.Exists(d) && !robot.Contains(Path.GetFullPath(d)) && !WorkspacePolicy.IsTemporary(d, Path.GetTempPath())).ToList();
-                }
-                finally
-                {
-                    int errors = 0, warnings = 0;
-                    application.OpenDoc6(assembly, (int)swDocumentTypes_e.swDocASSEMBLY, 0, "", ref errors, ref warnings);
-                }
-                Message("Copied " + map.Count + " outside file(s) into " + robot.Name + "\\90_COTS and pointed " + Path.GetFileName(assembly) + " at them." +
-                    (notFixed.Count > 0 ? "\n\nStill outside (inside a sub-assembly you haven't locked — Edit it and run this again):\n" + String.Join("\n", notFixed.Take(6)) : "") +
-                    "\n\nCheck the assembly looks right, save, then Submit.");
+                Message(ImportOutsideReferencesOf(assemblyDoc, catalog));
             });
+        }
+
+        // Copies everything a saved, writable robot assembly uses from outside the robot into it, then repoints the links.
+        private string ImportOutsideReferencesOf(ModelDoc2 assemblyDoc, Catalog catalog)
+        {
+            var robot = catalog.Robot;
+            string assembly = Path.GetFullPath(assemblyDoc.GetPathName());
+            var robotIndex = CadByName(robot.Root);
+            var outside = Dependencies(assembly).Select(r => File.Exists(r) ? Path.GetFullPath(r) : Resolve(r, assembly, robotIndex))
+                .Where(r => r != null && !robot.Contains(r) && File.Exists(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (outside.Count == 0) return "Everything " + Path.GetFileName(assembly) + " uses is already inside " + robot.Name + ".";
+            var files = outside.SelectMany(WithDependencies).Where(f => !robot.Contains(f)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var library = catalog.Library;
+            var importTarget = ImportTarget(robot, Path.GetDirectoryName(outside[0]), Path.GetFileNameWithoutExtension(assembly) + " imports");
+            Func<string, string> target = f => library != null && library.Contains(f) ? WorkspacePolicy.LibraryCopyPath(library.Root, robot.Root, f) : importTarget(Path.Combine(Path.GetDirectoryName(outside[0]), Path.GetFileName(f)));
+            var map = CopyAndRepoint(robot, files, target, CadByName(Path.GetDirectoryName(outside[0])), reuseAny: false);
+            // SOLIDWORKS can only repoint a closed file: close, repoint this assembly and its writable sub-assemblies, reopen.
+            var writable = new[] { assembly }.Concat(Dependencies(assembly).Where(d => robot.Contains(d) && File.Exists(d) && d.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase)
+                && (File.GetAttributes(d) & FileAttributes.ReadOnly) == 0)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            application.CloseDoc(assemblyDoc.GetTitle());
+            var notFixed = new List<string>();
+            try
+            {
+                foreach (string file in writable)
+                    foreach (string reference in Dependencies(file))
+                    {
+                        string resolved = File.Exists(reference) ? Path.GetFullPath(reference) : Resolve(reference, file, robotIndex);
+                        string copy;
+                        if (resolved != null && map.TryGetValue(resolved, out copy))
+                            application.ReplaceReferencedDocument(file, reference, copy);
+                    }
+                notFixed = Dependencies(assembly).Where(d => File.Exists(d) && !robot.Contains(Path.GetFullPath(d)) && !WorkspacePolicy.IsTemporary(d, Path.GetTempPath())).ToList();
+            }
+            finally
+            {
+                int errors = 0, warnings = 0;
+                application.OpenDoc6(assembly, (int)swDocumentTypes_e.swDocASSEMBLY, 0, "", ref errors, ref warnings);
+            }
+            return "Copied " + map.Count + " outside file(s) into " + robot.Name + "\\90_COTS and pointed " + Path.GetFileName(assembly) + " at them." +
+                (notFixed.Count > 0 ? "\n\nStill outside (inside a sub-assembly you haven't locked — Edit it and run this again):\n" + String.Join("\n", notFixed.Take(6)) : "") +
+                "\n\nCheck the assembly looks right, save, then Submit.";
         }
 
         // For reorganizing an old robot before import: file names are unique, so every link that points outside the
@@ -1604,8 +1712,12 @@ namespace JocoRobos.Cad
             if (busy) return false;
             try
             {
+                if (submitWindow != null && !submitWindow.IsDisposed) submitWindow.Close();
+                submitWindow = null;
                 watcher?.Dispose();
                 watcher = null;
+                savedTimer?.Dispose();
+                flashTimer?.Dispose();
                 if (application != null) application.DestroyNotify -= OnSolidWorksClosing;
                 statusTimer?.Stop();
                 statusTimer?.Dispose();

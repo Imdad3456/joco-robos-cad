@@ -6,7 +6,8 @@ using SolidWorks.Interop.swconst;
 namespace JocoRobos.Cad
 {
     /// <summary>
-    /// Watches team CAD documents (including assembly components) for their first change and for closing.
+    /// Watches team CAD documents (including assembly components) for their first change and for closing,
+    /// and every document (new ones too) for saving, since Save As can turn any of them into a team file.
     /// Every handler swallows its own errors: a watcher problem must never disturb SOLIDWORKS.
     /// </summary>
     internal sealed class DocumentWatcher : IDisposable
@@ -27,16 +28,19 @@ namespace JocoRobos.Cad
         private readonly Func<string, bool> isTeamFile;
         private readonly Action<ModelDoc2> firstChange;
         private readonly Action<string> closed;
-        private readonly Dictionary<string, Watched> documents = new Dictionary<string, Watched>(StringComparer.OrdinalIgnoreCase);
+        private readonly Action<string> saved;
+        private readonly List<Watched> documents = new List<Watched>();
         private readonly System.Windows.Forms.Timer settleCheck = new System.Windows.Forms.Timer { Interval = 2000 };
 
-        internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed)
+        internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed, Action<string> saved)
         {
             this.application = application;
             this.isTeamFile = isTeamFile;
             this.firstChange = firstChange;
             this.closed = closed;
+            this.saved = saved;
             application.DocumentLoadNotify2 += OnLoad;
+            application.FileNewNotify2 += OnNew;
             settleCheck.Tick += (s, e) => CheckSettled();
             settleCheck.Start();
         }
@@ -46,11 +50,12 @@ namespace JocoRobos.Cad
         // Assemblies are skipped: loading and rebuilding them is exactly what marks them changed by itself.
         private void CheckSettled()
         {
-            foreach (var watched in new List<Watched>(documents.Values)) // A close event may change the list.
+            foreach (var watched in new List<Watched>(documents)) // A close event may change the list.
             {
                 try
                 {
                     if (watched.Reported || !watched.ChangedWhileSettling || DateTime.UtcNow - watched.LoadedAt < Settle) continue;
+                    if (!IsTeam(watched)) continue;
                     watched.ChangedWhileSettling = false;
                     if (watched.Doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY) continue;
                     if (watched.Doc.GetSaveFlag() && watched.Doc.IsOpenedReadOnly())
@@ -67,7 +72,7 @@ namespace JocoRobos.Cad
         {
             try
             {
-                if (String.IsNullOrEmpty(path) || documents.ContainsKey(path) || !isTeamFile(path)) return 0;
+                if (String.IsNullOrEmpty(path)) return 0;
                 var doc = application.GetOpenDocumentByName(path) as ModelDoc2;
                 if (doc != null) Hook(doc, path);
             }
@@ -75,8 +80,28 @@ namespace JocoRobos.Cad
             return 0;
         }
 
+        // File → New: not a team file yet, but Save As can put it in the robot.
+        private int OnNew(object newDoc, int type, string template)
+        {
+            try
+            {
+                var doc = newDoc as ModelDoc2;
+                if (doc != null) Hook(doc, doc.GetPathName());
+            }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
+            return 0;
+        }
+
+        // Where the document is now: Save As moves it.
+        private bool IsTeam(Watched watched)
+        {
+            string path = watched.Doc.GetPathName();
+            return !String.IsNullOrEmpty(path) && isTeamFile(path);
+        }
+
         private void Hook(ModelDoc2 doc, string path)
         {
+            if (documents.Exists(w => ReferenceEquals(w.Doc, doc) || (!String.IsNullOrEmpty(path) && String.Equals(w.Path, path, StringComparison.OrdinalIgnoreCase)))) return;
             var watched = new Watched { Doc = doc, Path = path, LoadedAt = DateTime.UtcNow };
             switch (doc.GetType())
             {
@@ -84,37 +109,43 @@ namespace JocoRobos.Cad
                     var part = (PartDoc)doc;
                     DPartDocEvents_ModifyNotifyEventHandler partModify = () => Modified(watched);
                     DPartDocEvents_DestroyNotify2EventHandler partDestroy = type => Destroyed(watched, type);
+                    DPartDocEvents_FileSavePostNotifyEventHandler partSave = (type, name) => Saved(watched, name);
                     part.ModifyNotify += partModify;
                     part.DestroyNotify2 += partDestroy;
-                    watched.Unhook = () => { part.ModifyNotify -= partModify; part.DestroyNotify2 -= partDestroy; };
+                    part.FileSavePostNotify += partSave;
+                    watched.Unhook = () => { part.ModifyNotify -= partModify; part.DestroyNotify2 -= partDestroy; part.FileSavePostNotify -= partSave; };
                     break;
                 case (int)swDocumentTypes_e.swDocASSEMBLY:
                     var assembly = (AssemblyDoc)doc;
                     DAssemblyDocEvents_ModifyNotifyEventHandler assemblyModify = () => Modified(watched);
                     DAssemblyDocEvents_DestroyNotify2EventHandler assemblyDestroy = type => Destroyed(watched, type);
+                    DAssemblyDocEvents_FileSavePostNotifyEventHandler assemblySave = (type, name) => Saved(watched, name);
                     assembly.ModifyNotify += assemblyModify;
                     assembly.DestroyNotify2 += assemblyDestroy;
-                    watched.Unhook = () => { assembly.ModifyNotify -= assemblyModify; assembly.DestroyNotify2 -= assemblyDestroy; };
+                    assembly.FileSavePostNotify += assemblySave;
+                    watched.Unhook = () => { assembly.ModifyNotify -= assemblyModify; assembly.DestroyNotify2 -= assemblyDestroy; assembly.FileSavePostNotify -= assemblySave; };
                     break;
                 case (int)swDocumentTypes_e.swDocDRAWING:
                     var drawing = (DrawingDoc)doc;
                     DDrawingDocEvents_ModifyNotifyEventHandler drawingModify = () => Modified(watched);
                     DDrawingDocEvents_DestroyNotify2EventHandler drawingDestroy = type => Destroyed(watched, type);
+                    DDrawingDocEvents_FileSavePostNotifyEventHandler drawingSave = (type, name) => Saved(watched, name);
                     drawing.ModifyNotify += drawingModify;
                     drawing.DestroyNotify2 += drawingDestroy;
-                    watched.Unhook = () => { drawing.ModifyNotify -= drawingModify; drawing.DestroyNotify2 -= drawingDestroy; };
+                    drawing.FileSavePostNotify += drawingSave;
+                    watched.Unhook = () => { drawing.ModifyNotify -= drawingModify; drawing.DestroyNotify2 -= drawingDestroy; drawing.FileSavePostNotify -= drawingSave; };
                     break;
                 default:
                     return;
             }
-            documents[path] = watched;
+            documents.Add(watched);
         }
 
         private int Modified(Watched watched)
         {
             try
             {
-                if (watched.Reported || !watched.Doc.IsOpenedReadOnly()) return 0;
+                if (watched.Reported || !watched.Doc.IsOpenedReadOnly() || !IsTeam(watched)) return 0;
                 if (DateTime.UtcNow - watched.LoadedAt < Settle) { watched.ChangedWhileSettling = true; return 0; }
                 watched.Reported = true;
                 firstChange(watched.Doc);
@@ -129,8 +160,23 @@ namespace JocoRobos.Cad
             {
                 if (type != (int)swDestroyNotifyType_e.swDestroyNotifyDestroy) return 0;
                 watched.Unhook();
-                documents.Remove(watched.Path);
-                closed(watched.Path);
+                documents.Remove(watched);
+                if (!String.IsNullOrEmpty(watched.Path) && isTeamFile(watched.Path)) closed(watched.Path);
+            }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
+            return 0;
+        }
+
+        private int Saved(Watched watched, string fileName)
+        {
+            try
+            {
+                // After Save As the document has its new name; a "save as copy" leaves it unchanged.
+                string path = watched.Doc.GetPathName();
+                if (String.IsNullOrEmpty(path)) path = fileName;
+                if (String.IsNullOrEmpty(path)) return 0;
+                watched.Path = path;
+                saved(path);
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
             return 0;
@@ -140,9 +186,9 @@ namespace JocoRobos.Cad
         {
             settleCheck.Stop();
             settleCheck.Dispose();
-            try { application.DocumentLoadNotify2 -= OnLoad; }
+            try { application.DocumentLoadNotify2 -= OnLoad; application.FileNewNotify2 -= OnNew; }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
-            foreach (var watched in documents.Values)
+            foreach (var watched in documents)
             {
                 try { watched.Unhook(); }
                 catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }

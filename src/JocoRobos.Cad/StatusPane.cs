@@ -21,11 +21,19 @@ namespace JocoRobos.Cad
         internal string Update;
         internal string Pending = "";
         internal bool HasLocks;
+        // Changed and new files waiting: shown on the Submit button.
+        internal int SubmitCount;
+        // A read-only part or drawing the student can lock: the Edit button names it.
+        internal string EditTarget;
+        // A short success line, like "✓ Submitted 3 files as r42".
+        internal string Flash;
     }
 
     internal sealed class StatusPane : UserControl
     {
+        private readonly Label flash = Caption(10f, FontStyle.Bold, "", Color.ForestGreen);
         private readonly Label robot = Caption(11f, FontStyle.Bold);
+        private readonly Dictionary<string, Button> commandButtons = new Dictionary<string, Button>();
         private readonly Label sync = Caption(10f, FontStyle.Bold);
         private readonly Label details = Caption(8.5f, FontStyle.Regular);
         private readonly Label activeFile = Caption(9.5f, FontStyle.Bold);
@@ -46,6 +54,7 @@ namespace JocoRobos.Cad
             layout.Controls.Add(update);
             install.Click += (s, e) => installUpdate();
             layout.Controls.Add(install);
+            layout.Controls.Add(flash);
             layout.Controls.Add(robot);
             layout.Controls.Add(sync);
             layout.Controls.Add(details);
@@ -58,7 +67,8 @@ namespace JocoRobos.Cad
             {
                 var button = new Button { Text = "  " + pair.Key, Width = 200, Height = 36, Margin = new Padding(0, 2, 0, 2),
                     Image = ButtonIcon(pair.Key), ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText,
-                    TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0) };
+                    TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6, 0, 0, 0), AutoEllipsis = true };
+                commandButtons[pair.Key] = button;
                 Action action = pair.Value;
                 button.Click += (s, e) => action();
                 layout.Controls.Add(button);
@@ -111,6 +121,16 @@ namespace JocoRobos.Cad
 
         internal void Show(PaneState state)
         {
+            flash.Text = state.Flash ?? "";
+            flash.Visible = !String.IsNullOrEmpty(state.Flash);
+            Button button;
+            if (commandButtons.TryGetValue("Submit", out button))
+            {
+                button.Text = "  " + (state.SubmitCount > 0 ? "Submit (" + state.SubmitCount + ")" : "Submit");
+                if (button.Font.Bold != state.SubmitCount > 0) button.Font = new Font(button.Font, state.SubmitCount > 0 ? FontStyle.Bold : FontStyle.Regular);
+            }
+            if (commandButtons.TryGetValue("Edit", out button))
+                button.Text = "  " + (state.EditTarget != null ? "Edit " + state.EditTarget : "Edit");
             robot.Text = state.Robot;
             sync.Text = state.Sync;
             sync.ForeColor = state.SyncColor;
@@ -198,10 +218,12 @@ namespace JocoRobos.Cad
                 else if (activeReadOnly && activeDirty)
                 {
                     // Changes the student can't save yet: stay visible until they lock or undo.
-                    state.ActiveStatus = owner.Locks.TryGetValue(activePath, out lockedBy)
+                    bool taken = owner.Locks.TryGetValue(activePath, out lockedBy);
+                    state.ActiveStatus = taken
                         ? "⚠ Unsaved changes, but " + lockedBy + " is editing this file.\nUndo them, or Save As a copy outside the robot folder."
-                        : "⚠ Unsaved changes in a read-only file.\nClick Edit to lock it and keep them.";
+                        : "⚠ Unsaved changes in a read-only file.\nClick Edit to lock it and keep them. Don't press Ctrl+S: on a read-only file it makes a copy.";
                     state.ActiveColor = Color.DarkOrange;
+                    if (!taken && !owner.Info.Archived) state.EditTarget = Path.GetFileNameWithoutExtension(activePath);
                 }
                 else if (owner.Locks.TryGetValue(activePath, out lockedBy))
                 {
@@ -217,11 +239,15 @@ namespace JocoRobos.Cad
                 {
                     state.ActiveStatus = owner.Info.Archived ? "Read-only (archived season)" : "Read-only. Click Edit to change it" +
                         (owner.Info.IsLibrary ? " in the Library." : ".");
+                    // An assembly's Edit button also works on the selected component, so only parts and drawings are named.
+                    if (!owner.Info.Archived && activeReadOnly && !activePath.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase))
+                        state.EditTarget = Path.GetFileNameWithoutExtension(activePath);
                 }
             }
             int unsubmitted = snapshots.Sum(x => x.Changed.Count + x.New.Count);
+            state.SubmitCount = unsubmitted;
             if (unsubmitted > 0)
-                state.Pending = "⚠ " + unsubmitted + (unsubmitted == 1 ? " saved change" : " saved changes") + " not submitted.\nClick Submit so teammates get them.";
+                state.Pending = unsubmitted + (unsubmitted == 1 ? " change" : " changes") + " waiting to submit";
             var mine = snapshots.SelectMany(x => x.Mine).ToList();
             state.HasLocks = mine.Count > 0;
             state.Locks = mine.Count == 0 ? "You have no files locked." :

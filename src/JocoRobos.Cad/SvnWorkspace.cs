@@ -187,6 +187,20 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>True for a file the team doesn't have yet (not versioned, or only scheduled to be added). Local only.</summary>
+        internal bool IsNewFile(string path)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            if (!IsCheckedOut || !File.Exists(path)) return false;
+            using (var client = Client())
+            {
+                Collection<SvnStatusEventArgs> result;
+                if (!client.GetStatus(path, new SvnStatusArgs { Depth = SvnDepth.Empty, RetrieveAllEntries = true, ThrowOnError = false }, out result) || result == null) return false;
+                var status = result.FirstOrDefault();
+                return status == null || status.LocalNodeStatus == SvnStatus.NotVersioned || status.LocalNodeStatus == SvnStatus.Added;
+            }
+        }
+
         /// <summary>Unsubmitted work in this folder, checked locally (no network): changed, new, missing files and held locks.</summary>
         internal List<string> LocalWork()
         {

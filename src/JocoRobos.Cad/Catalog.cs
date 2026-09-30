@@ -102,7 +102,7 @@ namespace JocoRobos.Cad
             IsLibrary = library;
         }
 
-        internal string Root { get { return Path.Combine(BaseFolder, Name); } }
+        internal string Root { get { return Path.GetFullPath(Path.Combine(BaseFolder, Name)); } }
         internal Uri Repository { get { return new Uri(Server, "svn/" + Uri.EscapeDataString(Name) + "/"); } }
         internal string MasterFolder { get { return Path.Combine(Root, "00_Master"); } }
         internal string RobotPath { get { return Path.Combine(MasterFolder, "Robot.SLDASM"); } }

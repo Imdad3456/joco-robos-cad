@@ -1,5 +1,5 @@
 // Add-in unit checks that run without SOLIDWORKS or Windows: path safety, lock ownership, file naming,
-// the season catalog, update offers, and library copy rules. Run: dotnet run --project tests/Addin.Tests
+// the season catalog, update offers, library copy rules, and the Submit window's checks. Run: dotnet run --project tests/Addin.Tests
 // (CI runs this on every push). SOLIDWORKS behavior itself is tested by hand with TESTING.md.
 using System;
 using System.IO;
@@ -114,8 +114,104 @@ static class Program
             Func<string, string> visible = s => String.Join(",", bore.VisibleOptions(new System.Collections.Generic.Dictionary<string, string> { { "Size", s } }, all).Select(o => o.Id));
             Check(visible("S") == "Round" && visible("M") == "Round,Hex" && visible("XL") == "Round,Big", "Option visibility rules");
             Check(new FrcCondition { Mode = "any", Children = new System.Collections.Generic.List<FrcCondition>() }.Holds(new System.Collections.Generic.Dictionary<string, string>(), all), "Empty rule never hides");
+            SubmitChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
         finally { Directory.Delete(temp, true); }
+    }
+
+    // The Submit window's preflight: every predictable problem, as structured issues with the right fix buttons.
+    static void SubmitChecks(string temp)
+    {
+        string previous = Environment.CurrentDirectory;
+        Environment.CurrentDirectory = temp; // Off Windows the base folder is relative; keep it inside the test folder.
+        var season = new WorkspaceInfo("1999-Robot", Guid.NewGuid(), false, false);
+        string root = season.Root;
+        try
+        {
+            Func<string, string> file = relative =>
+            {
+                string path = Path.Combine(root, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, "cad");
+                return path;
+            };
+            string existing = file(Path.Combine("10_Drivetrain", "Frame", "24in2x1.SLDPRT"));
+            string duplicate = file(Path.Combine("30_Shooter", "Bearings", "24in2x1.SLDPRT"));
+            string shooter = file(Path.Combine("30_Shooter", "Shooter.SLDASM"));
+            string camera = file(Path.Combine("30_Shooter", "CameraMount.SLDPRT"));
+            string plate = file(Path.Combine("30_Shooter", "ShooterPlate.SLDPRT"));
+            string outside = Path.Combine(temp, "Desktop", "REV_Gearbox.SLDASM");
+            Directory.CreateDirectory(Path.GetDirectoryName(outside));
+            File.WriteAllText(outside, "cad");
+            string interconnect = Path.Combine(temp, "swtemp", "Imported.SLDPRT");
+
+            var plan = new SubmitPlan();
+            plan.Items.Add(new SubmitItem { Kind = SubmitKind.Modified, Path = shooter, Workspace = season });
+            plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = camera, Workspace = season });
+            plan.Items.Add(new SubmitItem { Kind = SubmitKind.ReleaseOnly, Path = plate, Workspace = season });
+            var references = new System.Collections.Generic.Dictionary<string, string[]> { { shooter, new[] { camera, outside } } };
+            var documents = new System.Collections.Generic.List<OpenDocument>();
+            var locks = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var acknowledged = new System.Collections.Generic.HashSet<string>();
+            Func<string[], System.Collections.Generic.List<SubmitIssue>> run = chosen => SubmitCheck.Run(new SubmitCheckInput
+            {
+                Plan = plan, Selected = new System.Collections.Generic.HashSet<string>(chosen, StringComparer.OrdinalIgnoreCase),
+                Workspaces = new[] { season }, Documents = documents, LockedBy = locks, User = "sarah", Acknowledged = acknowledged,
+                References = path => references.ContainsKey(path) ? references[path] : new string[0], TempFolder = Path.Combine(temp, "swtemp"),
+            });
+
+            var issues = run(new[] { shooter, plate });
+            Check(issues.Count == 2 && issues.All(x => x.Blocking), "Expected outside reference + unchecked new file");
+            var needs = issues.Single(x => x.Key == "needs:" + camera);
+            Check(needs.Actions.SequenceEqual(new[] { IssueAction.IncludeFile }) && needs.Title == "Shooter.SLDASM needs CameraMount.SLDPRT",
+                "Unchecked referenced file must offer Include, never Leave it out");
+            var away = issues.Single(x => x.Key == "outside:" + shooter);
+            Check(away.Actions.Contains(IssueAction.ImportIntoRobot) && away.Other == outside, "Outside reference must offer Import into robot");
+
+            references[shooter] = new[] { camera };
+            Check(run(new[] { shooter, camera, plate }).Count == 0, "Clean submission reported issues");
+            Check(SubmitCheck.SubmitLabel(plan.Items) == "Submit 2" && SubmitCheck.SubmitLabel(plan.Items.Where(x => x.Kind == SubmitKind.ReleaseOnly)) == "Release 1",
+                "Submit button count");
+
+            plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = duplicate, Workspace = season });
+            var same = run(new[] { duplicate }).Single();
+            Check(same.Blocking && same.Other == existing && same.Actions.SequenceEqual(new[] { IssueAction.ShowFile, IssueAction.ShowOther }),
+                "Duplicate name: show both files, no automatic rename");
+            Check(run(new[] { shooter, camera }).Count == 0, "Unchecked duplicate still reported");
+
+            // Only writable robot documents are saved; read-only team files are locked first; unrelated files are left alone.
+            documents.Add(new OpenDocument { Path = shooter, Title = "Shooter", Dirty = true });
+            documents.Add(new OpenDocument { Path = plate, Title = "ShooterPlate", Dirty = true, ReadOnly = true });
+            documents.Add(new OpenDocument { Path = existing, Title = "24in2x1", Dirty = true, ReadOnly = true });
+            documents.Add(new OpenDocument { Path = Path.Combine(root, "00_Master", "Robot.SLDASM"), Title = "Robot", Dirty = true, ReadOnly = true });
+            documents.Add(new OpenDocument { Path = outside, Title = "REV_Gearbox", Dirty = true });
+            locks[existing] = "imdad";
+            issues = run(new[] { shooter, camera });
+            var save = issues.Single(x => x.Key == "save");
+            Check(save.Blocking && save.Files.SequenceEqual(new[] { shooter }) && save.Actions.SequenceEqual(new[] { IssueAction.SaveDocuments }),
+                "Save must cover only writable robot documents");
+            var readOnly = issues.Single(x => x.Key == "readonly:" + plate);
+            Check(!readOnly.Blocking && readOnly.Actions.SequenceEqual(new[] { IssueAction.LockFile }), "Read-only unsaved part must offer Lock, not Save");
+            Check(!issues.Single(x => x.Key == "locked:" + existing).Actions.Any(), "Someone else's file offered a fix");
+            Check(issues.Count == 3, "Rebuilt read-only assembly or outside document reported");
+            documents.Clear();
+
+            // Imported-only parts need an explicit "Submit anyway"; missing files and mentor problems never block the rest.
+            references[shooter] = new[] { camera, interconnect };
+            var temporary = run(new[] { shooter, camera }).Single();
+            Check(temporary.Key == SubmitCheck.TemporaryKey && temporary.Blocking && temporary.Actions.SequenceEqual(new[] { IssueAction.SubmitAnyway }), "Temporary reference");
+            acknowledged.Add(SubmitCheck.TemporaryKey);
+            Check(run(new[] { shooter, camera }).Count == 0, "Acknowledged warning still blocks");
+            plan.Restore.Add(new SubmitItem { Kind = SubmitKind.Modified, Path = Path.Combine(root, "Gone.SLDPRT"), Workspace = season, Reason = "Missing" });
+            plan.Blocked.Add("Odd — needs mentor repair");
+            issues = run(new[] { shooter, camera });
+            Check(issues.Count == 2 && !issues.Any(x => x.Blocking) && issues.Any(x => x.Actions.Contains(IssueAction.RestoreFiles)), "Missing files must offer Restore without blocking");
+        }
+        finally
+        {
+            Environment.CurrentDirectory = previous;
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
     }
 }
