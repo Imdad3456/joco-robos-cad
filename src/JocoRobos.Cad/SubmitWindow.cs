@@ -134,8 +134,16 @@ namespace JocoRobos.Cad
             files.Groups.AddRange(new[] { changedGroup, newGroup, releaseGroup });
             files.ItemChecked += (s, e) =>
             {
-                var item = e.Item.Tag as SubmitItem;
+                var item = e.Item?.Tag as SubmitItem;
                 if (populating || item == null) return;
+                // Only the student's own click or Space changes what's submitted. Windows also reports checkbox changes while it
+                // rebuilds the list; those once unticked files by themselves. Put the box back to what the student chose instead.
+                if (files.RecreatingHandle || !(files.ContainsFocus || files.ClientRectangle.Contains(files.PointToClient(Cursor.Position))))
+                {
+                    var row = e.Item;
+                    BeginInvoke((Action)(() => Safely("checkbox resync", () => { SyncChecks(row); return Task.FromResult(true); })));
+                    return;
+                }
                 if (e.Item.Checked) draft.Unchecked.Remove(item.Path); else draft.Unchecked.Add(item.Path);
                 // Later, not inside the ListView's own event.
                 Safely("file checkbox", Recheck);
@@ -192,9 +200,32 @@ namespace JocoRobos.Cad
             Render();
         }
 
+        // What's ticked comes from the plan and the student's choices, never read back from the list control: Windows' list can
+        // briefly hand back empty rows while it rebuilds itself, which crashed this window and left it unresponsive.
         private List<SubmitItem> Selected
         {
-            get { return files.Items.Cast<ListViewItem>().Where(i => i.Checked).Select(i => (SubmitItem)i.Tag).ToList(); }
+            get { return plan == null ? new List<SubmitItem>() : plan.Items.Where(x => !draft.Unchecked.Contains(x.Path)).ToList(); }
+        }
+
+        // The rows this window made, so nothing has to enumerate the control.
+        private readonly List<ListViewItem> rows = new List<ListViewItem>();
+
+        // Puts checkboxes back to what the student chose (one row, or all).
+        private void SyncChecks(ListViewItem only = null)
+        {
+            if (IsDisposed) return;
+            populating = true;
+            try
+            {
+                foreach (var row in only != null ? new List<ListViewItem> { only } : rows)
+                {
+                    var item = row?.Tag as SubmitItem;
+                    if (item == null || row.ListView != files) continue;
+                    bool chosen = !draft.Unchecked.Contains(item.Path);
+                    if (row.Checked != chosen) row.Checked = chosen;
+                }
+            }
+            finally { populating = false; }
         }
 
         private HashSet<string> SelectedPaths
@@ -324,6 +355,7 @@ namespace JocoRobos.Cad
             try
             {
                 files.Items.Clear();
+                rows.Clear();
                 foreach (var item in plan.Items.OrderBy(x => x.Kind).ThenBy(x => x.Workspace.IsLibrary).ThenBy(x => x.Relative, StringComparer.OrdinalIgnoreCase))
                 {
                     string extra = item.NeedsLock ? "Not locked yet; Submit locks it" : item.Kind == SubmitKind.ReleaseOnly ? "Gives your lock back" : "";
@@ -336,6 +368,7 @@ namespace JocoRobos.Cad
                     };
                     if (extra.Length > 0) row.UseItemStyleForSubItems = false;
                     files.Items.Add(row);
+                    rows.Add(row);
                     if (extra.Length > 0) row.SubItems[2].ForeColor = SystemColors.GrayText;
                 }
                 foreach (var pair in new[] { Tuple.Create(changedGroup, "Changed"), Tuple.Create(newGroup, "New"), Tuple.Create(releaseGroup, "Release lock (unchanged)") })
@@ -488,17 +521,8 @@ namespace JocoRobos.Cad
             switch (action)
             {
                 case IssueAction.IncludeFile:
-                    populating = true;
-                    try
-                    {
-                        foreach (ListViewItem row in files.Items)
-                            if (issue.Files.Contains(((SubmitItem)row.Tag).Path, StringComparer.OrdinalIgnoreCase))
-                            {
-                                row.Checked = true;
-                                draft.Unchecked.Remove(((SubmitItem)row.Tag).Path);
-                            }
-                    }
-                    finally { populating = false; }
+                    foreach (string path in issue.Files) draft.Unchecked.Remove(path);
+                    SyncChecks();
                     await Recheck();
                     return;
                 case IssueAction.SubmitAnyway:
