@@ -4,7 +4,7 @@ For the next Claude session (cloud) or anyone picking this up.
 
 ## Released and live
 - **Add-in 1.0.0** is released (tag `v1.0.0`; the same code as 0.15.0, after the release tests passed). Mentors publish it from the mentor page → Add-in → Release to students.
-- **Server v24** runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
+- **Server v25** (deployed 2026-10-01: CAD Hub name and logo, team settings, Diagnostics tab; v24 kept for rollback) runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
 - The restore drill (`server/restore-drill.sh`) passed on both the Deck backup and the off-device copy on 2026-09-30.
 
 ## New address: cad.team5919.org (0.15.0)
@@ -17,7 +17,7 @@ A student at Johnston Community College (JCC) can't connect from the add-in. Ser
 
 ## Any team can run it (1.3.0, branch `any-team`)
 - The add-in no longer has 5919's address built in: `TeamServer.cs` asks for it once (Sign In has **Change…**), or reads `HKLM\Software\JOCO ROBOS\CAD\Server`. Computers that already had a sign-in or a robot folder are treated as 5919's and never asked.
-- The server takes `JOCO_SERVER_NAME`, `JOCO_TEAM_NAME`, `JOCO_FIRST_SEASON` (see `server/team.env.example`); `server/compose.yaml` runs it with Docker. `server/joco-svn.service` sets 5919's values, so **redeploy the Deck with the new unit file** or the front page shows a generic team name.
+- The server takes `JOCO_SERVER_NAME`, `JOCO_TEAM_NAME`, `JOCO_FIRST_SEASON` (see `server/team.env.example`); `server/compose.yaml` runs it with Docker. `server/joco-svn.service` sets 5919's values (deployed with v25).
 - SOLIDWORKS' API DLLs left the public repository: CI copies them from the private `Imdad3456/joco-build-files` with the deploy key in secret `SOLIDWORKS_FILES_KEY`. (They're still in old commits.)
 - [docs/SETUP.md](SETUP.md) is the guide for other teams. License: MIT.
 
