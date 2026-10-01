@@ -71,6 +71,7 @@ namespace JocoRobos.Cad
         private WorkspaceSnapshot robotSnapshot, librarySnapshot;
         // The robot from the last catalog read, so the file browser still lists local files when the server check fails.
         private WorkspaceInfo robotInfo;
+        private Timer closedTimer;
         private WorkspaceSnapshot robotOffline;
         private string paneUser, paneError;
         private Catalog.AddinRelease offeredUpdate;
@@ -287,6 +288,10 @@ namespace JocoRobos.Cad
             if (!taskpane.DisplayWindowFromHandlex64(pane.Handle.ToInt64()))
                 throw new InvalidOperationException("SOLIDWORKS did not accept the task pane window.");
             application.ActiveModelDocChangeNotify += OnActiveDocumentChanged;
+            // Closing the last window doesn't change the active document as far as SOLIDWORKS' events go: redraw just after.
+            closedTimer = new Timer { Interval = 300 };
+            closedTimer.Tick += (s, e) => { closedTimer.Stop(); RenderStatus(); };
+            application.FileCloseNotify += OnFileClosed;
             watcher = new DocumentWatcher(application,
                 path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
                 doc => OnUi("lock offer", () => OfferLock(doc)),
@@ -326,6 +331,13 @@ namespace JocoRobos.Cad
         private int OnActiveDocumentChanged()
         {
             RenderStatus();
+            return 0;
+        }
+
+        private int OnFileClosed(string fileName, int reason)
+        {
+            try { closedTimer?.Stop(); closedTimer?.Start(); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine(exception); }
             return 0;
         }
 
@@ -2509,6 +2521,8 @@ namespace JocoRobos.Cad
                 statusTimer?.Stop();
                 statusTimer?.Dispose();
                 if (application != null && pane != null) application.ActiveModelDocChangeNotify -= OnActiveDocumentChanged;
+                if (application != null && closedTimer != null) application.FileCloseNotify -= OnFileClosed;
+                closedTimer?.Dispose();
                 taskpane?.DeleteView();
                 pane?.Dispose();
             }

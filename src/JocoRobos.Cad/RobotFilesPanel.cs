@@ -19,7 +19,12 @@ namespace JocoRobos.Cad
             Text = "Open Robot to download the robot files." };
         private readonly TextBox search = new TextBox { Dock = DockStyle.Fill };
         private readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, HideSelection = false, ShowNodeToolTips = true, BorderStyle = BorderStyle.FixedSingle,
-            FullRowSelect = true, ShowLines = false };
+            FullRowSelect = true, ShowLines = false, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f) };
+        private Panel body;
+        private TableLayoutPanel grid;
+        // The browser is as tall as what's showing (a few rows to MaxRows), not the whole pane; the status pane sizes it.
+        internal event Action<int> WantsHeight;
+        private const int MinRows = 4, MaxRows = 16;
         private readonly Timer debounce = new Timer { Interval = 220 };
         private readonly ContextMenuStrip menu = new ContextMenuStrip();
         private RobotFileIndex index;
@@ -28,7 +33,7 @@ namespace JocoRobos.Cad
         private int generation;
         // Which folders are open, kept across searches and refreshes.
         private readonly HashSet<string> expandedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private bool filling;
+        private bool filling, showingEmpty;
         private const string Placeholder = "\u0001";
 
         internal RobotFilesPanel(Action<string> open, Action<string> reveal, Action<string> history)
@@ -43,7 +48,7 @@ namespace JocoRobos.Cad
             var refresh = new LinkLabel { Text = "Refresh", AutoSize = true, Margin = new Padding(0, 4, 0, 4) };
             refresh.LinkClicked += (s, e) => Reindex();
             header.Controls.Add(refresh);
-            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(12, 4, 12, 8) };
+            grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(12, 4, 12, 8) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -51,7 +56,7 @@ namespace JocoRobos.Cad
             grid.Controls.Add(header, 0, 0);
             grid.Controls.Add(search, 0, 1);
             // The tree, or "Open Robot first" in its place.
-            var body = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
+            body = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
             body.Controls.Add(tree);
             body.Controls.Add(empty);
             grid.Controls.Add(body, 0, 2);
@@ -61,8 +66,8 @@ namespace JocoRobos.Cad
             search.TextChanged += (s, e) => { debounce.Stop(); debounce.Start(); };
             debounce.Tick += (s, e) => { debounce.Stop(); Fill(); };
             tree.BeforeExpand += (s, e) => LoadFolder(e.Node);
-            tree.AfterExpand += (s, e) => { if (!filling && e.Node.Name == "folder") expandedFolders.Add((string)e.Node.Tag); };
-            tree.AfterCollapse += (s, e) => { if (!filling && e.Node.Name == "folder") expandedFolders.Remove((string)e.Node.Tag); };
+            tree.AfterExpand += (s, e) => { if (!filling && e.Node.Name == "folder") { expandedFolders.Add((string)e.Node.Tag); FitHeight(); } };
+            tree.AfterCollapse += (s, e) => { if (!filling && e.Node.Name == "folder") { expandedFolders.Remove((string)e.Node.Tag); FitHeight(); } };
             tree.NodeMouseDoubleClick += (s, e) => { if (e.Node.Tag is string && e.Node.Name == "file") open(index.FullPath((string)e.Node.Tag)); };
             tree.KeyDown += (s, e) =>
             {
@@ -101,8 +106,30 @@ namespace JocoRobos.Cad
 
         private void ShowEmpty(bool on)
         {
-            empty.Visible = on;
+            showingEmpty = empty.Visible = on;
             tree.Visible = search.Enabled = !on;
+            FitHeight();
+        }
+
+        // Header, search box and the rows showing (between MinRows and MaxRows; beyond that the tree scrolls).
+        private void FitHeight()
+        {
+            int rows = showingEmpty ? 2 : Math.Max(MinRows, Math.Min(MaxRows, Visible(tree.Nodes)));
+            int chrome = grid.Padding.Vertical + grid.GetControlFromPosition(0, 0).PreferredSize.Height + 8 + search.Height + search.Margin.Vertical +
+                body.Margin.Vertical + 4;
+            WantsHeight?.Invoke(chrome + rows * tree.ItemHeight);
+        }
+
+        private static int Visible(TreeNodeCollection nodes)
+        {
+            int count = 0;
+            foreach (TreeNode node in nodes)
+            {
+                count++;
+                if (node.IsExpanded) count += Visible(node.Nodes);
+                if (count > MaxRows) break;
+            }
+            return count;
         }
 
         // The file listing runs off SOLIDWORKS' thread; only the result is handed back.
@@ -168,6 +195,7 @@ namespace JocoRobos.Cad
                 tree.EndUpdate();
                 filling = false;
             }
+            FitHeight();
         }
 
         private void AddChildren(TreeNodeCollection nodes, string relative)

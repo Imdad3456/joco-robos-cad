@@ -50,6 +50,8 @@ namespace JocoRobos.Cad
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
             WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 10, 12, 4) };
         private RobotFilesPanel files;
+        // Gaps that only show with the section after them, so hidden sections don't leave holes.
+        private readonly Control submitGap = Spacer(), locksGap = Spacer();
         private readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
         private readonly TabPage libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
         private readonly FrcLibraryPanel library;
@@ -68,14 +70,16 @@ namespace JocoRobos.Cad
             history.LinkClicked += (s, e) => actions.History();
             diagnostics.LinkClicked += (s, e) => actions.Diagnostics();
             foreach (var control in new Control[] { version, update, install, warning, flash, working, robot, sync, details, open, closeUpdate, Spacer(),
-                activeFile, activeStatus, edit, history, Spacer(), pending, submit, Spacer(), locks, release, check, diagnostics })
+                activeFile, activeStatus, edit, history, submitGap, pending, submit, locksGap, locks, release, check, diagnostics })
                 layout.Controls.Add(control);
             var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
-            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 180) };
+            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill };
             var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true };
             robotGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            robotGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // Empty space below.
+            files.WantsHeight += height => { if ((int)robotGrid.RowStyles[1].Height != height) robotGrid.RowStyles[1].Height = height; };
             robotGrid.Controls.Add(layout, 0, 0);
             robotGrid.Controls.Add(files, 0, 1);
             robotTab.Controls.Add(robotGrid);
@@ -181,6 +185,8 @@ namespace JocoRobos.Cad
             locks.Text = state.Locks;
             locks.Visible = state.Locks.Length > 0;
             release.Visible = state.HasLocks;
+            submitGap.Visible = state.Pending.Length > 0 || state.SubmitCount > 0 || state.InterruptedSubmit;
+            locksGap.Visible = state.Locks.Length > 0;
             layout.ResumeLayout();
         }
     }
