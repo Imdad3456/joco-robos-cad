@@ -3,7 +3,8 @@
 #                run the add-in's unit tests, and build the student installer (downloadable under Artifacts).
 #   A v* tag:    also publish a GitHub Release with the installer and stage it on cad.team5919.org,
 #                where a mentor clicks "Release to students". Nothing reaches students automatically.
-# Secrets used: JOCO_PUBLISH_PASSWORD (the upload-only github-release account). No other credentials.
+# Secrets used: JOCO_PUBLISH_PASSWORD (the upload-only github-release account) and SOLIDWORKS_FILES_KEY (read-only
+# deploy key for the private repository holding SOLIDWORKS' API files). No other credentials.
 name: Build and test
 
 on:
