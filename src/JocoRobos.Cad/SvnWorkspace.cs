@@ -216,6 +216,24 @@ namespace JocoRobos.Cad
             return versions;
         }
 
+        /// <summary>
+        /// Writes the team's version of a file as this computer last got it (SVN's own copy: no download) to target.
+        /// False for a file the team doesn't have yet.
+        /// </summary>
+        internal bool WriteTeamCopy(string path, string target)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            using (var client = Client())
+            {
+                Collection<SvnStatusEventArgs> status;
+                client.GetStatus(path, new SvnStatusArgs { Depth = SvnDepth.Empty, RetrieveAllEntries = true }, out status);
+                if (status == null || status.Count == 0 || !status[0].Versioned || status[0].LocalNodeStatus == SvnStatus.Added) return false;
+                using (var output = File.Create(target))
+                    client.Write(new SvnPathTarget(path, SvnRevision.Base), output);
+                return true;
+            }
+        }
+
         /// <summary>Saves an older version of a team file as a separate copy (never into the live robot).</summary>
         internal void SaveVersion(string path, long revision, string target)
         {

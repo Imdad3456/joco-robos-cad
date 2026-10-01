@@ -1676,6 +1676,7 @@ namespace JocoRobos.Cad
                     var issues = SubmitCheck.Run(new SubmitCheckInput
                     {
                         Plan = plan, Selected = selected, Workspaces = infos, Documents = DocumentStates(), References = CachedDependencies,
+                        TeamReferences = path => { Tuple<DateTime, List<string>> team; return teamDependencyCache.TryGetValue(path, out team) ? team.Item2 : new List<string>(); },
                         Owning = catalog.Owning, LockedBy = KnownLocks(), User = login.UserName, Acknowledged = acknowledged,
                     });
                     if (clock.ElapsedMilliseconds > 3000)
@@ -1684,11 +1685,12 @@ namespace JocoRobos.Cad
                 },
                 Prepare = async (paths, progress) =>
                 {
-                    var todo = paths.Where(p => !DependenciesCached(p)).ToList();
+                    var todo = paths.Where(p => !DependenciesCached(p) || !TeamDependenciesCached(p)).ToList();
                     for (int i = 0; i < todo.Count; i++)
                     {
                         if (!progress(i + 1, todo.Count)) return;
                         CachedDependencies(todo[i]);
+                        CachedTeamDependencies(todo[i], workspaces.FirstOrDefault(w => w.Info.Contains(todo[i])));
                         await Task.Yield(); // Let SOLIDWORKS repaint and handle clicks between files.
                     }
                 },
@@ -1766,6 +1768,43 @@ namespace JocoRobos.Cad
                 ErrorLog.Write("slow references (" + clock.ElapsedMilliseconds + " ms)", new TimeoutException(path + " has " + list.Count + " direct references"));
             dependencyCache[path] = Tuple.Create(written, list);
             return list;
+        }
+
+        // The references stored in the team's version of a file (SVN's own copy of what this computer last got), so Submit
+        // only stops a student for problems they added. Keyed like dependencyCache: by the working file's save time.
+        private readonly Dictionary<string, Tuple<DateTime, List<string>>> teamDependencyCache =
+            new Dictionary<string, Tuple<DateTime, List<string>>>(StringComparer.OrdinalIgnoreCase);
+
+        private bool TeamDependenciesCached(string path)
+        {
+            Tuple<DateTime, List<string>> cached;
+            return teamDependencyCache.TryGetValue(path, out cached) && cached.Item1 == (File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue);
+        }
+
+        private void CachedTeamDependencies(string path, SvnWorkspace svn)
+        {
+            if (svn == null || TeamDependenciesCached(path)) return;
+            DateTime written = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : DateTime.MinValue;
+            var list = new List<string>();
+            string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "team-copies");
+            string copy = Path.Combine(folder, Guid.NewGuid().ToString("N") + Path.GetExtension(path));
+            try
+            {
+                Directory.CreateDirectory(folder);
+                if (svn.WriteTeamCopy(path, copy))
+                {
+                    var raw = application.GetDocumentDependencies2(copy, false, false, false) as object[];
+                    for (int i = 1; raw != null && i < raw.Length; i += 2)
+                    {
+                        string reference = raw[i] as string;
+                        if (String.IsNullOrEmpty(reference)) continue;
+                        try { list.Add(Path.GetFullPath(reference)); } catch (ArgumentException) { list.Add(reference); }
+                    }
+                }
+            }
+            catch (Exception exception) { ErrorLog.Write("team version references", exception); } // Checks just treat everything as new.
+            finally { try { if (File.Exists(copy)) File.Delete(copy); } catch (IOException) { } }
+            teamDependencyCache[path] = Tuple.Create(written, list);
         }
 
         // From the last status check; SvnWorkspace.Submit asks the server again when it commits.

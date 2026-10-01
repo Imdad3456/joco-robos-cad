@@ -94,6 +94,9 @@ namespace JocoRobos.Cad
         internal IList<OpenDocument> Documents = new List<OpenDocument>();
         // Stored reference paths of a saved CAD file, all levels deep.
         internal Func<string, IEnumerable<string>> References = path => Enumerable.Empty<string>();
+        // The same for the team's version of a changed file (what this computer last got from the server). A reference that was
+        // already missing or temporary there isn't this student's doing, so it never blocks their Submit.
+        internal Func<string, IEnumerable<string>> TeamReferences = path => Enumerable.Empty<string>();
         // Which workspace (any season or the Library) a path belongs to, or null.
         internal Func<string, WorkspaceInfo> Owning = path => null;
         // From the last status check: file → who holds its lock.
@@ -194,6 +197,8 @@ namespace JocoRobos.Cad
                 var outside = new List<string>();
                 var library = new List<string>();
                 var missing = new List<string>();
+                var before = new HashSet<string>(item.Kind == SubmitKind.Modified ? input.TeamReferences(item.Path) ?? Enumerable.Empty<string>()
+                    : Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
                 foreach (string reference in input.References(item.Path).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
                     // Virtual components ("Belt1^Robot.SLDPRT") are saved inside their assembly: SOLIDWORKS only unpacks them into
@@ -202,6 +207,7 @@ namespace JocoRobos.Cad
                     string resolved = Resolve(reference, item.Path, names(item.Workspace), input.TempFolder);
                     if (resolved == null)
                     {
+                        if (before.Contains(reference)) continue; // Already like this in the team's version.
                         // Imported (3D Interconnect) or virtual data that only lives in SOLIDWORKS' temp folder.
                         if (WorkspacePolicy.IsTemporary(reference, input.TempFolder)) temporary.Add(Path.GetFileName(reference));
                         // Not anywhere SOLIDWORKS will look: teammates would see it missing. Only CAD files: design tables,

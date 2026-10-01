@@ -280,6 +280,7 @@ static class Program
             plan.Items.Add(new SubmitItem { Kind = SubmitKind.New, Path = camera, Workspace = season });
             plan.Items.Add(new SubmitItem { Kind = SubmitKind.ReleaseOnly, Path = plate, Workspace = season });
             var references = new System.Collections.Generic.Dictionary<string, string[]> { { shooter, new[] { camera, outside } } };
+            var teamReferences = new System.Collections.Generic.Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
             var documents = new System.Collections.Generic.List<OpenDocument>();
             var locks = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var acknowledged = new System.Collections.Generic.HashSet<string>();
@@ -287,7 +288,8 @@ static class Program
             {
                 Plan = plan, Selected = new System.Collections.Generic.HashSet<string>(chosen, StringComparer.OrdinalIgnoreCase),
                 Workspaces = new[] { season }, Documents = documents, LockedBy = locks, User = "sarah", Acknowledged = acknowledged,
-                References = path => references.ContainsKey(path) ? references[path] : new string[0], TempFolder = Path.Combine(temp, "swtemp"),
+                References = path => references.ContainsKey(path) ? references[path] : new string[0],
+                TeamReferences = path => teamReferences.ContainsKey(path) ? teamReferences[path] : new string[0], TempFolder = Path.Combine(temp, "swtemp"),
             });
 
             var issues = run(new[] { shooter, plate });
@@ -337,6 +339,15 @@ static class Program
             Check(run(new[] { shooter, camera }).Single().Description.Contains("Other Bracket"), "Submit anyway doesn't cover a different missing file found later");
             references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "table.xlsx") };
             Check(run(new[] { shooter, camera }).Count == 0, "Non-CAD dependency is a documented limit, not an issue");
+            // Problems already in the team's version of a changed file aren't the student's doing: they never block.
+            string inherited = Path.Combine(temp, "Elsewhere", "Part1.SLDPRT"), imported = Path.Combine(Path.GetDirectoryName(interconnect), "PDH.step.SLDPRT");
+            references[shooter] = new[] { camera, inherited, imported };
+            teamReferences[shooter] = new[] { inherited, imported };
+            Check(run(new[] { shooter, camera }).Count == 0, "Missing/temporary references inherited from the team's version blocked Submit");
+            references[shooter] = new[] { camera, inherited, imported, Path.Combine(temp, "Gone", "My New Bracket.SLDPRT") };
+            var added = run(new[] { shooter, camera }).Single();
+            Check(added.Description.Contains("My New Bracket") && !added.Description.Contains("Part1"), "Only the newly added missing reference is reported");
+            teamReferences.Clear();
             // Virtual components live inside their assembly (SOLIDWORKS unpacks them to temp while it's open): never an issue.
             references[shooter] = new[] { camera, Path.Combine(Path.GetDirectoryName(interconnect), "Belt1-4^Shooter.SLDPRT"),
                 Path.Combine(temp, "Gone", "Part6^Shooter.SLDPRT") };
