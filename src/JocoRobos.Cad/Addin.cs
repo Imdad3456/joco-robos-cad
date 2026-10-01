@@ -69,6 +69,9 @@ namespace JocoRobos.Cad
         private Catalog paneCatalog;
         private DateTime paneCatalogAt, checkedAt;
         private WorkspaceSnapshot robotSnapshot, librarySnapshot;
+        // The robot from the last catalog read, so the file browser still lists local files when the server check fails.
+        private WorkspaceInfo robotInfo;
+        private WorkspaceSnapshot robotOffline;
         private string paneUser, paneError;
         private Catalog.AddinRelease offeredUpdate;
         private string promptedVersion;
@@ -351,9 +354,17 @@ namespace JocoRobos.Cad
                 if (state.CanAutoUpdate) pane.BeginInvoke((Action)(() => StartAutoUpdate()));
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
-                pane.ShowRobotFiles(robotSnapshot);
+                pane.ShowRobotFiles(robotSnapshot ?? OfflineRobot());
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
+        }
+
+        // Server unreachable before the first good check: the browser still lists what's on this computer (no statuses).
+        private WorkspaceSnapshot OfflineRobot()
+        {
+            if (robotInfo == null || !Directory.Exists(Path.Combine(robotInfo.Root, ".svn"))) return null;
+            if (robotOffline == null || robotOffline.Info != robotInfo) robotOffline = new WorkspaceSnapshot { Info = robotInfo, Local = -1 };
+            return robotOffline;
         }
 
         // Read-only server check: never prompts, never changes files, skipped while a command runs.
@@ -370,10 +381,12 @@ namespace JocoRobos.Cad
             var cached = DateTime.UtcNow - paneCatalogAt < TimeSpan.FromMinutes(10) ? paneCatalog : null;
             int year = SolidWorksYear; // SOLIDWORKS is only asked on its own thread.
             var started = DateTime.UtcNow;
+            WorkspaceInfo knownRobot = null;
             Task.Run(() =>
             {
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 var catalog = cached ?? Catalog.Fetch(login);
+                knownRobot = catalog.Robot;
                 if (!heartbeatSent) heartbeatSent = SendHeartbeat(login, year);
                 var robot = new SvnWorkspace(login, catalog.Robot).Snapshot();
                 var library = catalog.Library == null ? null : new SvnWorkspace(login, catalog.Library).Snapshot();
@@ -385,6 +398,7 @@ namespace JocoRobos.Cad
                 OnUi("status refresh", () =>
                 {
                     refreshing = false;
+                    if (knownRobot != null) robotInfo = knownRobot;
                     // Only a check that started after the last automatic update ended knows what's still new.
                     if (started > autoUpdateEnded) awaitingFreshStatus = false;
                     if (task.Status == TaskStatus.RanToCompletion)

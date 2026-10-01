@@ -280,13 +280,21 @@ namespace JocoRobos.Cad
             return work;
         }
 
-        // Read-only view for the status pane: never changes files, never takes the operation lock.
+        // Read-only view for the status pane: never changes files; takes the operation lock only to follow a server move.
         internal WorkspaceSnapshot Snapshot()
         {
             if (!IsCheckedOut) return new WorkspaceSnapshot { Info = Info };
             using (var client = Client())
             {
                 var local = GetInfo(client, new SvnPathTarget(Root));
+                if (!SameUri(local.Uri, Repository) && WorkspacePolicy.IsOldAddress(local.Uri, Repository, WorkspaceInfo.OldServerHosts))
+                {
+                    // The one change a status check makes: follow the server to its new address (SVN bookkeeping only, no files
+                    // touched), because the old address can't be checked any more. Done under the same lock as every command.
+                    try { Exclusive(() => { FollowServerMove(client); return true; }); }
+                    catch (IOException) { throw new InvalidOperationException("Another JOCO command is running; checking again shortly."); }
+                    local = GetInfo(client, new SvnPathTarget(Root));
+                }
                 RequireIdentity(local);
                 var snapshot = new WorkspaceSnapshot { Info = Info, Local = local.Revision,
                     Head = GetInfo(client, new SvnUriTarget(Repository)).Revision };
