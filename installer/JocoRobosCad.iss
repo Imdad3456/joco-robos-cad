@@ -24,12 +24,15 @@ SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
 UninstallDisplayName=CAD Hub
+SetupIconFile=cad-hub.ico
+UninstallDisplayIcon={app}\cad-hub.ico
 ; SignTool=joco $f  ; enable once the team has a code-signing certificate
 
 [Files]
 Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\*.pdb"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#BuildDir}\Icons\*.png"; DestDir: "{app}\Icons"; Flags: ignoreversion
+Source: "cad-hub.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Registry]

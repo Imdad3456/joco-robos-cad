@@ -14,12 +14,13 @@ ORDER = ['open-robot', 'update', 'edit', 'submit', 'insert-library',  # Image in
 SIZES = [20, 32, 40, 64, 96, 128]
 
 sources = [Image.open(ICONS / 'source' / (name + '.png')).convert('RGBA') for name in ORDER]
+app = Image.open(ICONS / 'source' / 'app.png').convert('RGBA')
 for size in SIZES:
     strip = Image.new('RGBA', (size * len(ORDER), size), (0, 0, 0, 0))
     for index, icon in enumerate(sources):
         strip.paste(icon.resize((size, size), Image.LANCZOS), (index * size, 0))
     strip.save(ICONS / ('toolbar_%d.png' % size))
-    sources[0].resize((size, size), Image.LANCZOS).save(ICONS / ('main_%d.png' % size))  # Tab and task pane icon.
+    app.resize((size, size), Image.LANCZOS).save(ICONS / ('main_%d.png' % size))  # Tab and task pane icon: the CAD Hub logo.
 for name, icon in zip(ORDER, sources):
     icon.resize((24, 24), Image.LANCZOS).save(ICONS / ('button_%s.png' % name))  # Task pane buttons.
 print('Wrote', len(list(ICONS.glob('*.png'))), 'icon files to', ICONS)

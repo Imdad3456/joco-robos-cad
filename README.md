@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/cad-hub-logo.png" alt="CAD Hub" width="220"></p>
+
 # CAD Hub
 
 Team CAD for FRC teams that use SOLIDWORKS: an add-in plus a small team server, built and used by [FRC Team 5919 (JOCO ROBOS)](https://cad.team5919.org/). (It was called JOCO ROBOS CAD before 1.4.) It lets the whole team work on one robot without overwriting each other's work. Students only see:

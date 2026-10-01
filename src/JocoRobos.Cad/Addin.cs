@@ -257,7 +257,7 @@ namespace JocoRobos.Cad
 
         private void CreatePane()
         {
-            // The task pane tab uses the Open Robot icon; the plain "J" is only a fallback if the icon files are missing.
+            // The task pane tab uses the CAD Hub logo; the plain "C" is only a fallback if the icon files are missing.
             string[] mains = IconFiles("main");
             if (mains != null) taskpane = application.CreateTaskpaneView3(mains, Title);
             if (taskpane == null)
@@ -269,7 +269,7 @@ namespace JocoRobos.Cad
                 using (var font = new System.Drawing.Font("Segoe UI", 8f, System.Drawing.FontStyle.Bold))
                 {
                     graphics.Clear(System.Drawing.Color.FromArgb(31, 95, 191));
-                    graphics.DrawString("J", font, System.Drawing.Brushes.White, 2, 1);
+                    graphics.DrawString("C", font, System.Drawing.Brushes.White, 2, 1);
                     bitmap.Save(icon, System.Drawing.Imaging.ImageFormat.Bmp);
                 }
                 taskpane = application.CreateTaskpaneView2(icon, Title);
