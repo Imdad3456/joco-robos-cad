@@ -15,6 +15,8 @@ namespace JocoRobos.Cad
         internal Action<FrcItem, Dictionary<string, string>> InsertFrc;
         internal Func<string, List<string>> SearchTeam;
         internal Action<string> InsertTeam;
+        // Robot tab file browser: open, show in Explorer, File History for a robot file.
+        internal Action<string> OpenFile, RevealFile, FileHistoryOf;
         internal Action BrowseTeam, ImportDownloaded;
     }
 
@@ -44,8 +46,10 @@ namespace JocoRobos.Cad
         private readonly Button submit = Action("Submit", "Submit");
         private readonly Label locks = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
         private readonly LinkLabel release = new LinkLabel { Text = "Give back the ones I didn't change", AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
+        // The status card takes the height it needs; the robot file browser fills the rest of the Robot tab.
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoScroll = true, Padding = new Padding(12, 10, 12, 10) };
+            WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 10, 12, 4) };
+        private RobotFilesPanel files;
         private readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
         private readonly TabPage libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
         private readonly FrcLibraryPanel library;
@@ -67,7 +71,14 @@ namespace JocoRobos.Cad
                 activeFile, activeStatus, edit, history, Spacer(), pending, submit, Spacer(), locks, release, check, diagnostics })
                 layout.Controls.Add(control);
             var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
-            robotTab.Controls.Add(layout);
+            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 180) };
+            var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true };
+            robotGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            robotGrid.Controls.Add(layout, 0, 0);
+            robotGrid.Controls.Add(files, 0, 1);
+            robotTab.Controls.Add(robotGrid);
             library = new FrcLibraryPanel(actions) { Dock = DockStyle.Fill };
             libraryTab.Controls.Add(library);
             tabs.TabPages.Add(robotTab);
@@ -84,6 +95,12 @@ namespace JocoRobos.Cad
                 }
             };
             Show(new PaneState());
+        }
+
+        /// <summary>The robot file browser follows the robot's latest status check (and the robot chosen).</summary>
+        internal void ShowRobotFiles(WorkspaceSnapshot robot)
+        {
+            files.Show(robot);
         }
 
         internal void ShowLibrary()

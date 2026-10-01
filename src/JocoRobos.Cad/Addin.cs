@@ -276,6 +276,7 @@ namespace JocoRobos.Cad
                     catch (Exception) { return null; }
                 },
                 History = FileHistory, Diagnostics = CopyDiagnostics,
+                OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
             });
@@ -350,6 +351,7 @@ namespace JocoRobos.Cad
                 if (state.CanAutoUpdate) pane.BeginInvoke((Action)(() => StartAutoUpdate()));
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
+                pane.ShowRobotFiles(robotSnapshot);
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
         }
@@ -1137,14 +1139,26 @@ namespace JocoRobos.Cad
 
         public void FileHistory()
         {
+            FileHistoryFor(null);
+        }
+
+        // file: a robot file from the Robot tab's browser; null: the active document (or selected component).
+        private void FileHistoryFor(string file)
+        {
             Execute(() =>
             {
                 var login = GetLogin(false);
                 if (login == null) return;
                 var catalog = LoadCatalog(login);
                 WorkspaceInfo workspace;
-                var doc = ActiveCad(catalog, out workspace);
-                string path = Path.GetFullPath(doc.GetPathName());
+                string path;
+                if (file == null) path = Path.GetFullPath(ActiveCad(catalog, out workspace).GetPathName());
+                else
+                {
+                    path = Path.GetFullPath(file);
+                    workspace = catalog.Owning(path);
+                    if (workspace == null) throw new InvalidOperationException(Path.GetFileName(path) + " isn't in a robot folder.");
+                }
                 var svn = new SvnWorkspace(login, workspace);
                 var versions = OperationDialog.Run("Reading the history of " + Path.GetFileName(path) + "…", () => svn.History(path, 30));
                 if (versions.Count == 0) { Message(Path.GetFileName(path) + " is new: it has no team history yet."); return; }
@@ -1244,6 +1258,50 @@ namespace JocoRobos.Cad
                 ShowFlash("✓ Diagnostics copied. Paste them to a mentor (also saved as a file).");
                 System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\"");
             });
+        }
+
+        // ---------- Robot tab file browser ----------
+
+        // Opens a robot file's local copy, exactly like File → Open: no lock, no Edit, no update. Only files of the robot
+        // the panel shows, and only SOLIDWORKS files that exist.
+        private void OpenRobotFile(string path)
+        {
+            try
+            {
+                var robot = robotSnapshot?.Info;
+                if (robot == null || !WorkspacePolicy.IsRobotFile(robot.Root, path))
+                    throw new InvalidOperationException(Path.GetFileName(path) + " isn't a SOLIDWORKS file in " + (robot?.Name ?? "the robot") + ".");
+                path = Path.GetFullPath(path);
+                if (!File.Exists(path)) throw new InvalidOperationException(Path.GetFileName(path) + " isn't there any more (a teammate may have moved it). Click Refresh.");
+                if (busy) { ShowFlash("JOCO is busy for a moment (getting changes or checking): try again in a few seconds."); return; }
+                var open = FindOpen(path);
+                int errors = 0, warnings = 0;
+                if (open != null)
+                {
+                    application.ActivateDoc3(open.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref errors);
+                    return;
+                }
+                int type = path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocASSEMBLY
+                    : path.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase) ? (int)swDocumentTypes_e.swDocDRAWING : (int)swDocumentTypes_e.swDocPART;
+                if (application.OpenDoc6(path, type, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings) == null)
+                    throw new InvalidOperationException("SOLIDWORKS couldn't open " + Path.GetFileName(path) + " (error " + errors + ").");
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Write("open robot file", exception);
+                Message(exception.Message, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void RevealRobotFile(string path)
+        {
+            try
+            {
+                var robot = robotSnapshot?.Info;
+                if (robot != null && WorkspacePolicy.IsRobotFile(robot.Root, path) && File.Exists(path))
+                    System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + Path.GetFullPath(path) + "\"");
+            }
+            catch (Exception exception) { ErrorLog.Write("show robot file", exception); }
         }
 
         public void ShowLibrary()

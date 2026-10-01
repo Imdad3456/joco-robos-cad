@@ -151,6 +151,14 @@ namespace JocoRobos.Cad
                 : "This computer has SOLIDWORKS " + mine + ", but the team uses SOLIDWORKS " + team + ". Update SOLIDWORKS to " + team + " to edit and submit.";
         }
 
+        /// <summary>A SOLIDWORKS file (not an owner/lock file) inside this robot folder: what the Robot tab may open.</summary>
+        internal static bool IsRobotFile(string root, string path)
+        {
+            if (String.IsNullOrEmpty(root) || String.IsNullOrEmpty(path) || !IsSubmittableCad(path)) return false;
+            try { RequireInside(root, path); return true; }
+            catch (Exception) { return false; }
+        }
+
         /// <summary>True when a robot copy points at an earlier address of this same server (same repository path).</summary>
         internal static bool IsOldAddress(Uri current, Uri expected, IEnumerable<string> oldHosts)
         {

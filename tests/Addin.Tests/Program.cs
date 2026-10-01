@@ -139,9 +139,41 @@ static class Program
                 "Robot copies move only from this server's old address, same repository");
             SubmitChecks(temp);
             PaneChecks();
+            RobotFileChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
         finally { Directory.Delete(temp, true); }
+    }
+
+    // The Robot tab's file browser: only robot CAD, real folders, searchable by name or folder.
+    static void RobotFileChecks(string temp)
+    {
+        string robot = Path.Combine(temp, "Browse", "2096-Robot");
+        Action<string> make = relative =>
+        {
+            string path = Path.Combine(robot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, "x");
+        };
+        foreach (string f in new[] { Path.Combine("00_Master", "Robot.SLDASM"), Path.Combine("30_Shooter", "Shooter.SLDASM"),
+            Path.Combine("30_Shooter", "Structure", "ShooterPlate.SLDPRT"), Path.Combine("30_Shooter", "Structure", "Plate.SLDDRW"),
+            Path.Combine(".svn", "pristine", "Hidden.SLDPRT"), Path.Combine("30_Shooter", "~$Shooter.SLDASM"),
+            Path.Combine("30_Shooter", "notes.txt"), Path.Combine("70_Docs", "readme.txt"), Path.Combine("90_COTS", "Motors", "Kraken X60.SLDPRT") })
+            make(f);
+        var index = RobotFileIndex.Build(robot);
+        Check(index.Files.Count == 5 && !index.Files.Any(f => f.Contains(".svn") || f.Contains("~$") || f.EndsWith(".txt")), "Only robot CAD is listed: " + String.Join(", ", index.Files));
+        Check(index.SubfoldersOf("").SequenceEqual(new[] { "00_Master", "30_Shooter", "90_COTS" }), "Folders without CAD (and .svn) are left out");
+        Check(index.FilesIn("30_Shooter").SequenceEqual(new[] { "Shooter.SLDASM" }) && index.SubfoldersOf("30_Shooter").SequenceEqual(new[] { "Structure" }), "Folder contents");
+        var shooter = index.Search("shooter");
+        Check(shooter.Count == 3 && Path.GetFileName(shooter[0]) == "Shooter.SLDASM" && Path.GetFileName(shooter[1]) == "ShooterPlate.SLDPRT" && shooter[2].EndsWith("Plate.SLDDRW"),
+            "Search by name first, then by folder: " + String.Join(", ", shooter));
+        Check(index.Search("STRUCTURE plate").Count == 2 && index.Search("kraken").Single().EndsWith("Kraken X60.SLDPRT") && index.Search("zzz").Count == 0, "Case-insensitive, all words, folder names");
+        Check(WorkspacePolicy.IsRobotFile(robot, Path.Combine(robot, "30_Shooter", "Shooter.SLDASM")) &&
+            !WorkspacePolicy.IsRobotFile(robot, Path.Combine(robot, "30_Shooter", "~$Shooter.SLDASM")) &&
+            !WorkspacePolicy.IsRobotFile(robot, Path.Combine(robot, "30_Shooter", "notes.txt")) &&
+            !WorkspacePolicy.IsRobotFile(robot, Path.Combine(temp, "Browse", "2095-Robot", "Other.SLDPRT")) &&
+            !WorkspacePolicy.IsRobotFile(robot, Path.Combine(robot, "..", "2095-Robot", "Sneaky.SLDPRT")) &&
+            !WorkspacePolicy.IsRobotFile(robot, Path.Combine(robot, ".svn", "pristine", "Hidden.SLDPRT")), "Only this robot's CAD can be opened");
     }
 
     // The panel shows one obvious next action for the situation, never a wall of commands.

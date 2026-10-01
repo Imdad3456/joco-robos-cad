@@ -13,5 +13,6 @@
     <Compile Include="../../src/JocoRobos.Cad/SubmitCheck.cs" Link="SubmitCheck.cs" />
     <Compile Include="../../src/JocoRobos.Cad/PaneState.cs" Link="PaneState.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Diagnostics.cs" Link="Diagnostics.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/RobotFiles.cs" Link="RobotFiles.cs" />
   </ItemGroup>
 </Project>

@@ -49,6 +49,18 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3.5 | B | Download any vendor `.SLDPRT` (McMaster) → Library tab → **Import a downloaded CAD file…**, with your assembly being edited | Copied into `90_COTS\Imported\…` and inserted into the assembly | ☐ |
 | 3.6 | Both | **Submit** everything so far (comment "TEST"); uncheck A's bracket copy if you don't want it | "✓ Submitted N files (#…)" in the panel | ☐ |
 
+## 3b. Robot Files (Robot tab)
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3b.1 | Both | Robot tab, below the status: **ROBOT FILES** | The robot's top folders (00_Master, 10_Drivetrain…). On a computer without the robot: "Open Robot to download the robot files." | ☐ |
+| 3b.2 | Both | Expand `30_Shooter` (or any folder), double-click a part, an assembly, and a drawing | Each opens in SOLIDWORKS, read-only as usual; nothing gets locked by opening. Double-clicking one that's already open just switches to it | ☐ |
+| 3b.3 | Both | Type `motor` in the search box | Matching files from anywhere in the robot appear within a moment, each with its folder; double-click one to open it | ☐ |
+| 3b.4 | A | **Edit** a part. B: wait for the status check (or **Check now**) | A sees ✎ on that file; B sees 🔒 with "imdad is editing this since …" in the tooltip | ☐ |
+| 3b.5 | Both | Save a new part into `80_Unsorted` | It appears with ● within a few seconds | ☐ |
+| 3b.6 | Both | **Choose Robot** → another season and back | The list switches with it; it never shows the other season's files | ☐ |
+| 3b.7 | A | Full robot: open and close folders quickly, and type in search while rotating the model | SOLIDWORKS never hitches | ☐ |
+
 ## 4. Together: nobody overwrites anybody
 
 | # | Who | Do | Expect | ✓ |
