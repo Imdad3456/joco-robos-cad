@@ -3,7 +3,7 @@
 For the next Claude session (cloud) or anyone picking this up.
 
 ## Released and live
-- **Add-in 0.15.0** is the newest release on `main` (tag `v0.15.0`). Mentors publish it from the mentor page → Add-in → Release to students.
+- **Add-in 1.0.0** is released (tag `v1.0.0`; the same code as 0.15.0, after the release tests passed). Mentors publish it from the mentor page → Add-in → Release to students.
 - **Server v24** runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
 - The restore drill (`server/restore-drill.sh`) passed on both the Deck backup and the off-device copy on 2026-09-30.
 
@@ -15,8 +15,8 @@ Still to do: submit `team5919.org` as Education to the filter categorization ser
 ## Why the new domain
 A student at Johnston Community College (JCC) can't connect from the add-in. Server logs (they now show each visitor's real address) prove the add-in's requests never reach us from JCC, while browsers do. JCC's network resets connections to `cad.imdad.stream` by name. The `.stream` ending and a brand-new domain with no category are the likely reasons. Also send JCC IT (JOLT, jolt@mail.johnstoncc.edu, 919-464-2260) a request to allow the address. Don't build anything that hides or disguises traffic to get past a filter. That student also has SOLIDWORKS 2025; the robot is SOLIDWORKS 2026 format, so she needs 2026.
 
-## Road to 1.0.0
-Run `TESTING.md` (two PCs in the disposable `2099-Robot` season, an uncoached student, a one-week pilot with features frozen). Fix only failures. Then bump to 1.0.0, change the README status, and tag. Mentors should also set **Team SOLIDWORKS version = 2026** on the Add-in tab.
+## After 1.0.0
+1.0.x is fixes only. New features go into 1.1 and later. `TESTING.md` stays the regression sheet: rerun the affected sections in the `2099-Robot` test season before releasing anything that touches Edit, Submit, Update or locking.
 
 ## What a cloud session can and can't do
 - **Can:** edit code, run the add-in unit tests (`dotnet run --project tests/Addin.Tests`, .NET 8), compile the add-in against the net48 reference assemblies (`dotnet build src/JocoRobos.Cad -c Release -p:SolidWorksInteropDir=<repo>/lib/solidworks`), run the server tests if Docker is available (see `.github/workflows/build.yml`), push, and tag. GitHub Actions builds the installer and stages it on the server by itself.

@@ -55,7 +55,7 @@ The repository is public so students can download releases. It contains **no pas
 
 ## Status
 
-**1.0 release candidate (0.14).** Feature-frozen: only fixes for problems that could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing. Confirmed in SOLIDWORKS 2026: install and automatic updates, sign-in, opening the robot, editing and locking, Submit, FRCDesignLib inserts (with custom lengths), and upgrading an older robot. The rest is being confirmed with [TESTING.md](TESTING.md). 1.0.0 is tagged when that sheet passes.
+**1.0.0, released.** Confirmed by the two-person release test, an uncoached student, and team use in SOLIDWORKS 2026. From here, 1.0.x releases fix anything that could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing; new features come in 1.1 and later.
 
 **Known limits (on purpose, for 1.0):**
 - Only SOLIDWORKS files (parts, assemblies, drawings) are shared. Excel design tables, decals, textures and Toolbox data aren't synced; Submit doesn't check them.
