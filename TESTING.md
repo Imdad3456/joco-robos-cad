@@ -98,7 +98,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 5.4b | A | Sign in as the same account on a second computer (or a second Windows user). Submit a small change on computer 1 | Computer 2's panel shows "⬇ 1 new change", from "you (another computer)", and gets it | ☐ |
 | 5.4c | A | Mentor page → **Add-in** → set the team SOLIDWORKS version to `2025` → Save. In SOLIDWORKS, **Check now**, then try **Edit** on a part | Red panel note "This computer has SOLIDWORKS 2026, but the team uses 2025…"; Edit refuses. Set it back to `2026`: editing works again | ☐ |
 | 5.4d | A | Publish a new add-in as **required** while B has a saved, unsubmitted change | B can still **Submit** it; new Edits ask to install the update first | ☐ |
-| 5.4e | Both | Panel → **Copy diagnostics for a mentor**, paste into Notepad | Versions, account name, robot state, recent errors; no password, no setup code | ☐ |
+| 5.4e | Both | Panel → **Diagnostics**, then paste into Notepad. A: mentor page → **Diagnostics** → View | "Sent to your mentors"; the same report on the mentor page and in Notepad: versions, account name, robot state, recent errors; no password, no setup code | ☐ |
 | 5.5 | Both | Wi-Fi off, then look at the panel and try **Edit** | "Can't reach the server" with a reason; nothing becomes writable. Wi-Fi back on | ☐ |
 
 ## 6. Timing on the real robot (A)

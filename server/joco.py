@@ -39,6 +39,11 @@ SECRET = os.path.join(CONFIG, 'admin-secret')
 UPDATES = os.path.join(CONFIG, 'public', 'updates')
 HEALTH = os.path.join(CONFIG, 'health')
 HEARTBEATS = os.path.join(CONFIG, 'heartbeats.json')
+# Diagnostics reports students send from SOLIDWORKS (already scrubbed of passwords and codes by the add-in).
+DIAGNOSTICS = os.path.join(CONFIG, 'diagnostics')
+DIAGNOSTIC_NAME = re.compile(r'^\d{8}T\d{6}Z-[a-z0-9._-]{1,40}\.txt$')
+MAX_DIAGNOSTIC = 512 * 1024
+KEEP_DIAGNOSTICS, DIAGNOSTIC_DAYS = 200, 60
 INVITES = os.path.join(CONFIG, 'invites.json')
 REQUESTS = os.path.join(CONFIG, 'requests.json')  # Students asking for an account, waiting for a mentor's code.
 MAX_REQUESTS = 40
@@ -441,6 +446,43 @@ def record_heartbeat(user, version, computer, solidworks=''):
     write_atomic(HEARTBEATS, json.dumps(beats, indent=2) + '\n')
 
 
+def diagnostic_files():
+    """Report file names, newest first."""
+    try:
+        return sorted((n for n in os.listdir(DIAGNOSTICS) if DIAGNOSTIC_NAME.match(n)), reverse=True)
+    except FileNotFoundError:
+        return []
+
+
+def save_diagnostics(user, data):
+    if len(data) > MAX_DIAGNOSTIC:
+        raise Refused('Report too large.')
+    text = data.decode('utf-8', errors='replace')
+    if not text.strip():
+        raise Refused('Empty report.')
+    who = re.sub(r'[^a-z0-9._-]', '', user.lower())[:40] or 'unknown'
+    name = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + who + '.txt'
+    write_atomic(os.path.join(DIAGNOSTICS, name), text)
+    # Newest 200, at most 60 days old: enough to help, never a growing pile.
+    for index, old in enumerate(diagnostic_files()):
+        path = os.path.join(DIAGNOSTICS, old)
+        if index >= KEEP_DIAGNOSTICS or time.time() - os.path.getmtime(path) > DIAGNOSTIC_DAYS * 86400:
+            os.remove(path)
+    return name
+
+
+def diagnostic_summary(name):
+    """(student, sent, add-in, computer, problem) from a report's first lines."""
+    fields = {}
+    with open(os.path.join(DIAGNOSTICS, name), encoding='utf-8', errors='replace') as handle:
+        for line in handle.read(20000).splitlines():
+            key, _, value = line.partition(': ')
+            if value and key in ('Add-in', 'Computer', 'Panel status error') and key not in fields:
+                fields[key] = value.strip()
+    sent = time.strftime('%b %d %H:%M', time.localtime(calendar.timegm(time.strptime(name[:16], '%Y%m%dT%H%M%SZ'))))
+    return name[17:-4], sent, fields.get('Add-in', '?'), fields.get('Computer', ''), fields.get('Panel status error', '')
+
+
 # ---------- accounts: students choose their own passwords ----------
 
 def new_setup_code(user, mentor):
@@ -594,6 +636,12 @@ def change_password(user, password):
 def act(user, form):
     action = form.get('action', '')
     state = load_state()
+    if action == 'delete-diagnostics':
+        name = form.get('name', '')
+        if not DIAGNOSTIC_NAME.match(name) or not os.path.isfile(os.path.join(DIAGNOSTICS, name)):
+            raise Refused('That report is already gone.')
+        os.remove(os.path.join(DIAGNOSTICS, name))
+        return 'Deleted the report.'
     if action == 'create-season':
         name = form.get('name', '').strip()
         if not SEASON.match(name):
@@ -947,11 +995,13 @@ class Admin(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path.rstrip('/')
         query = parse_qs(urlsplit(self.path).query)
+        if path == '/admin/diagnostics' and 'file' in query:
+            return self.diagnostic_file(query['file'][0])
         notice = query.get('ok', [''])[0]
         error = query.get('error', [''])[0]
         self.query = query
         pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page,
-                 '/admin/addin': self.addin_page, '/admin/undo': self.undo_page}
+                 '/admin/addin': self.addin_page, '/admin/undo': self.undo_page, '/admin/diagnostics': self.diagnostics_page}
         if path not in pages:
             self.send_error(404)
             return
@@ -965,13 +1015,15 @@ class Admin(BaseHTTPRequestHandler):
         if error:
             banner = '<div class="notice bad">' + esc(error) + '</div>'
         self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts', '/admin/addin': 'Add-in',
-                   '/admin/undo': 'Undo a submit'}[path], banner + body, path)
+                   '/admin/undo': 'Undo a submit', '/admin/diagnostics': 'Diagnostics'}[path], banner + body, path)
 
     def do_POST(self):
         if urlsplit(self.path).path == '/admin/api/stage-addin':
             return self.stage()
         if urlsplit(self.path).path == '/admin/api/heartbeat':
             return self.heartbeat()
+        if urlsplit(self.path).path == '/admin/api/diagnostics':
+            return self.diagnostics_upload()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('POST')
         if urlsplit(self.path).path == '/account/setup':
@@ -984,7 +1036,7 @@ class Admin(BaseHTTPRequestHandler):
         if state is None:
             return
         back = urlsplit(self.path).path.rstrip('/') or '/admin'
-        if back not in ('/admin', '/admin/locks', '/admin/library', '/admin/users', '/admin/addin'):
+        if back not in ('/admin', '/admin/locks', '/admin/library', '/admin/users', '/admin/addin', '/admin/diagnostics'):
             back = '/admin'
         try:
             # Browsers resend Basic credentials automatically: require same-origin plus a per-user token.
@@ -1037,6 +1089,29 @@ class Admin(BaseHTTPRequestHandler):
             with Locked():
                 record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')), str(body.get('solidworks', '')))
             self.reply(200, 'ok')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc))
+
+    def diagnostics_upload(self):
+        # Any signed-in student's add-in (same rule as the heartbeat). Throttled so a stuck button can't fill the disk.
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length > MAX_DIAGNOSTIC:
+                # Read it away first (up to the upload limit), so the add-in gets this answer instead of a broken connection.
+                left = min(length, MAX_UPLOAD)
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 65536))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+                raise Refused('Report too large.')
+            data = self.rfile.read(length)
+            _throttle(self.user, 'diagnostics')
+            with Locked():
+                save_diagnostics(self.user, data)
+            self.reply(200, 'Sent.')
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
 
@@ -1102,7 +1177,8 @@ class Admin(BaseHTTPRequestHandler):
         self.end_headers()
 
     def page(self, title, body, current, status=200):
-        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'), ('/admin/addin', 'Add-in')]
+        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'), ('/admin/addin', 'Add-in'),
+                 ('/admin/diagnostics', 'Diagnostics')]
         nav = ''.join('<a href="%s"%s>%s</a>' % (h, ' class="on"' if h == current else '', t) for h, t in links)
         text = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>%s · CAD Hub</title><style>%s</style></head><body><header><b>CAD Hub</b><nav>%s</nav>'
@@ -1307,6 +1383,37 @@ class Admin(BaseHTTPRequestHandler):
                     '<span class="ok">ready</span>' if configured else '<span class="bad">no Onshape key on the server</span>',
                     today, frcdesign.DAILY_EXPORTS, len(ready), (', %d in progress' % len(pending)) if pending else '', calls, frcdesign.ANNUAL_CALLS,
                     rows or '<tr><td colspan="3" class="muted">Nothing imported yet.</td></tr>')
+
+    def diagnostics_page(self, state):
+        rows = ''
+        for name in diagnostic_files():
+            student, sent, version, computer, problem = diagnostic_summary(name)
+            rows += '<tr><td>%s</td><td><b>%s</b></td><td>%s%s</td><td>%s</td><td><a href="/admin/diagnostics?file=%s">View</a> %s</td></tr>' % (
+                esc(sent), esc(student), esc(version), (' · ' + esc(computer)) if computer else '',
+                '<span class="bad">' + esc(problem[:120]) + '</span>' if problem and problem != '(none)' else '<span class="muted">none</span>',
+                quote(name), self.form('delete-diagnostics', {'name': name}, 'Delete'))
+        if not rows:
+            rows = '<tr><td colspan="5" class="muted">Nothing yet. When a student clicks Diagnostics in the CAD Hub panel, the report shows up here.</td></tr>'
+        return ('<section><h2>Diagnostics from students</h2><p class="muted">Sent from SOLIDWORKS with the panel\'s Diagnostics link. '
+                'Passwords, setup codes and tokens are removed before they leave the student\'s computer. The newest %d are kept, for %d days.</p>'
+                '<table><tr><th>Sent</th><th>Student</th><th>Add-in · computer</th><th>Panel problem</th><th></th></tr>%s</table></section>') % (
+            KEEP_DIAGNOSTICS, DIAGNOSTIC_DAYS, rows)
+
+    def diagnostic_file(self, name):
+        if self.guard() is None:
+            return
+        if not DIAGNOSTIC_NAME.match(name) or not os.path.isfile(os.path.join(DIAGNOSTICS, name)):
+            return self.send_error(404)
+        with open(os.path.join(DIAGNOSTICS, name), 'rb') as handle:
+            data = handle.read()
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Content-Disposition', 'inline; filename="%s"' % name)
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
 
     def users_page(self, state):
         rows = ''

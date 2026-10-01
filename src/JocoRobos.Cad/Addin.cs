@@ -454,6 +454,23 @@ namespace JocoRobos.Cad
             });
         }
 
+        // A diagnostics report (already sanitized) to the mentor page's Diagnostics tab.
+        private static bool SendDiagnostics(NetworkCredential login, string report)
+        {
+            var request = (HttpWebRequest)WebRequest.Create(new Uri(WorkspaceInfo.Server, "admin/api/diagnostics"));
+            request.Method = "POST";
+            request.Timeout = 20000;
+            request.ContentType = "text/plain; charset=utf-8";
+            request.UserAgent = "JOCO-ROBOS-CAD";
+            request.AllowAutoRedirect = false;
+            request.Headers["X-Joco-Client"] = "addin";
+            request.Headers[HttpRequestHeader.Authorization] = "Basic " +
+                Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
+            byte[] body = System.Text.Encoding.UTF8.GetBytes(report);
+            using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
+            using (var response = (HttpWebResponse)request.GetResponse()) return response.StatusCode == HttpStatusCode.OK;
+        }
+
         // Lets mentors see which add-in version each student runs (Accounts tab). Best effort, once per session.
         private static bool SendHeartbeat(NetworkCredential login, int solidWorks)
         {
@@ -1330,8 +1347,17 @@ namespace JocoRobos.Cad
                 string file = Path.Combine(folder, "JOCO-diagnostics-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt");
                 File.WriteAllText(file, report);
                 try { Clipboard.SetText(report); } catch (Exception exception) { ErrorLog.Write("diagnostics clipboard", exception); }
-                ShowFlash("✓ Diagnostics copied. Paste them to a mentor (also saved as a file).");
-                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\"");
+                // Straight to the mentor page (Diagnostics tab), so nobody has to paste or email it. Copied and saved either way.
+                bool sent = false;
+                if (login != null)
+                    try { sent = OperationDialog.Run("Sending to your mentors…", () => SendDiagnostics(login, report)); }
+                    catch (Exception exception) { ErrorLog.Write("send diagnostics", exception); }
+                if (sent) ShowFlash("✓ Diagnostics sent to your mentors (also copied, and saved as a file).");
+                else
+                {
+                    ShowFlash("✓ Diagnostics copied. Paste them to a mentor (also saved as a file).");
+                    System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\"");
+                }
             });
         }
 

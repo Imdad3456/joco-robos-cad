@@ -23,7 +23,7 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 
 Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History), your account (Sign In, Change Password, Test Connection, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
-**Something wrong?** Click **Copy diagnostics for a mentor** at the bottom of the panel (or Tools → Copy Diagnostics) and paste it to a mentor. It never includes passwords or codes.
+**Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or codes.
 
 ## For mentors
 
@@ -35,6 +35,7 @@ Everything is on your server's mentor page, **https://*your server*/admin** (Tea
 | **Locks** | See who's editing what and since when; release a lock someone abandoned (after they've confirmed they're done: releasing doesn't keep their unsubmitted changes) |
 | **Library** | Add reusable parts; see what's been imported from FRCDesignLib |
 | **Accounts** | Give waiting students their code (they asked from SOLIDWORKS with their own username and password), reject requests you don't recognize, reset a forgotten password, see add-in versions |
+| **Diagnostics** | Read the reports students send with the panel's **Diagnostics** link (what they run, what's changed and locked, recent errors; never passwords) |
 | **Add-in** | Release a new add-in version to everyone; set the team's **approved SOLIDWORKS version** (a newer SOLIDWORKS can look but not edit or submit, so nobody upgrades the shared files by accident) |
 
 **New add-in versions:** other teams download each release's installer from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases) and publish it on their Add-in tab ([setup step 5](docs/SETUP.md#5-set-up-the-mentor-page)). Making a release (this repository's maintainers): bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, then `git tag vX.Y.Z && git push origin main --tags`. GitHub builds the installer, publishes the release, and stages it on Team 5919's server; click **Release to students** there.

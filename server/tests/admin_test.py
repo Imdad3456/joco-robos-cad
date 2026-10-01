@@ -392,4 +392,26 @@ s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-m'}); check
 s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp, 'token': tok}); check(s_ == 200 and body['status'] == 'ready', 'late complete is harmless ' + str(body))
 page = req('/admin/library', *M)[2]; check('FRCDesignLib imports' in page and 'Test Flanged Bearing' in page and 'no Onshape key' in page and 'Onshape API calls this year' in page, 'mentor sees FRCDesignLib imports')
 s_, body = frc(U, 'POST', 'abandon', {'fingerprint': 'nothing'}); check(s_ == 200, 'abandon is harmless')
+# Diagnostics: a student's add-in sends a report; only mentors see it, and can delete it.
+def send_report(user, text, client='addin'):
+    r = urllib.request.Request(BASE + '/admin/api/diagnostics', data=text.encode(), method='POST')
+    r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
+    r.add_header('Content-Type', 'text/plain; charset=utf-8')
+    if client: r.add_header('X-Joco-Client', client)
+    try:
+        return urllib.request.urlopen(r).status
+    except urllib.error.HTTPError as e:
+        return e.code
+check(send_report(U, 'CAD Hub diagnostics\nAdd-in: 9.9.9\nComputer: LAB-PC-3\nPanel status error: <script>x</script>\n') == 200, 'student sends diagnostics')
+check(send_report(U, 'no client header', client=None) == 403, 'diagnostics only from the add-in (no cross-site posts)')
+check(send_report(U, 'x' * (600 * 1024)) in (400, 413), 'oversized report refused')
+check(req('/admin/diagnostics', *U)[0] == 403, 'students cannot read reports')
+s_, _, page = req('/admin/diagnostics', *M)
+check(s_ == 200 and 'sarah' in page and '9.9.9' in page and 'LAB-PC-3' in page and '<script>x' not in page and '&lt;script&gt;' in page, 'mentor sees the report, escaped')
+name = re.search(r'file=([0-9TZ]+-sarah\.txt)', page).group(1)
+s_, _, text = req('/admin/diagnostics?file=' + name, *M); check(s_ == 200 and 'LAB-PC-3' in text, 'mentor opens the report')
+check(req('/admin/diagnostics?file=' + name, *U)[0] == 403, 'students cannot open a report')
+check(req('/admin/diagnostics?file=..%2Fusers', *M)[0] == 404, 'report names cannot reach other files')
+s_, loc = post('/admin/diagnostics', {'action': 'delete-diagnostics', 'name': name}); check('Deleted' in loc, 'mentor deletes a report ' + loc)
+check(name not in req('/admin/diagnostics', *M)[2], 'deleted report is gone')
 print(f'PASS: {n} server/admin checks')

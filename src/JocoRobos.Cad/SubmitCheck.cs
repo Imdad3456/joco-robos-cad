@@ -196,6 +196,9 @@ namespace JocoRobos.Cad
                 var missing = new List<string>();
                 foreach (string reference in input.References(item.Path).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
+                    // Virtual components ("Belt1^Robot.SLDPRT") are saved inside their assembly: SOLIDWORKS only unpacks them into
+                    // its temp folder while the assembly is open. Nothing to copy, nothing missing.
+                    if (WorkspacePolicy.IsVirtualComponent(reference)) continue;
                     string resolved = Resolve(reference, item.Path, names(item.Workspace), input.TempFolder);
                     if (resolved == null)
                     {

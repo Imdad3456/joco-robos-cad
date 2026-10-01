@@ -33,6 +33,12 @@ namespace JocoRobos.Cad
         }
 
         // SOLIDWORKS keeps imported (3D Interconnect) and session data under the Windows temp folder.
+        /// <summary>A virtual component, saved inside its assembly: SOLIDWORKS names them "Name^Assembly.SLDPRT".</summary>
+        internal static bool IsVirtualComponent(string path)
+        {
+            return !String.IsNullOrEmpty(path) && Path.GetFileName(path).IndexOf('^') > 0;
+        }
+
         internal static bool IsTemporary(string path, string tempRoot)
         {
             try

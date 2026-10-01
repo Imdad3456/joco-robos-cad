@@ -337,6 +337,10 @@ static class Program
             Check(run(new[] { shooter, camera }).Single().Description.Contains("Other Bracket"), "Submit anyway doesn't cover a different missing file found later");
             references[shooter] = new[] { camera, Path.Combine(temp, "Gone", "table.xlsx") };
             Check(run(new[] { shooter, camera }).Count == 0, "Non-CAD dependency is a documented limit, not an issue");
+            // Virtual components live inside their assembly (SOLIDWORKS unpacks them to temp while it's open): never an issue.
+            references[shooter] = new[] { camera, Path.Combine(Path.GetDirectoryName(interconnect), "Belt1-4^Shooter.SLDPRT"),
+                Path.Combine(temp, "Gone", "Part6^Shooter.SLDPRT") };
+            Check(run(new[] { shooter, camera }).Count == 0, "Virtual components flagged as temporary or missing");
             // Imported-only parts need an explicit "Submit anyway"; missing files and mentor problems never block the rest.
             references[shooter] = new[] { camera, interconnect };
             var temporary = run(new[] { shooter, camera }).Single();
