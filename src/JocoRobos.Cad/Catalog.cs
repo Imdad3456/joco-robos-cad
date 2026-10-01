@@ -79,9 +79,13 @@ namespace JocoRobos.Cad
             Directory.CreateDirectory(path);
 #endif
         }
-        internal static readonly Uri Server = new Uri("https://cad.team5919.org/");
+        /// <summary>This computer's team server (see TeamServer). Commands ask for it first, so it's set by the time anything uses it.</summary>
+        internal static Uri Server
+        {
+            get { return TeamServer.Address ?? throw new InvalidOperationException("This computer doesn't know your team's CAD server yet. Click Open Robot to enter it."); }
+        }
         // Earlier addresses of the same server: robot copies downloaded from them are moved to Server automatically.
-        internal static readonly string[] OldServerHosts = { "cad.imdad.stream" };
+        internal static string[] OldServerHosts { get { return TeamServer.OldHosts; } }
         internal readonly string Name;
         internal readonly Guid Id;
         internal readonly bool Archived;
@@ -241,9 +245,9 @@ namespace JocoRobos.Cad
     /// </summary>
     internal static class NetworkProblem
     {
-        internal static string Describe(WebException exception)
+        internal static string Describe(WebException exception, string host = null)
         {
-            string host = WorkspaceInfo.Server.Host;
+            host = host ?? WorkspaceInfo.Server.Host;
             var response = exception.Response as HttpWebResponse;
             if (response != null)
             {

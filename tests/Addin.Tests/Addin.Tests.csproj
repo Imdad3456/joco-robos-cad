@@ -14,5 +14,7 @@
     <Compile Include="../../src/JocoRobos.Cad/PaneState.cs" Link="PaneState.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Diagnostics.cs" Link="Diagnostics.cs" />
     <Compile Include="../../src/JocoRobos.Cad/RobotFiles.cs" Link="RobotFiles.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/TeamServer.cs" Link="TeamServer.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/CredentialStore.cs" Link="CredentialStore.cs" />
   </ItemGroup>
 </Project>

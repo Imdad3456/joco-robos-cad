@@ -159,6 +159,24 @@ namespace JocoRobos.Cad
             catch (Exception) { return false; }
         }
 
+        /// <summary>
+        /// A team server address as typed by a student ("cad.example.org" or "https://cad.example.org/"), normalized to
+        /// https://host[:port]/. Only HTTPS: the password goes with every request.
+        /// </summary>
+        internal static bool TryServerAddress(string text, out Uri server)
+        {
+            server = null;
+            text = (text ?? "").Trim();
+            if (text.Length == 0 || text.Any(Char.IsWhiteSpace)) return false;
+            if (!text.Contains("://")) text = "https://" + text;
+            Uri parsed;
+            if (!Uri.TryCreate(text, UriKind.Absolute, out parsed) || parsed.Scheme != Uri.UriSchemeHttps || parsed.HostNameType != UriHostNameType.Dns ||
+                !parsed.Host.Contains(".") || parsed.UserInfo.Length > 0 || parsed.Query.Length > 0 || parsed.Fragment.Length > 0 ||
+                parsed.AbsolutePath.TrimEnd('/').Length > 0) return false;
+            server = new Uri("https://" + parsed.Host.ToLowerInvariant() + (parsed.IsDefaultPort ? "" : ":" + parsed.Port) + "/");
+            return true;
+        }
+
         /// <summary>True when a robot copy points at an earlier address of this same server (same repository path).</summary>
         internal static bool IsOldAddress(Uri current, Uri expected, IEnumerable<string> oldHosts)
         {

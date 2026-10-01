@@ -1,0 +1,20 @@
+# One team's JOCO ROBOS CAD server with Docker Compose (see docs/SETUP.md). From this folder:
+#   cp team.env.example team.env   # then edit it
+#   docker compose up -d --build
+# Repositories and settings live in ./data and ./config next to this file: back those up (backup.sh does).
+services:
+  joco-svn:
+    build: .
+    image: joco-svn:local
+    container_name: joco-svn
+    restart: unless-stopped
+    # Only this computer can reach it; HTTPS in front (Cloudflare Tunnel, Caddy, …) makes it public. Never expose port 80 directly:
+    # passwords are sent with every request.
+    ports:
+      - "127.0.0.1:8091:80"
+    volumes:
+      - ./data:/var/lib/svn
+      - ./config:/etc/joco
+    env_file:
+      - team.env
+    stop_grace_period: 20s

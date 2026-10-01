@@ -1,5 +1,7 @@
 # Steam Deck SVN service
 
+> **This page is Team 5919's own server** (a Steam Deck with Podman, behind a Cloudflare Tunnel). Setting one up for another team: [docs/SETUP.md](../docs/SETUP.md).
+
 The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`, …) plus a shared `Library` of reusable parts. Mentors manage it from **https://cad.team5919.org/admin**. Students never use the web page; the add-in reads `/catalog.json` to find the active season and the library.
 
 ## Mentor web page

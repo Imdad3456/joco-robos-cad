@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/joco/data" "$RUNNER_TEMP/joco/config"
           # Fake FRCDesignLib catalog (unreachable URL + seeded cache), so CI never depends on frcdesign.org.
-          docker run -d --name joco-test -p 127.0.0.1:18091:80 -e JOCO_FRC_CATALOG=http://127.0.0.1:9/api \
+          docker run -d --name joco-test -p 127.0.0.1:18091:80 -e JOCO_FRC_CATALOG=http://127.0.0.1:9/api -e 'JOCO_TEAM_NAME=Team 5919 <test>' -e JOCO_FIRST_SEASON=2027-Robot \
             -v "$RUNNER_TEMP/joco/data:/var/lib/svn" -v "$RUNNER_TEMP/joco/config:/etc/joco" joco-svn:test
           for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:18091/ && break; sleep 1; done
           docker exec joco-test sh -c 'htpasswd -B -b /etc/joco/users mentor1 mentorpass123 &&
@@ -48,6 +48,8 @@ jobs:
   addin:
     name: Add-in and installer
     runs-on: windows-latest
+    env:
+      SOLIDWORKS_FILES_KEY_SET: ${{ secrets.SOLIDWORKS_FILES_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -55,13 +57,26 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Policy and catalog tests
         run: dotnet run --project tests/Addin.Tests -c Release
+      # SOLIDWORKS' API files aren't in this public repository: a private one holds them, read with a read-only deploy key
+      # (secret SOLIDWORKS_FILES_KEY). Without it (forks), the tests still run and only the installer is skipped.
+      - name: Get SOLIDWORKS API files
+        if: env.SOLIDWORKS_FILES_KEY_SET == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Imdad3456/joco-build-files
+          ssh-key: ${{ secrets.SOLIDWORKS_FILES_KEY }}
+          path: build-files
+      - name: Use them for this build
+        if: env.SOLIDWORKS_FILES_KEY_SET == 'true'
+        shell: pwsh
+        run: Copy-Item build-files/SolidWorks.Interop.*.dll lib/solidworks/
       - name: Find SOLIDWORKS API files
         id: sw
         shell: pwsh
         run: |
           $missing = 'sldworks', 'swconst', 'swpublished' | Where-Object { !(Test-Path "lib/solidworks/SolidWorks.Interop.$_.dll") }
           if ($missing) {
-            "::warning::Installer skipped: add SolidWorks.Interop.{sldworks,swconst,swpublished}.dll to lib/solidworks (see lib/solidworks/README.md)."
+            "::warning::Installer skipped: SOLIDWORKS' API files aren't available (see lib/solidworks/README.md)."
             "found=false" >> $env:GITHUB_OUTPUT
           } else { "found=true" >> $env:GITHUB_OUTPUT }
       - name: Tag matches project version
@@ -104,7 +119,7 @@ jobs:
           $exe = Get-ChildItem installer/Output/*.exe | Select-Object -First 1
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           gh release create $env:GITHUB_REF_NAME $exe.FullName --title "JOCO ROBOS CAD $env:GITHUB_REF_NAME" `
-            --notes "Download $($exe.Name), then publish it on https://cad.team5919.org/admin/addin so students are offered it.`n`nSHA-256: $hash"
+            --notes "New students: download $($exe.Name) and run it. Mentors on any team's server: upload it on your mentor page → Add-in with this SHA-256, then Release to students.`n`nSHA-256: $hash"
       - name: Stage installer on the CAD server for mentor release
         if: steps.sw.outputs.found == 'true' && startsWith(github.ref, 'refs/tags/v')
         shell: pwsh

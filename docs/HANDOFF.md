@@ -15,6 +15,12 @@ Still to do: submit `team5919.org` as Education to the filter categorization ser
 ## Why the new domain
 A student at Johnston Community College (JCC) can't connect from the add-in. Server logs (they now show each visitor's real address) prove the add-in's requests never reach us from JCC, while browsers do. JCC's network resets connections to `cad.imdad.stream` by name. The `.stream` ending and a brand-new domain with no category are the likely reasons. Also send JCC IT (JOLT, jolt@mail.johnstoncc.edu, 919-464-2260) a request to allow the address. Don't build anything that hides or disguises traffic to get past a filter. That student also has SOLIDWORKS 2025; the robot is SOLIDWORKS 2026 format, so she needs 2026.
 
+## Any team can run it (1.3.0, branch `any-team`)
+- The add-in no longer has 5919's address built in: `TeamServer.cs` asks for it once (Sign In has **Change…**), or reads `HKLM\Software\JOCO ROBOS\CAD\Server`. Computers that already had a sign-in or a robot folder are treated as 5919's and never asked.
+- The server takes `JOCO_SERVER_NAME`, `JOCO_TEAM_NAME`, `JOCO_FIRST_SEASON` (see `server/team.env.example`); `server/compose.yaml` runs it with Docker. `server/joco-svn.service` sets 5919's values, so **redeploy the Deck with the new unit file** or the front page shows a generic team name.
+- SOLIDWORKS' API DLLs left the public repository: CI copies them from the private `Imdad3456/joco-build-files` with the deploy key in secret `SOLIDWORKS_FILES_KEY`. (They're still in old commits.)
+- [docs/SETUP.md](SETUP.md) is the guide for other teams. License: MIT.
+
 ## After 1.0.0
 1.0.x is fixes only. New features go into 1.1 and later. `TESTING.md` stays the regression sheet: rerun the affected sections in the `2099-Robot` test season before releasing anything that touches Edit, Submit, Update or locking.
 

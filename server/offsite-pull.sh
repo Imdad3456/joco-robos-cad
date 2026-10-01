@@ -5,16 +5,18 @@ set -eu
 deck="${JOCO_DECK:-deck@100.97.7.84}"
 store="${JOCO_OFFSITE_DIR:-$HOME/Backups/joco-cad}"
 keep_days="${JOCO_OFFSITE_DAYS:-90}"
+# Where the server keeps its backups, relative to the SSH user's home (Team 5919's Deck: server/joco-cad/backups).
+remote="${JOCO_REMOTE_BACKUPS:-server/joco-cad/backups}"
 mkdir -p "$store"
 chmod 700 "$store"
 exec 9>"$store/.lock"
 flock -n 9 || exit 0
 for name in $(ssh -o BatchMode=yes -o ConnectTimeout=20 "$deck" \
-        'cd ~/server/joco-cad/backups && for d in */COMPLETE; do [ -e "$d" ] && dirname "$d"; done'); do
+        "cd ~/$remote && "'for d in */COMPLETE; do [ -e "$d" ] && dirname "$d"; done'); do
     case "$name" in *[!0-9TZ]*) continue ;; esac
     [ -e "$store/$name/COMPLETE" ] && continue
     rm -rf "$store/.partial-$name"
-    rsync -a -e 'ssh -o BatchMode=yes' "$deck:server/joco-cad/backups/$name/" "$store/.partial-$name/"
+    rsync -a -e 'ssh -o BatchMode=yes' "$deck:$remote/$name/" "$store/.partial-$name/"
     [ -e "$store/.partial-$name/COMPLETE" ] || { echo "Incomplete copy of $name" >&2; exit 1; }
     mv "$store/.partial-$name" "$store/$name"
     printf 'Copied off-device: %s\n' "$store/$name"

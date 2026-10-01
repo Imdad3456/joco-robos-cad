@@ -1238,8 +1238,9 @@ class Admin(BaseHTTPRequestHandler):
                        '<input type="hidden" name="kind" value="addin"><input type="file" name="files" accept=".exe" required>'
                        '<input name="sha256" placeholder="SHA-256 from the GitHub release (recommended)" size="40" pattern="[0-9a-fA-F]{64}" aria-label="Expected SHA-256">'
                        '<label><input type="checkbox" name="required" value="1"> Required</label><button class="primary">Publish</button></form>'
-                       '<p class="muted">On the Windows PC: bump <code>&lt;Version&gt;</code> in <code>JocoRobos.Cad.csproj</code>, run '
-                       '<code>scripts\\Build-Installer.ps1</code>, and upload <code>installer\\Output\\JOCO-ROBOS-CAD-Setup-x.y.z.exe</code>. '
+                       '<p class="muted">Download <code>JOCO-ROBOS-CAD-Setup-x.y.z.exe</code> from the '
+                       '<a href="https://github.com/Imdad3456/joco-robos-cad/releases">releases page</a> (or build it with '
+                       '<code>scripts\\Build-Installer.ps1</code>), and upload it here with the SHA-256 from its release notes. '
                        'Students get a prompt in SOLIDWORKS; after they save and close SOLIDWORKS it installs and reopens. '
                        'Use <b>Required</b> when older add-ins must not start new work (for example after a server or file-format change); '
                        'they can always Submit or Set Aside what they already have.</p>') % self.token()
@@ -1371,6 +1372,8 @@ if __name__ == '__main__':
             state = load_state()
             if len(sys.argv) == 6:
                 state.setdefault('masters', {})[sys.argv[2]] = sys.argv[5]
+            if not state.get('active'):
+                state['active'] = sys.argv[2]  # A new server's first season: the one students open.
             save_state(state)
         print('Imported and verified %d files into %s.' % (count, sys.argv[2]))
     elif command == ['mentor'] and len(sys.argv) == 4 and sys.argv[2] in ('add', 'remove'):

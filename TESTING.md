@@ -20,6 +20,8 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
+| 1.0a | New student | Start SOLIDWORKS (this Windows user never used JOCO) | **Team Server** asks which server. Type `cad.team5919.orgg` → Continue: "Couldn't reach…"; type `example.com`: "isn't a JOCO ROBOS CAD server"; type `cad.team5919.org`: the account form | ☐ |
+| 1.0b | A | On your own (already set-up) PC, after installing this version | Never asked for a server; everything works as before. Tools → Sign In shows "Team server: cad.team5919.org  Change…" | ☐ |
 | 1.1 | New student | Start SOLIDWORKS → username (e.g. `test.student`), password twice → **Send request** | The form stays open: "✓ Request sent. Ask a mentor for your code" | ☐ |
 | 1.2 | A | **Accounts** → "Students waiting for a code" | `test.student`, the time, and a code | ☐ |
 | 1.3 | New student | Type a wrong code → **Finish** | "That code isn't the one for test.student"; the form comes back with the name filled in | ☐ |

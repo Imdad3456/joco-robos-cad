@@ -72,7 +72,12 @@ namespace JocoRobos.Cad
             StartPosition = FormStartPosition.CenterParent;
             MaximizeBox = false;
             MinimizeBox = false;
-            Controls.Add(new Label { Text = "Server: " + WorkspaceInfo.Server.Host, Location = new Point(20, 18), Size = new Size(435, 40) });
+            Controls.Add(new Label { Text = "Team server: " + WorkspaceInfo.Server.Host, Location = new Point(20, 18), AutoSize = true });
+            // Wrong team server (typo, or another team's): change it here. The caller asks for the new one.
+            var change = new LinkLabel { Text = "Change…", AutoSize = true };
+            change.Location = new Point(Controls[Controls.Count - 1].Right + 8, 18);
+            change.LinkClicked += (s, e) => { DialogResult = DialogResult.Retry; Close(); };
+            Controls.Add(change);
             Controls.Add(new Label { Text = "Username", Location = new Point(20, 78), AutoSize = true });
             username.SetBounds(125, 75, 325, 25);
             username.Text = currentUser ?? "";
@@ -98,6 +103,47 @@ namespace JocoRobos.Cad
             Controls.Add(submit);
             Controls.Add(cancel);
             AcceptButton = submit;
+            CancelButton = cancel;
+        }
+    }
+
+    /// <summary>Which team server this computer uses: asked once, before the first sign-in (see TeamServer).</summary>
+    internal sealed class ServerDialog : Form
+    {
+        private readonly TextBox address = new TextBox();
+        internal Uri Server { get; private set; }
+
+        internal ServerDialog(Uri current)
+        {
+            Text = "JOCO ROBOS CAD — Team Server";
+            ClientSize = new Size(475, 205);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            Controls.Add(new Label { Text = "Welcome! Which CAD server does your team use?\n\nYour mentor gives you its address together with your setup code, " +
+                "for example cad.yourteam.org.", Location = new Point(20, 18), Size = new Size(435, 62) });
+            Controls.Add(new Label { Text = "Server address", Location = new Point(20, 97), AutoSize = true });
+            address.SetBounds(125, 94, 325, 25);
+            address.Text = current == null ? "" : current.Host + (current.IsDefaultPort ? "" : ":" + current.Port);
+            Controls.Add(address);
+            var ok = new Button { Text = "Continue", Location = new Point(255, 155), Size = new Size(95, 30) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(355, 155), Size = new Size(95, 30) };
+            ok.Click += (s, e) =>
+            {
+                Uri server;
+                if (!WorkspacePolicy.TryServerAddress(address.Text, out server))
+                {
+                    MessageBox.Show(this, "That doesn't look like a server address. Type it like cad.yourteam.org (it must use https).", Text);
+                    return;
+                }
+                Server = server;
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            Controls.Add(ok);
+            Controls.Add(cancel);
+            AcceptButton = ok;
             CancelButton = cancel;
         }
     }

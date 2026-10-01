@@ -14,3 +14,5 @@ server/config/
 server/backups/
 *.env
 *.token
+lib/solidworks/*.dll
+build-files/

@@ -24,6 +24,7 @@ static class Program
 
     static void Main()
     {
+        TeamServer.Use(new Uri(TeamServer.Original)); // The fixtures below are Team 5919's server.
         string temp = Path.Combine(Path.GetTempPath(), "joco-policy-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temp);
         try
@@ -133,6 +134,8 @@ static class Program
                 "https://sarah:pw123@cad.imdad.stream/svn\nX-Joco-Token: abcdef0123456789\nr42 sarah: Added camera mount");
             Check(!report.Contains("c2FyYWg6") && !report.Contains("hunter2") && !report.Contains("K7QM") && !report.Contains("pw123") &&
                 !report.Contains("abcdef0123456789") && report.Contains("Added camera mount") && report.Contains("cad.imdad.stream"), "Diagnostics keep no secrets: " + report);
+            ServerChecks();
+            TeamServer.Use(new Uri(TeamServer.Original));
             Check(WorkspacePolicy.IsOldAddress(new Uri("https://cad.imdad.stream/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/2026-Robot/"), WorkspaceInfo.OldServerHosts) &&
                 !WorkspacePolicy.IsOldAddress(new Uri("https://cad.imdad.stream/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/Library/"), WorkspaceInfo.OldServerHosts) &&
                 !WorkspacePolicy.IsOldAddress(new Uri("https://evil.example/svn/2026-Robot/"), new Uri("https://cad.team5919.org/svn/2026-Robot/"), WorkspaceInfo.OldServerHosts),
@@ -142,7 +145,26 @@ static class Program
             RobotFileChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
+
         finally { Directory.Delete(temp, true); }
+    }
+
+    // Any team's server: what a student types becomes https://host/, and nothing else gets through.
+    static void ServerChecks()
+    {
+        Uri server;
+        foreach (var typed in new[] { "cad.example.org", " CAD.Example.org ", "https://cad.example.org", "https://cad.example.org/", "cad.example.org/" })
+            Check(WorkspacePolicy.TryServerAddress(typed, out server) && server.AbsoluteUri == "https://cad.example.org/", "Server address accepted: '" + typed + "'");
+        Check(WorkspacePolicy.TryServerAddress("cad.example.org:8443", out server) && server.AbsoluteUri == "https://cad.example.org:8443/", "Server with a port");
+        foreach (var typed in new[] { "", "   ", "http://cad.example.org", "ftp://cad.example.org", "https://cad.example.org/svn/2026-Robot",
+            "https://user:pw@cad.example.org", "https://cad.example.org/?x=1", "localhost", "192.168.1.20", "cad example.org", "https://cad.example.org/#a" })
+            Check(!WorkspacePolicy.TryServerAddress(typed, out server), "Server address refused: '" + typed + "'");
+        // Only Team 5919's server has an old address to move robot copies from; any other team's has none.
+        TeamServer.Use(new Uri("https://cad.example.org/"));
+        Check(WorkspaceInfo.OldServerHosts.Length == 0 && new WorkspaceInfo("2026-Robot", Guid.NewGuid(), false, false).Repository.AbsoluteUri ==
+            "https://cad.example.org/svn/2026-Robot/", "Another team's server: its own address, nothing moved from 5919's old one");
+        TeamServer.Use(new Uri(TeamServer.Original));
+        Check(WorkspaceInfo.OldServerHosts.Length == 1, "Team 5919 keeps moving copies from its old address");
     }
 
     // The Robot tab's file browser: only robot CAD, real folders, searchable by name or folder.

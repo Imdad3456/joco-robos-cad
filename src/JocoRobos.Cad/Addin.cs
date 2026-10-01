@@ -540,11 +540,13 @@ namespace JocoRobos.Cad
 
         private NetworkCredential GetLogin(bool force)
         {
+            if (!RequireServer(false)) return null;
             NetworkCredential saved = CredentialStore.Read();
             if (saved != null && !force) return saved;
             using (var dialog = new SignInDialog(saved?.UserName))
             {
                 var answer = dialog.ShowDialog(new SolidWorksWindow());
+                if (answer == DialogResult.Retry) return RequireServer(true) ? GetLogin(true) : null;
                 if (answer == DialogResult.Yes) return SetUpAccount(saved);
                 if (answer != DialogResult.OK) return null;
                 NetworkCredential login = dialog.Login;
@@ -574,9 +576,49 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>
+        /// Asks for the team server when this computer doesn't know it yet (or when changing it), checks it's really one,
+        /// and saves it. False if the student cancelled.
+        /// </summary>
+        private bool RequireServer(bool change)
+        {
+            if (TeamServer.IsSet && !change) return true;
+            while (true)
+            {
+                using (var dialog = new ServerDialog(TeamServer.Address))
+                {
+                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return TeamServer.IsSet && !change ? true : false;
+                    try
+                    {
+                        OperationDialog.Run("Checking " + dialog.Server.Host + "…", () => { TeamServer.Check(dialog.Server); return true; });
+                    }
+                    catch (InvalidOperationException problem)
+                    {
+                        Message(problem.Message, MessageBoxIcon.Warning);
+                        continue;
+                    }
+                    if (TeamServer.Address != null && TeamServer.Address != dialog.Server) ForgetServerState();
+                    TeamServer.Save(dialog.Server);
+                    return true;
+                }
+            }
+        }
+
+        // Another server: what this session learned about the old one no longer applies.
+        private void ForgetServerState()
+        {
+            paneCatalog = null;
+            robotSnapshot = librarySnapshot = null;
+            robotInfo = null;
+            robotOffline = null;
+            heartbeatSent = false;
+            offeredUpdate = null;
+        }
+
         // First sign-in with a mentor's one-time setup code: the student chooses their own password.
         private NetworkCredential SetUpAccount(NetworkCredential saved)
         {
+            if (!RequireServer(false)) return null;
             string name = saved?.UserName ?? PendingUsername, presetCode = null;
             while (true)
             {
@@ -1230,7 +1272,7 @@ namespace JocoRobos.Cad
                 try { login = CredentialStore.Read(); } catch (Exception exception) { line("Saved sign-in", "unreadable: " + exception.Message); }
                 line("CAD username", login?.UserName ?? "(not signed in)");
                 line("Robot folder", WorkspaceInfo.BaseFolder);
-                line("Server", WorkspaceInfo.Server);
+                line("Server", TeamServer.Address?.AbsoluteUri ?? "not set yet");
                 if (login != null)
                 {
                     var clock = System.Diagnostics.Stopwatch.StartNew();

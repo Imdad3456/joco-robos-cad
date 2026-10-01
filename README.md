@@ -1,15 +1,17 @@
-# JOCO ROBOS CAD — FRC 5919
+# JOCO ROBOS CAD
 
-A SOLIDWORKS 2026 add-in plus a small team server. It lets the whole team work on one robot without overwriting each other's work. Students only see:
+Team CAD for FRC teams that use SOLIDWORKS: an add-in plus a small team server, built and used by [FRC Team 5919 (JOCO ROBOS)](https://cad.team5919.org/). It lets the whole team work on one robot without overwriting each other's work. Students only see:
 
 **Open Robot → CAD normally → Library when you need a part → Submit**
 
 Everyone keeps a full copy of the robot on their own computer (fast). The team server keeps the history and hands out **exclusive edit locks**: while you're editing a file, nobody else can change it.
 
+**Want it for your team?** It's free and open source (MIT). A mentor runs the server on any Linux computer with Docker: see **[Set up for your team](docs/SETUP.md)**.
+
 ## For students
 
 1. **Install:** download the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest) and run it. Windows warns about an unknown publisher; click **More info → Run anyway**.
-2. **Set up your account:** start SOLIDWORKS, choose a username and password, and click **Send request**. A mentor gives you a code; type it in and click **Finish**. You won't need to type it again.
+2. **Set up your account:** start SOLIDWORKS and type your team's server address (your mentor tells you; Team 5919: `cad.team5919.org`). Choose a username and password, and click **Send request**. A mentor gives you a code; type it in and click **Finish**. You won't need to type it again.
 3. **Daily work:**
    - **Open Robot** gets teammates' latest work and opens the robot. Everything is read-only until you change it.
    - **Just start CADing.** The first change to a part locks it for you (or select a part and click **Edit**). If a teammate is editing it, you're told right away.
@@ -23,7 +25,7 @@ Everything else is in **Tools → JOCO ROBOS CAD**, in sections: everyday extras
 
 ## For mentors
 
-Everything is on **https://cad.team5919.org/admin**:
+Everything is on your server's mentor page, **https://*your server*/admin** (Team 5919: https://cad.team5919.org/admin):
 
 | Tab | Use it to |
 |---|---|
@@ -33,29 +35,31 @@ Everything is on **https://cad.team5919.org/admin**:
 | **Accounts** | Give waiting students their code (they asked from SOLIDWORKS with their own username and password), reject requests you don't recognize, reset a forgotten password, see add-in versions |
 | **Add-in** | Release a new add-in version to everyone; set the team's **approved SOLIDWORKS version** (a newer SOLIDWORKS can look but not edit or submit, so nobody upgrades the shared files by accident) |
 
-To **release a new add-in version**: bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, then run `git tag v1.0.0 && git push origin main --tags`. When GitHub finishes, click **Release to students**.
+**New add-in versions:** other teams download each release's installer from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases) and publish it on their Add-in tab ([setup step 5](docs/SETUP.md#5-set-up-the-mentor-page)). Making a release (this repository's maintainers): bump `<Version>` in `src/JocoRobos.Cad/JocoRobos.Cad.csproj`, commit, then `git tag vX.Y.Z && git push origin main --tags`. GitHub builds the installer, publishes the release, and stages it on Team 5919's server; click **Release to students** there.
 
 ## What's in this repository
 
 | Folder | What it is |
 |---|---|
 | `src/JocoRobos.Cad/` | The SOLIDWORKS add-in (C#, .NET Framework 4.8). `Addin.cs` holds the commands, `SvnWorkspace.cs`/`SvnSubmit.cs` the version-control work (Subversion), `SubmitWindow.cs`/`SubmitCheck.cs` the Submit window and its checks, `StatusPane.cs`/`FrcLibraryPanel.cs` the panel, and `Catalog.cs` the season list. |
-| `server/` | Everything that runs on the Steam Deck: the container (`Containerfile`, `svn.conf`, `entrypoint.sh`), the mentor page and APIs (`joco.py`), FRCDesignLib (`frcdesign.py`), lock rules (`pre-*.py`), backups, and service files. See [server/README.md](server/README.md). |
+| `server/` | The team server: the container (`Containerfile`, `svn.conf`, `entrypoint.sh`, `compose.yaml`, `team.env.example`), the mentor page and APIs (`joco.py`), FRCDesignLib (`frcdesign.py`), lock rules (`pre-*.py`), and backups. [docs/SETUP.md](docs/SETUP.md) sets one up; [server/README.md](server/README.md) is Team 5919's own server (a Steam Deck). |
 | `installer/` | Inno Setup script for the student installer. |
 | `scripts/` | Windows PowerShell: build, build the installer, register a development copy. |
 | `tests/Addin.Tests/` | Add-in checks that run without SOLIDWORKS. |
 | `server/tests/` | Server checks: the mentor page and APIs, plus lock rules with a real SVN client. |
-| `lib/solidworks/` | SOLIDWORKS' redistributable API files, so GitHub can build without SOLIDWORKS. |
+| `lib/solidworks/` | Where SOLIDWORKS' API files go when building without SOLIDWORKS. They're Dassault's, so they aren't in this repository ([why and how](lib/solidworks/README.md)). |
 | `tools/` | Helpers: `make-icons.py` rebuilds the toolbar icons from `src/JocoRobos.Cad/Icons/source`, and the script that sorted the 2026 robot into folders. |
-| `docs/` | [How it works](docs/HOW-IT-WORKS.md), [developer setup](docs/DEVELOPING.md), and [the original design notes](docs/history/ORIGINAL-DESIGN.md). |
-| `.github/workflows/build.yml` | On every push: build and test everything and build the installer. On `v*` tags: publish a Release and stage it on the server. |
+| `docs/` | [Set up for your team](docs/SETUP.md), [how it works](docs/HOW-IT-WORKS.md), [developer setup](docs/DEVELOPING.md), and [the original design notes](docs/history/ORIGINAL-DESIGN.md). |
+| `.github/workflows/build.yml` | On every push: build and test everything and build the installer. On `v*` tags: publish a Release and stage it on Team 5919's server. |
 | [`TESTING.md`](TESTING.md) | The hands-on test sheet for two people. |
 
-The repository is public so students can download releases. It contains **no passwords or keys**: those live only on the Deck and in GitHub's encrypted secrets.
+The repository is public so students can download releases and other teams can run it. It contains **no passwords or keys**: those live only on each team's server and in GitHub's encrypted secrets.
+
+**License:** [MIT](LICENSE). SOLIDWORKS is a trademark of Dassault Systèmes; this project isn't affiliated with them.
 
 ## Status
 
-**1.0.0, released.** Confirmed by the two-person release test, an uncoached student, and team use in SOLIDWORKS 2026. From here, 1.0.x releases fix anything that could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing; new features come in 1.1 and later.
+**In daily use by Team 5919 since 1.0.0**, confirmed by the two-person release test, an uncoached student, and team use in SOLIDWORKS 2026. Fix releases anything that could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing; new features come in 1.1 and later.
 
 **Known limits (on purpose, for 1.0):**
 - Only SOLIDWORKS files (parts, assemblies, drawings) are shared. Excel design tables, decals, textures and Toolbox data aren't synced; Submit doesn't check them.
