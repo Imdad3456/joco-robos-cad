@@ -120,6 +120,8 @@ namespace JocoRobos.Cad
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => ErrorLog.Write("unhandled", e.ExceptionObject as Exception ?? new Exception(Convert.ToString(e.ExceptionObject)));
                 if (!application.SetAddinCallbackInfo2(0, this, Cookie))
                     throw new InvalidOperationException("SOLIDWORKS could not register the callbacks.");
+                try { SolidWorksWindow.Frame = new IntPtr(((Frame)application.Frame()).GetHWndx64()); }
+                catch (Exception exception) { ErrorLog.Write("main window handle", exception); }
                 commands = application.GetCommandManager(Cookie);
                 CreateCommands();
                 application.DestroyNotify += OnSolidWorksClosing;

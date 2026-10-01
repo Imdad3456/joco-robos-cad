@@ -9,9 +9,15 @@ using System.Windows.Forms;
 
 namespace JocoRobos.Cad
 {
+    /// <summary>
+    /// SOLIDWORKS' main window, as the owner of every CAD Hub window: owned windows stay in front of it, also after
+    /// Alt+Tab. The handle comes from SOLIDWORKS itself; Windows' guess at the process's main window can be another window
+    /// (or none), which left the Submit window unowned and hidden behind SOLIDWORKS.
+    /// </summary>
     internal sealed class SolidWorksWindow : IWin32Window
     {
-        public IntPtr Handle { get { return Process.GetCurrentProcess().MainWindowHandle; } }
+        internal static IntPtr Frame;
+        public IntPtr Handle { get { return Frame != IntPtr.Zero ? Frame : Process.GetCurrentProcess().MainWindowHandle; } }
     }
 
     internal static class OperationDialog
