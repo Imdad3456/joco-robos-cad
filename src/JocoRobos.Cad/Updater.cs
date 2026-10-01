@@ -106,9 +106,9 @@ namespace JocoRobos.Cad
             }
             Version wanted;
             if (!Version.TryParse(pending, out wanted) || Normalize(Current) >= Normalize(wanted)) return null;
-            return "The update to JOCO ROBOS CAD " + pending + " did not install; you still have " + Current + "." +
+            return "The update to CAD Hub " + pending + " did not install; you still have " + Current + "." +
                 (log != null && File.Exists(log) ? "\n\nInstaller log: " + log : "\n\nThe installer may not have received Windows permission.") +
-                "\n\nIt stays available in the JOCO ROBOS CAD pane.";
+                "\n\nIt stays available in the CAD Hub pane.";
         }
 
         /// <summary>Starts the installer (Windows asks for admin approval). It waits for SOLIDWORKS to exit, installs, then reopens it.</summary>

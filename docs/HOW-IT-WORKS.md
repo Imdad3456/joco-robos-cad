@@ -1,4 +1,4 @@
-# How JOCO ROBOS CAD works
+# How CAD Hub works
 
 The details behind the [README](../README.md). Server operations (deploying, backups, recovery, keys) are in [server/README.md](../server/README.md).
 

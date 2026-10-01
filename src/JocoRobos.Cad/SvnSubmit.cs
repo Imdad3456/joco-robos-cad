@@ -94,9 +94,9 @@ namespace JocoRobos.Cad
                         else if (item.RemoteLock != null && item.RemoteLock.Owner == login.UserName)
                             plan.SetAside.Add(Held(path, "Changed, but you locked it from another computer. Submit it there, or ask a mentor to release that lock."));
                         else if (item.RemoteLock != null)
-                            plan.SetAside.Add(Held(path, "Changed, but " + item.RemoteLock.Owner + " is editing it. Use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep your version separately."));
+                            plan.SetAside.Add(Held(path, "Changed, but " + item.RemoteLock.Owner + " is editing it. Use Tools → CAD Hub → Set Aside My Changes to keep your version separately."));
                         else if (item.IsRemoteUpdated)
-                            plan.SetAside.Add(Held(path, "Changed, but a teammate submitted a newer version. Use Tools → JOCO ROBOS CAD → Set Aside My Changes, then Update."));
+                            plan.SetAside.Add(Held(path, "Changed, but a teammate submitted a newer version. Use Tools → CAD Hub → Set Aside My Changes, then Update."));
                         else
                         {
                             var free = Item(SubmitKind.Modified, path);
@@ -376,7 +376,7 @@ namespace JocoRobos.Cad
             string done = "Your earlier Submit did reach the team (" + landed.Count + (landed.Count == 1 ? " file" : " files") + "), so nothing was lost or sent twice.";
             if (pending.Count == 0) return done + " Your computer finishes catching up at the next update (automatic when your robot documents are closed).";
             return done + " You changed " + String.Join(", ", pending.Take(5).Select(System.IO.Path.GetFileName)) + (pending.Count > 5 ? ", …" : "") +
-                " again after that; those newer changes are kept. If Submit can't send them, use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep a copy, then Edit and redo them.";
+                " again after that; those newer changes are kept. If Submit can't send them, use Tools → CAD Hub → Set Aside My Changes to keep a copy, then Edit and redo them.";
         }
 
         private static bool SameContent(SvnClient client, string path, Uri url)

@@ -1,6 +1,6 @@
-# JOCO ROBOS CAD
+# CAD Hub
 
-Team CAD for FRC teams that use SOLIDWORKS: an add-in plus a small team server, built and used by [FRC Team 5919 (JOCO ROBOS)](https://cad.team5919.org/). It lets the whole team work on one robot without overwriting each other's work. Students only see:
+Team CAD for FRC teams that use SOLIDWORKS: an add-in plus a small team server, built and used by [FRC Team 5919 (JOCO ROBOS)](https://cad.team5919.org/). (It was called JOCO ROBOS CAD before 1.4.) It lets the whole team work on one robot without overwriting each other's work. Students only see:
 
 **Open Robot → CAD normally → Library when you need a part → Submit**
 
@@ -17,9 +17,9 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
    - **Just start CADing.** The first change to a part locks it for you (or select a part and click **Edit**). If a teammate is editing it, you're told right away.
    - **Save** normally. New parts go anywhere inside your robot folder.
    - **Submit** when you're done: one window lists your files and fixes any problems. The panel confirms it.
-4. **The JOCO ROBOS CAD panel** (right side) shows what's going on and only the button you need right now: Open Robot, Edit, Submit 3, or Close & Update when teammates have new changes. Below that, **Robot Files** lists the robot's folders and parts: search by name or folder, double-click to open (✎ yours, 🔒 someone else is editing, ● new). Teammates' changes come in by themselves whenever none of your robot documents are open. The **Library** tab finds any part: the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, tube…) in one search, plus "Import a downloaded CAD file" for vendor downloads.
+4. **The CAD Hub panel** (right side) shows what's going on and only the button you need right now: Open Robot, Edit, Submit 3, or Close & Update when teammates have new changes. Below that, **Robot Files** lists the robot's folders and parts: search by name or folder, double-click to open (✎ yours, 🔒 someone else is editing, ● new). Teammates' changes come in by themselves whenever none of your robot documents are open. The **Library** tab finds any part: the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, tube…) in one search, plus "Import a downloaded CAD file" for vendor downloads.
 
-Everything else is in **Tools → JOCO ROBOS CAD**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History), your account (Sign In, Change Password, Test Connection, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
+Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History), your account (Sign In, Change Password, Test Connection, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
 **Something wrong?** Click **Copy diagnostics for a mentor** at the bottom of the panel (or Tools → Copy Diagnostics) and paste it to a mentor. It never includes passwords or codes.
 

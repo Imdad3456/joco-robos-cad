@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily off-device copy of JOCO ROBOS CAD backups
+Description=Daily off-device copy of CAD Hub backups
 
 [Timer]
 OnCalendar=*-*-* 04:30

@@ -1,4 +1,4 @@
-; JOCO ROBOS CAD student installer. Build with scripts\Build-Installer.ps1 on Windows.
+; CAD Hub student installer. Build with scripts\Build-Installer.ps1 on Windows.
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
@@ -8,7 +8,7 @@
 
 [Setup]
 AppId={{3EDEFDD9-9838-42F5-8A06-75A920BE3640}
-AppName=JOCO ROBOS CAD
+AppName=CAD Hub
 AppVersion={#AppVersion}
 AppPublisher=FRC Team 5919
 DefaultDirName={autopf}\JOCO ROBOS CAD
@@ -23,7 +23,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
-UninstallDisplayName=JOCO ROBOS CAD
+UninstallDisplayName=CAD Hub
 ; SignTool=joco $f  ; enable once the team has a code-signing certificate
 
 [Files]
@@ -35,7 +35,7 @@ Source: "redist\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 [Registry]
 ; SOLIDWORKS add-in entry. Default value 1 = load at startup for users who have not chosen otherwise.
 Root: HKLM; Subkey: "SOFTWARE\SolidWorks\Addins\{#AddinGuid}"; ValueType: dword; ValueName: ""; ValueData: 1; Flags: uninsdeletekey
-Root: HKLM; Subkey: "SOFTWARE\SolidWorks\Addins\{#AddinGuid}"; ValueType: string; ValueName: "Title"; ValueData: "JOCO ROBOS CAD"
+Root: HKLM; Subkey: "SOFTWARE\SolidWorks\Addins\{#AddinGuid}"; ValueType: string; ValueName: "Title"; ValueData: "CAD Hub"
 Root: HKLM; Subkey: "SOFTWARE\SolidWorks\Addins\{#AddinGuid}"; ValueType: string; ValueName: "Description"; ValueData: "Open Robot, Edit, Submit: team CAD with exclusive locks."
 ; Start with SOLIDWORKS for the student who ran setup.
 Root: HKCU; Subkey: "Software\SolidWorks\AddInsStartup\{#AddinGuid}"; ValueType: dword; ValueName: ""; ValueData: 1; Flags: uninsdeletekey
@@ -47,7 +47,7 @@ Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; S
 Filename: "{dotnet4064}\RegAsm.exe"; Parameters: """{app}\JocoRobos.Cad.dll"" /unregister"; Flags: runhidden waituntilterminated; RunOnceId: "UnregisterAddin"
 
 [Messages]
-FinishedLabel=JOCO ROBOS CAD is installed.%n%nStart SOLIDWORKS: it asks you to choose a username and password once, then a mentor gives you a code to finish. After that, click Open Robot on the JOCO ROBOS CAD tab.%n%nYour robot files will be in C:\JOCO-ROBOS. Updating or uninstalling never deletes them or your sign-in.
+FinishedLabel=CAD Hub is installed.%n%nStart SOLIDWORKS: it asks you to choose a username and password once, then a mentor gives you a code to finish. After that, click Open Robot on the CAD Hub tab.%n%nYour robot files will be in C:\JOCO-ROBOS. Updating or uninstalling never deletes them or your sign-in.
 
 [Code]
 function SolidWorksRunning(): Boolean;
@@ -75,7 +75,7 @@ begin
   Result := True;
   if not IsDotNetInstalled(net48, 0) then
   begin
-    MsgBox('JOCO ROBOS CAD needs Microsoft .NET Framework 4.8, which SOLIDWORKS normally installs. Install SOLIDWORKS first.', mbError, MB_OK);
+    MsgBox('CAD Hub needs Microsoft .NET Framework 4.8, which SOLIDWORKS normally installs. Install SOLIDWORKS first.', mbError, MB_OK);
     Result := False;
     Exit;
   end;

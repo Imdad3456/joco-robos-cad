@@ -1,4 +1,4 @@
-# One team's JOCO ROBOS CAD server with Docker Compose (see docs/SETUP.md). From this folder:
+# One team's CAD Hub server with Docker Compose (see docs/SETUP.md). From this folder:
 #   cp team.env.example team.env   # then edit it
 #   docker compose up -d --build
 # Repositories and settings live in ./data and ./config next to this file: back those up (backup.sh does).

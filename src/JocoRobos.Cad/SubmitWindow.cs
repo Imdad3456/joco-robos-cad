@@ -108,7 +108,7 @@ namespace JocoRobos.Cad
         {
             this.host = host;
             this.draft = draft;
-            Text = "JOCO ROBOS CAD — Submit";
+            Text = "CAD Hub — Submit";
             Font = SystemFonts.MessageBoxFont;
             ClientSize = new Size(700, 640);
             MinimumSize = new Size(560, 480);

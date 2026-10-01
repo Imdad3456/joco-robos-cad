@@ -91,7 +91,7 @@ namespace JocoRobos.Cad
                     var box = inputs.ContainsKey(choice.Id) ? inputs[choice.Id] as TextBox : null;
                     string value, problem = box == null || hidden.Contains(choice.Id) ? null : choice.CheckNumber(box.Text, out value);
                     if (problem == null) continue;
-                    MessageBox.Show(this, problem, "JOCO ROBOS CAD", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    MessageBox.Show(this, problem, "CAD Hub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     box.Focus();
                     box.SelectAll();
                     return;

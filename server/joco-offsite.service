@@ -1,5 +1,5 @@
 [Unit]
-Description=Copy JOCO ROBOS CAD backups off the Steam Deck
+Description=Copy CAD Hub backups off the Steam Deck
 Wants=network-online.target
 After=network-online.target
 

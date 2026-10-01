@@ -1,6 +1,6 @@
-# Set up JOCO ROBOS CAD for your team
+# Set up CAD Hub for your team
 
-JOCO ROBOS CAD is two pieces: a **SOLIDWORKS add-in** each student installs, and a **team server** a mentor runs. This guide sets up the server and gets your first student working. Plan on an afternoon. It's written by FRC Team 5919, who use it every day; questions and fixes are welcome as GitHub issues.
+CAD Hub is two pieces: a **SOLIDWORKS add-in** each student installs, and a **team server** a mentor runs. This guide sets up the server and gets your first student working. Plan on an afternoon. It's written by FRC Team 5919, who use it every day; questions and fixes are welcome as GitHub issues.
 
 ## What you need
 

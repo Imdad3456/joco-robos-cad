@@ -21,6 +21,9 @@ A student at Johnston Community College (JCC) can't connect from the add-in. Ser
 - SOLIDWORKS' API DLLs left the public repository: CI copies them from the private `Imdad3456/joco-build-files` with the deploy key in secret `SOLIDWORKS_FILES_KEY`. (They're still in old commits.)
 - [docs/SETUP.md](SETUP.md) is the guide for other teams. License: MIT.
 
+## Renamed to CAD Hub (1.4.0)
+Everything people see says **CAD Hub** (panel, menus, dialogs, installer, SOLIDWORKS add-in list, server pages, docs). Kept on purpose so existing installs keep working and updating: the install folder `C:\Program Files\JOCO ROBOS CAD`, registry `Software\JOCO ROBOS\CAD`, the robot folder `C:\JOCO-ROBOS`, the installer file name `JOCO-ROBOS-CAD-Setup-x.y.z.exe` (older add-ins only accept that name), the saved-password key, the server's sign-in name `AuthName "JOCO ROBOS CAD"` (new add-ins recognize team servers by it), the add-in's COM GUID, the C# namespace, and the repository name.
+
 ## After 1.0.0
 1.0.x is fixes only. New features go into 1.1 and later. `TESTING.md` stays the regression sheet: rerun the affected sections in the `2099-Robot` test season before releasing anything that touches Edit, Submit, Update or locking.
 

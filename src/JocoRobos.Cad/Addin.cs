@@ -52,12 +52,14 @@ namespace JocoRobos.Cad
     public sealed class Addin : ISwAddin, IAddinCallbacks
     {
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
-        private const string Title = "JOCO ROBOS CAD";
+        private const string Title = "CAD Hub";
+        // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
+        private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591906;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905 };
+        private const int GroupId = 591907;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591916;
+        private const int LayoutVersion = 591917;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -175,12 +177,15 @@ namespace JocoRobos.Cad
                 Add(group, "Import Outside References", "Recovery: copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu, 14);
                 Add(group, "Repair Moved References", "Recovery: after reorganizing folders, repoint every file's links to the same-named file", nameof(RepairMovedReferences), 16, menu, 16);
                 Add(group, "Upgrade Robot Files", "Mentor: convert every robot file to this SOLIDWORKS version once", nameof(UpgradeRobotFiles), 18, menu, 15);
-                Add(group, "Install Add-in Update", "Install the newest JOCO ROBOS CAD version", nameof(InstallUpdate), 10, menu, 17);
+                Add(group, "Install Add-in Update", "Install the newest CAD Hub version", nameof(InstallUpdate), 10, menu, 17);
                 group.HasMenu = true;
                 group.HasToolbar = true;
                 if (!group.Activate()) throw new InvalidOperationException("Could not activate toolbar.");
                 foreach (int type in new[] { (int)swDocumentTypes_e.swDocPART, (int)swDocumentTypes_e.swDocASSEMBLY, (int)swDocumentTypes_e.swDocDRAWING })
                 {
+                    if (migrate)
+                        try { var renamed = commands.GetCommandTab(type, OldTitle); if (renamed != null) commands.RemoveCommandTab(renamed); }
+                        catch (Exception exception) { ErrorLog.Write("remove old tab", exception); }
                     CommandTab existing = commands.GetCommandTab(type, Title);
                     if (migrate && existing != null) { commands.RemoveCommandTab(existing); existing = null; }
                     if (existing != null) continue;
@@ -236,7 +241,7 @@ namespace JocoRobos.Cad
                         "Try another network (home Wi-Fi or a phone hotspot), or ask the network's IT to allow it.\n\nDetails: " + text;
                 bool login = text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     text.IndexOf("authoriz", StringComparison.OrdinalIgnoreCase) >= 0 || text.Contains("401");
-                Message(text + (login ? "\n\nIf your password changed, use Tools → JOCO ROBOS CAD → Sign In." : ""), MessageBoxIcon.Error);
+                Message(text + (login ? "\n\nIf your password changed, use Tools → CAD Hub → Sign In." : ""), MessageBoxIcon.Error);
             }
             finally
             {
@@ -354,7 +359,7 @@ namespace JocoRobos.Cad
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
                 if (state.Warning != null) state.EditTarget = null;
                 if (autoUpdateProblem != null && state.CanAutoUpdate)
-                    state.Details += "\nCouldn't get them automatically: " + autoUpdateProblem + "\nTry Tools → JOCO ROBOS CAD → Update.";
+                    state.Details += "\nCouldn't get them automatically: " + autoUpdateProblem + "\nTry Tools → CAD Hub → Update.";
                 var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
                 if (season != null && !season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name)
                 {
@@ -483,23 +488,23 @@ namespace JocoRobos.Cad
                 var login = GetLogin(false);
                 if (login == null) return;
                 var offer = Updater.Offer(LoadCatalog(login).Addin, Updater.Current);
-                if (offer == null) { Message("JOCO ROBOS CAD " + Updater.Current + " is the newest version."); return; }
+                if (offer == null) { Message("CAD Hub " + Updater.Current + " is the newest version."); return; }
                 InstallUpdate(login, offer);
             });
         }
 
         private void InstallUpdate(NetworkCredential login, Catalog.AddinRelease offer)
         {
-            string question = "JOCO ROBOS CAD " + offer.Version + " is available (you have " + Updater.Current + ")." +
+            string question = "CAD Hub " + offer.Version + " is available (you have " + Updater.Current + ")." +
                 (offer.Required ? "\nMentors marked it required: new edits and inserts need it (you can still Submit your current work)." : "") +
                 "\n\nInstall it now? It downloads first; Windows then asks for permission. " +
                 "When you close SOLIDWORKS it installs and SOLIDWORKS reopens. Your files and locks are not touched.";
             if (MessageBox.Show(new SolidWorksWindow(), question, Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-            string installer = OperationDialog.Run("Downloading JOCO ROBOS CAD " + offer.Version + "…", () => Updater.Download(login, offer));
+            string installer = OperationDialog.Run("Downloading CAD Hub " + offer.Version + "…", () => Updater.Download(login, offer));
             try { Updater.Launch(installer); }
             catch (System.ComponentModel.Win32Exception exception) when (exception.NativeErrorCode == 1223)
             {
-                Message("Update cancelled. It stays available in the JOCO ROBOS CAD pane.", MessageBoxIcon.Warning);
+                Message("Update cancelled. It stays available in the CAD Hub pane.", MessageBoxIcon.Warning);
                 return;
             }
             Message("Update " + offer.Version + " is ready.\n\nSave your work and close SOLIDWORKS. The update installs by itself and SOLIDWORKS reopens.");
@@ -532,7 +537,7 @@ namespace JocoRobos.Cad
             var offer = Updater.Offer(catalog.Addin, Updater.Current);
             if (offer == null || !offer.Required) return;
             InstallUpdate(login, offer);
-            throw new InvalidOperationException("JOCO ROBOS CAD " + offer.Version + " is required before you start new edits or inserts. " +
+            throw new InvalidOperationException("CAD Hub " + offer.Version + " is required before you start new edits or inserts. " +
                 "Your current work is safe: Submit, Set Aside, and Release Edit still work. Close SOLIDWORKS to finish installing the update.");
         }
 
@@ -971,7 +976,7 @@ namespace JocoRobos.Cad
                 if (!workspace.IsLibrary && workspace.Name != catalog.Robot.Name)
                     throw new InvalidOperationException(Path.GetFileName(doc.GetPathName()) + " is from " + workspace.Name + ", a reference copy.\n\n" +
                         "To reuse it in " + catalog.Robot.Name + ", ask a mentor to add it to the Library, then use Insert from Library. " +
-                        "To edit " + workspace.Name + " itself, switch with Tools → JOCO ROBOS CAD → Choose Robot.");
+                        "To edit " + workspace.Name + " itself, switch with Tools → CAD Hub → Choose Robot.");
                 string path = doc.GetPathName();
                 // Changes made before clicking Edit: keep a copy first, whatever happens next.
                 bool unsaved = doc.GetSaveFlag();
@@ -1259,7 +1264,7 @@ namespace JocoRobos.Cad
             {
                 var text = new System.Text.StringBuilder();
                 Action<string, object> line = (label, value) => text.Append(label).Append(": ").Append(value).Append("\r\n");
-                text.Append("JOCO ROBOS CAD diagnostics — ").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz")).Append("\r\n\r\n");
+                text.Append("CAD Hub diagnostics — ").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss zzz")).Append("\r\n\r\n");
                 line("Add-in", Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""));
                 string revision;
                 try { revision = application.RevisionNumber(); } catch (Exception exception) { revision = "unknown (" + exception.Message + ")"; }

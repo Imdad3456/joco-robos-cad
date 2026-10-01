@@ -23,7 +23,7 @@ NuGet restores SharpSvn and the .NET Framework 4.8 reference assemblies during t
    ```
 
 3. In PowerShell **as administrator**, in the same folder: `.\scripts\Register-Dev.ps1`. This points SOLIDWORKS at the build folder, so keep that path stable while registered.
-4. Start SOLIDWORKS. If needed, enable **JOCO ROBOS CAD** and **Start Up** in Tools → Add-Ins. The panel header shows **(dev build)**.
+4. Start SOLIDWORKS. If needed, enable **CAD Hub** and **Start Up** in Tools → Add-Ins. The panel header shows **(dev build)**.
 
 For a non-default SOLIDWORKS location: `.\scripts\Build.ps1 -SolidWorksInteropDir 'D:\SOLIDWORKS\api\redist'`.
 
@@ -36,7 +36,7 @@ To go back to the installed copy, close SOLIDWORKS, run `.\scripts\Unregister-De
 ## Troubleshooting
 
 - **The add-in doesn't load, or SharpSvn is missing:** keep every output file (especially `SharpSvn.dll`) beside `JocoRobos.Cad.dll`, and install the x64 Visual C++ runtime.
-- **Authentication failed:** Tools → JOCO ROBOS CAD → Sign In. The CAD password is separate from GitHub, Windows, and Tailscale. Saved logins are under Windows Credential Manager → Generic Credentials → JOCO ROBOS CAD.
+- **Authentication failed:** Tools → CAD Hub → Sign In. The CAD password is separate from GitHub, Windows, and Tailscale. Saved logins are under Windows Credential Manager → Generic Credentials → CAD Hub.
 - **Which copy is SOLIDWORKS loading?** The panel header says "(dev build)" for a development copy. From PowerShell: `(Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\{E219FE9C-5919-4BE5-98B7-A518C11AD901}\InprocServer32").CodeBase`.
 - **An automatic update didn't install:** the installer log is in `%LOCALAPPDATA%\JocoRobos.Cad\updates\`.
 

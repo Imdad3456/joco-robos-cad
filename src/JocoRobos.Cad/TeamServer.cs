@@ -86,7 +86,7 @@ namespace JocoRobos.Cad
         }
 
         /// <summary>
-        /// Checks an address really is a JOCO ROBOS CAD server before saving it: its files need a sign-in under this software's
+        /// Checks an address really is a CAD Hub server before saving it: its files need a sign-in under this software's
         /// name. Throws with a message for the student otherwise.
         /// </summary>
         internal static void Check(Uri server)
@@ -98,15 +98,16 @@ namespace JocoRobos.Cad
             try
             {
                 using (var response = (HttpWebResponse)request.GetResponse())
-                    throw new InvalidOperationException(server.Host + " answered, but it isn't a JOCO ROBOS CAD server. Check the address with your mentor.");
+                    throw new InvalidOperationException(server.Host + " answered, but it isn't a CAD Hub server. Check the address with your mentor.");
             }
             catch (WebException failure) when (failure.Response is HttpWebResponse response)
             {
                 using (response)
                 {
                     string challenge = response.Headers["WWW-Authenticate"] ?? "";
+                    // The servers' sign-in name kept the project's original name, so every team's server (old or new) is recognized.
                     if (response.StatusCode == HttpStatusCode.Unauthorized && challenge.IndexOf("JOCO ROBOS CAD", StringComparison.OrdinalIgnoreCase) >= 0) return;
-                    throw new InvalidOperationException(server.Host + " answered, but it isn't a JOCO ROBOS CAD server (HTTP " + (int)response.StatusCode +
+                    throw new InvalidOperationException(server.Host + " answered, but it isn't a CAD Hub server (HTTP " + (int)response.StatusCode +
                         "). Check the address with your mentor.");
                 }
             }

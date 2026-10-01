@@ -38,7 +38,7 @@ namespace JocoRobos.Cad
             T result = default(T);
             Exception failure = null;
             bool completed = false;
-            using (var form = new Form { Text = "JOCO ROBOS CAD", ClientSize = new Size(480, 115),
+            using (var form = new Form { Text = "CAD Hub", ClientSize = new Size(480, 115),
                 StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false, ControlBox = false, ShowInTaskbar = false })
             {
@@ -66,7 +66,7 @@ namespace JocoRobos.Cad
 
         internal SignInDialog(string currentUser)
         {
-            Text = "JOCO ROBOS CAD — Sign In";
+            Text = "CAD Hub — Sign In";
             ClientSize = new Size(475, 265);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -115,7 +115,7 @@ namespace JocoRobos.Cad
 
         internal ServerDialog(Uri current)
         {
-            Text = "JOCO ROBOS CAD — Team Server";
+            Text = "CAD Hub — Team Server";
             ClientSize = new Size(475, 205);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -157,7 +157,7 @@ namespace JocoRobos.Cad
 
         internal ChooseRobotDialog(Catalog catalog, string current)
         {
-            Text = "JOCO ROBOS CAD — Choose Robot";
+            Text = "CAD Hub — Choose Robot";
             ClientSize = new Size(420, 300);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -190,7 +190,7 @@ namespace JocoRobos.Cad
 
         internal PickRobotDialog(string title, string prompt, IList<string> items)
         {
-            Text = "JOCO ROBOS CAD — " + title;
+            Text = "CAD Hub — " + title;
             ClientSize = new Size(420, 280);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -219,7 +219,7 @@ namespace JocoRobos.Cad
 
         internal ChecklistDialog(string title, string explanation, string action, IEnumerable<SubmitItem> items, bool checkAll)
         {
-            Text = "JOCO ROBOS CAD — " + title;
+            Text = "CAD Hub — " + title;
             ClientSize = new Size(600, 330);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -263,7 +263,7 @@ namespace JocoRobos.Cad
 
         internal SetupAccountDialog(string title, string intro, bool askCode, string currentUser, Action<string, string> request = null, string presetCode = null)
         {
-            Text = "JOCO ROBOS CAD — " + title;
+            Text = "CAD Hub — " + title;
             ClientSize = new Size(480, askCode ? 400 : 250);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
@@ -343,7 +343,7 @@ namespace JocoRobos.Cad
 
         internal HistoryDialog(string file, IList<FileVersion> versions, Action<FileVersion> saveCopy)
         {
-            Text = "JOCO ROBOS CAD — History of " + file;
+            Text = "CAD Hub — History of " + file;
             Font = SystemFonts.MessageBoxFont;
             ClientSize = new Size(640, 400);
             MinimumSize = new Size(480, 300);
@@ -370,7 +370,7 @@ namespace JocoRobos.Cad
             {
                 if (list.SelectedItems.Count != 1) return;
                 try { saveCopy((FileVersion)list.SelectedItems[0].Tag); }
-                catch (Exception exception) { MessageBox.Show(this, exception.Message, "JOCO ROBOS CAD", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                catch (Exception exception) { MessageBox.Show(this, exception.Message, "CAD Hub", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
             };
             buttons.Controls.Add(close);
             buttons.Controls.Add(save);

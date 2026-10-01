@@ -53,5 +53,5 @@ if __name__ == '__main__':
     try:
         check(sys.argv[1], sys.argv[2])
     except Exception as exc:
-        print('JOCO ROBOS CAD: ' + str(exc), file=sys.stderr)
+        print('CAD Hub: ' + str(exc), file=sys.stderr)
         sys.exit(1)

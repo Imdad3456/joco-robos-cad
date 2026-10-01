@@ -14,13 +14,13 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 |---|---|---|---|---|
 | 0.1 | A | https://cad.team5919.org/admin → **Add-in** → **Release to students** for the newest version. Both: install it when SOLIDWORKS offers it | The panel header shows the same version on both computers | ☐ |
 | 0.2 | A | Create the test season (ask Claude, or on the Linux PC: `ssh deck@100.97.7.84 podman exec -u www-data joco-svn python3 /opt/joco/joco.py test-season create 2099-Robot 2026-Robot`) | "Created 2099-Robot as a copy of 2026-Robot … without locks" | ☐ |
-| 0.3 | Both | Close all documents → **Tools → JOCO ROBOS CAD → Choose Robot** → **2099-Robot** → **Open Robot** | It downloads the copy (a few minutes) and opens it; the panel header says 2099-Robot. Every file named below is in `C:\JOCO-ROBOS\2099-Robot` | ☐ |
+| 0.3 | Both | Close all documents → **Tools → CAD Hub → Choose Robot** → **2099-Robot** → **Open Robot** | It downloads the copy (a few minutes) and opens it; the panel header says 2099-Robot. Every file named below is in `C:\JOCO-ROBOS\2099-Robot` | ☐ |
 
 ## 1. New account (a third person, or B on a spare Windows user)
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 1.0a | New student | Start SOLIDWORKS (this Windows user never used JOCO) | **Team Server** asks which server. Type `cad.team5919.orgg` → Continue: "Couldn't reach…"; type `example.com`: "isn't a JOCO ROBOS CAD server"; type `cad.team5919.org`: the account form | ☐ |
+| 1.0a | New student | Start SOLIDWORKS (this Windows user never used JOCO) | **Team Server** asks which server. Type `cad.team5919.orgg` → Continue: "Couldn't reach…"; type `example.com`: "isn't a CAD Hub server"; type `cad.team5919.org`: the account form | ☐ |
 | 1.0b | A | On your own (already set-up) PC, after installing this version | Never asked for a server; everything works as before. Tools → Sign In shows "Team server: cad.team5919.org  Change…" | ☐ |
 | 1.1 | New student | Start SOLIDWORKS → username (e.g. `test.student`), password twice → **Send request** | The form stays open: "✓ Request sent. Ask a mentor for your code" | ☐ |
 | 1.2 | A | **Accounts** → "Students waiting for a code" | `test.student`, the time, and a code | ☐ |

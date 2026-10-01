@@ -24,7 +24,7 @@ namespace JocoRobos.Cad
     /// The JOCO panel. The Robot tab has three layers: where am I (robot and whether it's up to date), what do I need to do
     /// (only the actions that apply right now, plus a card for the open file that appears only when there's something to
     /// say), and what do I want to work on (search and the robot's files). Support links sit in a small footer. The Library
-    /// tab has every way of getting a part; everything else lives in Tools → JOCO ROBOS CAD.
+    /// tab has every way of getting a part; everything else lives in Tools → CAD Hub.
     /// </summary>
     internal sealed class StatusPane : UserControl
     {
@@ -130,7 +130,7 @@ namespace JocoRobos.Cad
             footer.Controls.Add(links, 0, 0);
             var version = Caption(8f, FontStyle.Regular, Updater.Current + (Updater.IsDevelopmentBuild ? " (dev)" : ""), SystemColors.GrayText);
             version.Anchor = AnchorStyles.Right;
-            tips.SetToolTip(version, "JOCO ROBOS CAD " + Updater.Current);
+            tips.SetToolTip(version, "CAD Hub " + Updater.Current);
             footer.Controls.Add(version, 1, 0);
             return footer;
         }

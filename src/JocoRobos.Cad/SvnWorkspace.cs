@@ -118,7 +118,7 @@ namespace JocoRobos.Cad
                 item.LocalNodeStatus != SvnStatus.Normal ||
                 (item.LocalPropertyStatus != SvnStatus.None && item.LocalPropertyStatus != SvnStatus.Normal))
                 throw new InvalidOperationException("Update stopped to preserve local work or an unsupported workspace item:\n" + item.FullPath +
-                    "\nSubmit your changes first, or use Tools → JOCO ROBOS CAD → Set Aside My Changes to keep your version as a copy and restore the team's.");
+                    "\nSubmit your changes first, or use Tools → CAD Hub → Set Aside My Changes to keep your version as a copy and restore the team's.");
         }
 
         private void ReconcileReadOnly(SvnClient client)
@@ -191,7 +191,7 @@ namespace JocoRobos.Cad
                 string needsLock;
                 client.GetProperty(new SvnPathTarget(path), "svn:needs-lock", out needsLock);
                 if (needsLock == null) throw new InvalidOperationException("This file is missing its lock policy. Ask a mentor to repair it.");
-                client.Lock(path, new SvnLockArgs { StealLock = false, Comment = "Editing in JOCO ROBOS CAD" });
+                client.Lock(path, new SvnLockArgs { StealLock = false, Comment = "Editing in CAD Hub" });
                 // Never infer success from the lock call alone; confirm server owner and local token.
                 local = GetInfo(client, new SvnPathTarget(path));
                 remote = GetInfo(client, new SvnUriTarget(expected));

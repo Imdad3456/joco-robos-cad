@@ -1,5 +1,5 @@
 [Unit]
-Description=JOCO ROBOS CAD SVN
+Description=CAD Hub SVN
 After=network-online.target
 Wants=network-online.target
 

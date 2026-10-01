@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""JOCO ROBOS CAD server administration: seasons, library, locks, and accounts.
+"""CAD Hub server administration: seasons, library, locks, and accounts.
 
 `joco.py ensure` runs at container start. `joco.py serve` is the mentor web page,
 listening only inside the container; Apache authenticates users and forwards
@@ -1105,7 +1105,7 @@ class Admin(BaseHTTPRequestHandler):
         links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'), ('/admin/addin', 'Add-in')]
         nav = ''.join('<a href="%s"%s>%s</a>' % (h, ' class="on"' if h == current else '', t) for h, t in links)
         text = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-                '<title>%s · JOCO ROBOS CAD</title><style>%s</style></head><body><header><b>JOCO ROBOS CAD</b><nav>%s</nav>'
+                '<title>%s · CAD Hub</title><style>%s</style></head><body><header><b>CAD Hub</b><nav>%s</nav>'
                 '<span class="muted">%s</span></header><main>%s</main></body></html>') % (esc(title), STYLE, nav, esc(self.user), body)
         data = text.encode()
         self.send_response(status)
@@ -1254,7 +1254,7 @@ class Admin(BaseHTTPRequestHandler):
                    '<input name="year" value="%s" placeholder="e.g. 2026" size="8" pattern="20[0-9][0-9]" aria-label="Approved SOLIDWORKS year">'
                    '<button class="primary">Save</button></form><p class="muted">%s A newer SOLIDWORKS saves files the rest of the team can\'t open, '
                    'so the add-in lets it look but not edit or submit team CAD. Change this only when everyone has upgraded; then a mentor runs '
-                   'Tools → JOCO ROBOS CAD → Upgrade Robot Files once. Each student\'s version is on the Accounts tab.</p>') % (
+                   'Tools → CAD Hub → Upgrade Robot Files once. Each student\'s version is on the Accounts tab.</p>') % (
                        self.token(), esc(approved or ''), ('Approved: <b>SOLIDWORKS %s</b>.' % esc(approved)) if approved else '<span class="bad">Not set: any version can edit.</span>')
         return ('<section><h2>Student add-in</h2>%s</section><section><h2>Team SOLIDWORKS version</h2>%s</section><section><h2>Waiting from GitHub</h2>%s</section>'
                 '<section><h2>Upload manually</h2>%s</section>') % (info, sw_form, staged_html, upload_form)
