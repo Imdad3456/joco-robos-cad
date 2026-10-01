@@ -60,6 +60,9 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3b.5 | Both | Save a new part into `80_Unsorted` | It appears with ● within a few seconds | ☐ |
 | 3b.6 | Both | **Choose Robot** → another season and back | The list switches with it; it never shows the other season's files | ☐ |
 | 3b.7 | A | Full robot: open and close folders quickly, and type in search while rotating the model | SOLIDWORKS never hitches | ☐ |
+| 3b.8 | Both | Look at the Robot tab with nothing open, then with a part open, then after changing and saving it | Nothing open: robot name and ✓ status on one line, then the files. A part open: a light card with its name, status and Edit appears above ROBOT FILES. Saved changes: Submit appears in that card. Close the part: the card goes away | ☐ |
+| 3b.9 | Both | Look at the file tree, then type `frame` | Folder, part, assembly and drawing icons; roomy rows; no heavy border. Results start with "Search results for "frame"", each with its folder in grey. **Esc** clears the search; **↻** (tooltip "Refresh robot files") reloads | ☐ |
+| 3b.10 | Both | Footer at the bottom of the Robot tab | **Check now · Diagnostics** on the left, the version on the right; both links work | ☐ |
 
 ## 4. Together: nobody overwrites anybody
 

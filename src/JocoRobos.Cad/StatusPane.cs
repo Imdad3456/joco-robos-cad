@@ -21,37 +21,39 @@ namespace JocoRobos.Cad
     }
 
     /// <summary>
-    /// The JOCO panel: a status card that answers "what can I do right now?" with one obvious action per section,
-    /// and the Library tab for every way of getting a part. Everything else lives in Tools → JOCO ROBOS CAD.
+    /// The JOCO panel. The Robot tab has three layers: where am I (robot and whether it's up to date), what do I need to do
+    /// (only the actions that apply right now, plus a card for the open file that appears only when there's something to
+    /// say), and what do I want to work on (search and the robot's files). Support links sit in a small footer. The Library
+    /// tab has every way of getting a part; everything else lives in Tools → JOCO ROBOS CAD.
     /// </summary>
     internal sealed class StatusPane : UserControl
     {
-        private readonly Label version = Caption(8.5f, FontStyle.Regular, "JOCO ROBOS CAD " + Updater.Current + (Updater.IsDevelopmentBuild ? " (dev build)" : ""), SystemColors.GrayText);
+        internal static readonly Color Hairline = Color.FromArgb(226, 229, 233), CardBack = Color.FromArgb(246, 247, 249);
+
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
         private readonly Button install = Action("Install update", null);
-        private readonly Label flash = Caption(10f, FontStyle.Bold, "", Color.ForestGreen);
+        private readonly Label flash = Caption(9.5f, FontStyle.Bold, "", Color.ForestGreen);
         private readonly Label warning = Caption(9.5f, FontStyle.Bold, "", Color.Firebrick);
-        private readonly LinkLabel history = new LinkLabel { Text = "History of this file", AutoSize = true, Margin = new Padding(0, 2, 0, 2) };
-        private readonly LinkLabel diagnostics = new LinkLabel { Text = "Copy diagnostics for a mentor", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
-        private readonly Label working = Caption(9.5f, FontStyle.Italic, "", SystemColors.GrayText);
+        private readonly Label working = Caption(9f, FontStyle.Italic, "", SystemColors.GrayText);
         private readonly Label robot = Caption(12f, FontStyle.Bold);
-        private readonly Label sync = Caption(10f, FontStyle.Bold);
+        private readonly Label sync = Caption(9.5f, FontStyle.Bold);
         private readonly Label details = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
         private readonly Button open = Action("Open Robot", "Open Robot");
         private readonly Button closeUpdate = Action("Close & Update", "Update");
+        // The open file's card: only there when there's something to say about it.
         private readonly Label activeFile = Caption(10f, FontStyle.Bold);
-        private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
+        private readonly Label activeStatus = Caption(9f, FontStyle.Regular);
         private readonly Button edit = Action("Edit", "Edit");
-        private readonly Label pending = Caption(10f, FontStyle.Bold, "", Color.DarkOrange);
+        private readonly LinkLabel history = Link("History of this file");
+        private readonly Label pending = Caption(9.5f, FontStyle.Bold, "", Color.DarkOrange);
         private readonly Button submit = Action("Submit", "Submit");
         private readonly Label locks = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
-        private readonly LinkLabel release = new LinkLabel { Text = "Give back the ones I didn't change", AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
-        // The status card takes the height it needs; the robot file browser fills the rest of the Robot tab.
+        private readonly LinkLabel release = Link("Give back the ones I didn't change");
+        private readonly Card card = new Card();
+        private readonly TableLayoutPanel header = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 10, 12, 4) };
-        private RobotFilesPanel files;
-        // Gaps that only show with the section after them, so hidden sections don't leave holes.
-        private readonly Control submitGap = Spacer(), locksGap = Spacer();
+            WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(14, 12, 14, 12) };
+        private readonly RobotFilesPanel files;
         private readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
         private readonly TabPage libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
         private readonly FrcLibraryPanel library;
@@ -65,40 +67,93 @@ namespace JocoRobos.Cad
             edit.Click += (s, e) => actions.Edit();
             submit.Click += (s, e) => actions.Submit();
             release.LinkClicked += (s, e) => actions.ReleaseUnchanged();
-            var check = new LinkLabel { Text = "Check now", AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
-            check.LinkClicked += (s, e) => actions.Refresh();
             history.LinkClicked += (s, e) => actions.History();
-            diagnostics.LinkClicked += (s, e) => actions.Diagnostics();
-            foreach (var control in new Control[] { version, update, install, warning, flash, working, robot, sync, details, open, closeUpdate, Spacer(),
-                activeFile, activeStatus, edit, history, submitGap, pending, submit, locksGap, locks, release, check, diagnostics })
+
+            // 1. Where am I: robot name on the left, whether it's up to date on the right.
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            robot.Margin = new Padding(0, 0, 8, 0);
+            sync.Margin = new Padding(0, 3, 0, 0);
+            header.Controls.Add(robot, 0, 0);
+            header.Controls.Add(sync, 1, 0);
+
+            // 2. What do I need to do: only what applies now, the open file's part in a card.
+            history.Margin = new Padding(0, 2, 0, 0);
+            foreach (var control in new Control[] { activeFile, activeStatus, edit, history, pending, submit, locks, release })
+                card.Body.Controls.Add(control);
+            card.Margin = new Padding(0, 10, 0, 0);
+            foreach (var control in new Control[] { header, details, update, install, warning, flash, working, open, closeUpdate, card })
                 layout.Controls.Add(control);
-            var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
-            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill };
-            var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true };
+
+            // 3. What do I want to work on: the robot's files fill the rest. Then a small footer for support actions.
+            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 160) };
+            var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true, BackColor = SystemColors.Window };
             robotGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            robotGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 120));
-            robotGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // Empty space below.
-            files.WantsHeight += height => { if ((int)robotGrid.RowStyles[1].Height != height) robotGrid.RowStyles[1].Height = height; };
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
+            robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             robotGrid.Controls.Add(layout, 0, 0);
-            robotGrid.Controls.Add(files, 0, 1);
+            robotGrid.Controls.Add(Rule(), 0, 1);
+            robotGrid.Controls.Add(files, 0, 2);
+            robotGrid.Controls.Add(Rule(), 0, 3);
+            robotGrid.Controls.Add(Footer(actions), 0, 4);
+            var robotTab = new TabPage("Robot") { BackColor = SystemColors.Window };
             robotTab.Controls.Add(robotGrid);
             library = new FrcLibraryPanel(actions) { Dock = DockStyle.Fill };
             libraryTab.Controls.Add(library);
             tabs.TabPages.Add(robotTab);
             tabs.TabPages.Add(libraryTab);
             Controls.Add(tabs);
-            layout.Resize += (s, e) =>
-            {
-                // Stretch buttons and wrap text to the pane's width.
-                int width = Math.Max(150, layout.ClientSize.Width - layout.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
-                foreach (Control control in layout.Controls)
-                {
-                    if (control is Button) control.Width = width;
-                    else if (control is Label) control.MaximumSize = new Size(width, 0);
-                }
-            };
+            layout.Resize += (s, e) => FitWidth();
             Show(new PaneState());
+        }
+
+        // Check now · Diagnostics on the left, the version on the right: there when needed, out of the way otherwise.
+        private static Control Footer(PaneActions actions)
+        {
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Padding = new Padding(14, 5, 14, 6), Margin = new Padding(0) };
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var links = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+            var check = Link("Check now", 8.25f);
+            check.LinkClicked += (s, e) => actions.Refresh();
+            var diagnostics = Link("Diagnostics", 8.25f);
+            diagnostics.LinkClicked += (s, e) => actions.Diagnostics();
+            var tips = new ToolTip();
+            tips.SetToolTip(check, "Check the server for new changes and locks now");
+            tips.SetToolTip(diagnostics, "Copy diagnostics for a mentor");
+            links.Controls.Add(check);
+            links.Controls.Add(Caption(8.25f, FontStyle.Regular, "·", SystemColors.GrayText));
+            links.Controls.Add(diagnostics);
+            footer.Controls.Add(links, 0, 0);
+            var version = Caption(8f, FontStyle.Regular, Updater.Current + (Updater.IsDevelopmentBuild ? " (dev)" : ""), SystemColors.GrayText);
+            version.Anchor = AnchorStyles.Right;
+            tips.SetToolTip(version, "JOCO ROBOS CAD " + Updater.Current);
+            footer.Controls.Add(version, 1, 0);
+            return footer;
+        }
+
+        // Stretch buttons and wrap text to the pane's width.
+        private void FitWidth()
+        {
+            int width = Math.Max(150, layout.ClientSize.Width - layout.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth);
+            header.MinimumSize = header.MaximumSize = new Size(width, 0);
+            robot.MaximumSize = new Size(Math.Max(80, width / 2), 0);
+            sync.MaximumSize = new Size(Math.Max(80, robot.Visible ? width - robot.PreferredSize.Width - 10 : width), 0);
+            card.MinimumSize = card.MaximumSize = new Size(width, 0);
+            foreach (Control control in layout.Controls)
+            {
+                if (control is Button) control.Width = width;
+                else if (control is Label && control != robot && control != sync) control.MaximumSize = new Size(width, 0);
+            }
+            int inner = width - card.Padding.Horizontal;
+            foreach (Control control in card.Body.Controls)
+            {
+                if (control is Button) control.Width = inner;
+                else if (control is Label) control.MaximumSize = new Size(inner, 0);
+            }
         }
 
         /// <summary>The robot file browser follows the robot's latest status check (and the robot chosen).</summary>
@@ -119,9 +174,20 @@ namespace JocoRobos.Cad
                 Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size, style), ForeColor = color ?? SystemColors.ControlText };
         }
 
+        private static LinkLabel Link(string text, float size = 8.5f)
+        {
+            return new LinkLabel { Text = text, AutoSize = true, Margin = new Padding(0, 2, 0, 2), LinkBehavior = LinkBehavior.HoverUnderline,
+                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size) };
+        }
+
+        private static Control Rule()
+        {
+            return new Panel { Dock = DockStyle.Fill, Height = 1, Margin = new Padding(0), BackColor = Hairline };
+        }
+
         private static Button Action(string text, string icon)
         {
-            return new Button { Text = "  " + text, Width = 200, Height = 38, Margin = new Padding(0, 6, 0, 2), Image = icon == null ? null : ButtonIcon(icon),
+            return new Button { Text = "  " + text, Width = 200, Height = 36, Margin = new Padding(0, 8, 0, 2), Image = icon == null ? null : ButtonIcon(icon),
                 ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText, TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(6, 0, 0, 0), AutoEllipsis = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9.5f, FontStyle.Bold) };
         }
@@ -135,8 +201,6 @@ namespace JocoRobos.Cad
             try { return File.Exists(path) ? Image.FromFile(path) : null; }
             catch (OutOfMemoryException) { return null; } // Unreadable image file.
         }
-
-        private static Control Spacer() { return new Panel { Height = 10, Width = 10 }; }
 
         private static Color ColorOf(Tone tone)
         {
@@ -161,13 +225,21 @@ namespace JocoRobos.Cad
             working.Text = state.Working ?? "";
             working.Visible = !String.IsNullOrEmpty(state.Working);
             robot.Text = state.Robot;
-            robot.Visible = state.Robot.Length > 0;
+            bool named = state.Robot.Length > 0;
+            robot.Visible = named;
+            // No robot name yet (not signed in, checking): the status takes the whole line.
+            header.SetColumn(sync, named ? 1 : 0);
+            header.SetColumnSpan(sync, named ? 1 : 2);
+            sync.Anchor = AnchorStyles.Top | (named ? AnchorStyles.Right : AnchorStyles.Left);
             sync.Text = state.Sync;
             sync.ForeColor = ColorOf(state.SyncTone);
             details.Text = state.Details;
             details.Visible = state.Details.Length > 0;
             open.Visible = state.ShowOpen;
             closeUpdate.Visible = state.ShowCloseAndUpdate;
+            warning.Text = state.Warning ?? "";
+            warning.Visible = !String.IsNullOrEmpty(state.Warning);
+
             activeFile.Text = state.ActiveFile;
             activeFile.Visible = state.ActiveFile.Length > 0;
             activeStatus.Text = state.ActiveStatus;
@@ -175,19 +247,50 @@ namespace JocoRobos.Cad
             activeStatus.Visible = state.ActiveStatus.Length > 0;
             edit.Visible = state.EditTarget != null;
             edit.Text = "  " + (String.IsNullOrEmpty(state.EditTarget) ? "Edit" : "Edit " + state.EditTarget);
+            history.Visible = state.ShowHistory;
             pending.Text = state.Pending;
             pending.Visible = state.Pending.Length > 0;
-            submit.Visible = state.SubmitCount > 0 || state.InterruptedSubmit;
+            bool showSubmit = state.SubmitCount > 0 || state.InterruptedSubmit;
+            submit.Visible = showSubmit;
             submit.Text = "  Submit" + (state.SubmitCount > 0 ? " " + state.SubmitCount : "");
-            warning.Text = state.Warning ?? "";
-            warning.Visible = !String.IsNullOrEmpty(state.Warning);
-            history.Visible = state.ShowHistory;
             locks.Text = state.Locks;
             locks.Visible = state.Locks.Length > 0;
             release.Visible = state.HasLocks;
-            submitGap.Visible = state.Pending.Length > 0 || state.SubmitCount > 0 || state.InterruptedSubmit;
-            locksGap.Visible = state.Locks.Length > 0;
+            // The card exists only while it has something in it; sections inside it are spaced only after another section.
+            bool hasFile = state.ActiveFile.Length > 0 || state.ActiveStatus.Length > 0 || state.EditTarget != null || state.ShowHistory;
+            bool hasSubmit = state.Pending.Length > 0 || showSubmit;
+            bool hasLocks = state.Locks.Length > 0 || state.HasLocks;
+            pending.Margin = new Padding(0, hasFile ? 12 : 0, 0, 2);
+            if (!pending.Visible) submit.Margin = new Padding(0, hasFile ? 12 : 0, 0, 2);
+            else submit.Margin = new Padding(0, 8, 0, 2);
+            locks.Margin = new Padding(0, hasFile || hasSubmit ? 12 : 0, 0, 2);
+            card.Visible = hasFile || hasSubmit || hasLocks;
             layout.ResumeLayout();
+            FitWidth();
+        }
+
+        /// <summary>A light box that groups what's about the open file and what's waiting to submit.</summary>
+        private sealed class Card : Panel
+        {
+            internal readonly FlowLayoutPanel Body = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0), BackColor = CardBack, Dock = DockStyle.Top };
+
+            internal Card()
+            {
+                AutoSize = true;
+                AutoSizeMode = AutoSizeMode.GrowAndShrink;
+                BackColor = CardBack;
+                Padding = new Padding(10, 8, 10, 10);
+                ResizeRedraw = true;
+                DoubleBuffered = true;
+                Controls.Add(Body);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                using (var pen = new Pen(Hairline)) e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            }
         }
     }
 }
