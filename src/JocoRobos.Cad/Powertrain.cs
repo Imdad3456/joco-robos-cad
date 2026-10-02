@@ -56,8 +56,8 @@ namespace JocoRobos.Cad
     }
 
     /// <summary>
-    /// The powertrain shapes and numbers, in inches: roller chain sprockets, timing pulleys, internal (ring) gears and planetary
-    /// sets, and gear ratios. Pure geometry, tested without SOLIDWORKS; the CAD Hub tools extrude these outlines.
+    /// The powertrain shapes and numbers, in inches: roller chain sprockets, timing pulleys and gear ratios. Pure geometry, tested
+    /// without SOLIDWORKS; the CAD Hub tools extrude these outlines.
     /// </summary>
     internal static class Powertrain
     {
@@ -149,49 +149,6 @@ namespace JocoRobos.Cad
         {
             if (teeth < 10 || teeth > 120) return "Pulleys from 10 to 120 teeth.";
             return null;
-        }
-
-        // ---------- planetary sets ----------
-
-        /// <summary>Why these tooth counts don't make a working planetary, or null.</summary>
-        internal static string PlanetaryProblem(int sun, int planet, int ring, int planets)
-        {
-            if (sun < 8 || planet < 8) return "Sun and planets need at least 8 teeth.";
-            if (ring != sun + 2 * planet) return "The ring needs sun + 2 × planet teeth: " + (sun + 2 * planet) + ".";
-            if (planets < 2 || planets > 8) return "2 to 8 planets.";
-            if ((sun + ring) % planets != 0) return "With " + planets + " planets evenly spaced, sun + ring teeth (" + (sun + ring) + ") must divide by " + planets + ".";
-            // Neighboring planets must not hit each other: their tips need room between them.
-            double centers = (sun + planet) / 2.0, tip = (planet + 2) / 2.0;
-            if (2 * centers * Math.Sin(Math.PI / planets) <= 2 * tip) return "The planets would hit each other: fewer planets or a bigger sun.";
-            return null;
-        }
-
-        /// <summary>Sun in, ring held, carrier out: the reduction.</summary>
-        internal static double PlanetaryRatio(int sun, int ring) { return 1 + (double)ring / sun; }
-
-        /// <summary>Where each planet sits (center, inches) and how far it's turned so its teeth mesh with the sun's.</summary>
-        internal static List<double[]> Planets(int sun, int planet, int planets, double diametralPitch)
-        {
-            double centers = (sun + planet) / (2 * diametralPitch);
-            var result = new List<double[]>();
-            for (int k = 0; k < planets; k++)
-            {
-                double theta = 2 * Math.PI * k / planets;
-                // The sun has a tooth at angle 0; facing it, each planet needs a space where the sun has a tooth.
-                double sunPhase = theta * sun / (2 * Math.PI);
-                double turn = theta + Math.PI - Math.PI / planet * (1 - 2 * (sunPhase - Math.Floor(sunPhase)));
-                result.Add(new[] { centers * Math.Cos(theta), centers * Math.Sin(theta), turn });
-            }
-            return result;
-        }
-
-        /// <summary>How far the ring is turned so planet 0 (at angle 0) meshes with it.</summary>
-        internal static double RingTurn(int sun, int planet, int ring, int planets)
-        {
-            var first = Planets(sun, planet, planets, 1)[0];
-            // The planet's tooth pattern facing outward (angle 0), from its center; the ring needs a space where the planet has a tooth.
-            double planetPhase = (0 - first[2]) * planet / (2 * Math.PI);
-            return -(2 * Math.PI / ring) * (planetPhase + 0.5) + Math.PI / ring;
         }
 
         // ---------- gear ratios ----------

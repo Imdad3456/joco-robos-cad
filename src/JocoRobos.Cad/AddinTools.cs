@@ -169,7 +169,6 @@ namespace JocoRobos.Cad
         public void MakeSprocket() { ShowTool(CadHubTool.Find("sprocket")); }
         public void MakePulley() { ShowTool(CadHubTool.Find("pulley")); }
         public void MakeShaft() { ShowTool(CadHubTool.Find("shaft")); }
-        public void MakePlanetary() { ShowTool(CadHubTool.Find("planetary")); }
         public void GearRatio() { ShowTool(CadHubTool.Find("ratio")); }
 
         // From an assembly: the part made on its own page goes into the robot (90_COTS/Stock/<kind>), then into the assembly. An

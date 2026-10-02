@@ -71,7 +71,7 @@ namespace JocoRobos.Cad
         internal virtual string Capture(object selection, double[] pickPoint, FeatureParams p, TeamStandards standards) { return null; }
         /// <summary>The body to add, or the tool to cut with, in meters.</summary>
         internal abstract Body2 Build(SldWorks application, FeatureParams p, bool preview);
-        /// <summary>All the bodies it makes (a planetary set makes several).</summary>
+        /// <summary>All the bodies it makes.</summary>
         internal virtual List<Body2> BuildBodies(SldWorks application, FeatureParams p, bool preview)
         {
             var body = Build(application, p, preview);
@@ -80,11 +80,8 @@ namespace JocoRobos.Cad
         /// <summary>Used from an assembly: the part's file name (without .SLDPRT) and its folder under 90_COTS/Stock.</summary>
         internal virtual string PartName(FeatureParams p) { return Title; }
         internal virtual string Folder { get { return Title + "s"; } }
-        /// <summary>How many separate bodies (each its own CAD Hub feature): a planetary's sun, planets and ring.</summary>
-        internal virtual int Pieces(FeatureParams p) { return 1; }
-        internal virtual string PieceName(FeatureParams p, int piece) { return ""; }
 
-        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new SprocketTool(), new PulleyTool(), new ShaftTool(), new PlanetaryTool(),
+        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new SprocketTool(), new PulleyTool(), new ShaftTool(),
             new GearRatioTool(), new LightenTool(), new BeltChainTool(), new MountingPatternTool(), new BearingHoleTool() };
         // Bearing Hole is no longer on the tab: kept so the CAD Hub bearing holes earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
@@ -481,101 +478,6 @@ namespace JocoRobos.Cad
             if (ends != 0) shaft = Join(piece(0, turnedLength, false, turned), shaft);
             if (ends == 1) shaft = Join(shaft, piece(length - turnedLength, turnedLength, false, turned));
             return shaft;
-        }
-    }
-
-    /// <summary>A planetary gearset: sun, planets and ring as separate bodies, checked to mesh.</summary>
-    internal sealed class PlanetaryTool : CadHubTool
-    {
-        internal override string Kind { get { return "planetary"; } }
-        internal override string Title { get { return "Planetary Gearset"; } }
-        internal override bool Cuts { get { return false; } }
-        internal override string Folder { get { return "Gears"; } }
-
-        private static readonly string[] Pitches = { "20 DP", "32 DP", "10 DP" };
-        private static readonly double[] PitchValues = { 20, 32, 10 };
-
-        internal override List<ToolField> Fields(TeamStandards standards)
-        {
-            return new List<ToolField>
-            {
-                new ToolField { Key = "sun", Label = "Sun teeth", Kind = FieldKind.Number, Min = 8, Max = 100, Default = 12 },
-                new ToolField { Key = "planet", Label = "Planet teeth", Kind = FieldKind.Number, Min = 8, Max = 100, Default = 18 },
-                new ToolField { Key = "planets", Label = "Planets", Kind = FieldKind.Number, Min = 2, Max = 8, Default = 3 },
-                new ToolField { Key = "pitch", Label = "Diametral pitch", Kind = FieldKind.Choice, Items = Pitches.ToList() },
-                new ToolField { Key = "width", Label = "Thickness", Kind = FieldKind.Length, Min = 0.05, Max = 4, Default = 0.375, Step = 0.125 },
-                new ToolField { Key = "bore", Label = "Sun bore", Kind = FieldKind.Choice, Items = Bores.Names.ToList() },
-                new ToolField { Key = "planetBore", Label = "Planet bore", Kind = FieldKind.Choice, Items = Bores.Names.ToList(), DefaultItem = 3 },
-                new ToolField { Key = "rim", Label = "Ring wall outside the teeth", Kind = FieldKind.Length, Min = 0.05, Max = 2, Default = 0.25, Step = 0.0625, Advanced = true },
-                new ToolField { Key = "backlash", Label = "Backlash", Kind = FieldKind.Length, Min = 0, Max = 0.03, Default = 0.004, Step = 0.001, Advanced = true },
-            };
-        }
-
-        private static double Pitch(FeatureParams p) { return PitchValues[Math.Max(0, Math.Min(PitchValues.Length - 1, (int)p.Number("pitch", 0)))]; }
-        private static int Sun(FeatureParams p) { return (int)p.Number("sun", 12); }
-        private static int Planet(FeatureParams p) { return (int)p.Number("planet", 18); }
-        private static int Ring(FeatureParams p) { return Sun(p) + 2 * Planet(p); }
-        private static int Count(FeatureParams p) { return (int)p.Number("planets", 3); }
-
-        internal override string Problem(FeatureParams p) { return Powertrain.PlanetaryProblem(Sun(p), Planet(p), Ring(p), Count(p)); }
-
-        // Sun, each planet, the ring: in the order BuildBodies makes them.
-        internal override int Pieces(FeatureParams p) { return Count(p) + 2; }
-        internal override string PieceName(FeatureParams p, int piece) { return piece == 0 ? "Sun" : piece <= Count(p) ? "Planet " + piece : "Ring"; }
-
-        internal override string Result(FeatureParams p, TeamStandards standards)
-        {
-            double dp = Pitch(p);
-            return "Ring " + Ring(p) + " teeth · " + StockParts.Inches(Math.Round(Powertrain.PlanetaryRatio(Sun(p), Ring(p)), 3)) + ":1 (sun in, ring held, carrier out) · planets " +
-                StockParts.Inches(Math.Round((Sun(p) + Planet(p)) / (2 * dp), 4)) + " in from the center · ring outside " +
-                StockParts.Inches(Math.Round((Ring(p) + 2.5) / dp + 2 * p.Number("rim", 0.25), 3)) + " in.";
-        }
-
-        internal override string PartName(FeatureParams p)
-        {
-            return "Planetary " + Sun(p) + "-" + Planet(p) + "-" + Ring(p) + " x" + Count(p) + " " + StockParts.Inches(Pitch(p)) + "DP " + Code(p);
-        }
-
-        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return BuildBodies(application, p, preview).FirstOrDefault(); }
-
-        internal override List<Body2> BuildBodies(SldWorks application, FeatureParams p, bool preview)
-        {
-            double dp = Pitch(p), width = p.Number("width", 0.375), backlash = p.Number("backlash", 0.004);
-            int sun = Sun(p), planet = Planet(p), ring = Ring(p), detail = preview ? 4 : 8;
-            var bodies = new List<Body2>();
-            Func<List<double[]>, int, Body2> gear = (outline, bore) =>
-            {
-                var loops = new List<List<double[]>> { outline };
-                var circles = new List<double[]>();
-                AddBore(bore, loops, circles);
-                return Extrude(application, loops, circles, new[] { 0.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 1.0, 0, 0 }, width);
-            };
-            bodies.Add(gear(SpurGear.Outline(sun, dp, 20, detail, backlash), (int)p.Number("bore", 0)));
-            int planetBore = (int)p.Number("planetBore", 3);
-            foreach (var at in Powertrain.Planets(sun, planet, Count(p), dp))
-            {
-                var loops = new List<List<double[]>> { Place(SpurGear.Outline(planet, dp, 20, detail, backlash), at[2], at[0], at[1]) };
-                var circles = new List<double[]>();
-                var bore = new List<List<double[]>>();
-                var boreCircles = new List<double[]>();
-                AddBore(planetBore, bore, boreCircles);
-                loops.AddRange(bore.Select(l => Place(l, at[2], at[0], at[1])));
-                circles.AddRange(boreCircles.Select(c => new[] { c[0] + at[0], c[1] + at[1], c[2] }));
-                bodies.Add(Extrude(application, loops, circles, new[] { 0.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 1.0, 0, 0 }, width));
-            }
-            // The ring: its teeth point inward; the outline of its tooth spaces is an outward gear with addendum and dedendum swapped.
-            double turn = Powertrain.RingTurn(sun, planet, ring, Count(p));
-            var cavity = Place(SpurGear.Outline(ring, dp, 20, detail, -backlash, 1.25, 1), turn, 0, 0);
-            double outside = ring / dp / 2 + 1.25 / dp + p.Number("rim", 0.25);
-            bodies.Add(Extrude(application, new List<List<double[]>> { cavity }, new List<double[]> { new[] { 0, 0, outside } },
-                new[] { 0.0, 0, 0 }, new[] { 0.0, 0, 1 }, new[] { 1.0, 0, 0 }, width));
-            return bodies;
-        }
-
-        private static List<double[]> Place(List<double[]> points, double turn, double x, double y)
-        {
-            double c = Math.Cos(turn), s = Math.Sin(turn);
-            return points.Select(q => new[] { q[0] * c - q[1] * s + x, q[0] * s + q[1] * c + y }).ToList();
         }
     }
 
