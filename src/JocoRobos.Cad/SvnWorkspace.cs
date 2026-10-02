@@ -118,6 +118,7 @@ namespace JocoRobos.Cad
                 item.LocalNodeStatus != SvnStatus.Normal ||
                 (item.LocalPropertyStatus != SvnStatus.None && item.LocalPropertyStatus != SvnStatus.Normal))
                 throw new InvalidOperationException("Update stopped to preserve local work or an unsupported workspace item:\n" + item.FullPath +
+                    " (" + item.LocalNodeStatus.ToString().ToLowerInvariant() + (item.Conflicted ? ", conflict" : "") + (item.Wedged ? ", unfinished" : "") + ")" +
                     "\nSubmit your changes first, or use Tools → CAD Hub → Set Aside My Changes to keep your version as a copy and restore the team's.");
         }
 
@@ -157,7 +158,7 @@ namespace JocoRobos.Cad
                     {
                         // Files and folders that are only on this computer stay as they are: Update never touches them. Only when
                         // the server now has something at the same place does it stop, so nothing of yours is overwritten.
-                        if (!item.Versioned)
+                        if (!item.Versioned || (item.LocalNodeStatus != SvnStatus.Normal && MarkedNew(client, Path.GetFullPath(item.FullPath))))
                         {
                             if (!WorkspacePolicy.IsOwnerFile(item.FullPath) && OnServer(Path.GetFullPath(item.FullPath)))
                                 throw new InvalidOperationException("A teammate submitted something with the same name as your new, not-yet-submitted:\n" + item.FullPath +
@@ -174,21 +175,21 @@ namespace JocoRobos.Cad
             }
         }
 
-        // Folders marked new by a Submit that didn't finish, with no part in them any more, would stop every update: unmark them
-        // (whatever is inside stays on disk), and remove new folders that have no files at all. A folder with a part inside is left
-        // for Submit.
+        // Anything marked new by a Submit that didn't finish (a folder or file, still on disk or deleted since) with no part in it
+        // would stop every update: unmark it (whatever is on disk stays). Then remove new folders that have no files at all.
+        // Something marked new that holds a part is left for Submit.
         private void PrepareNewFolders(SvnClient client)
         {
-            Func<string, bool> holdsParts = dir => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any(WorkspacePolicy.IsSubmittableCad);
-            var statuses = Status(client, Root, false, SvnDepth.Infinity);
-            foreach (string dir in statuses
-                .Where(x => x.LocalNodeStatus == SvnStatus.Added && (x.NodeKind == SvnNodeKind.Directory || Directory.Exists(x.FullPath)))
-                .Select(x => Path.GetFullPath(x.FullPath)).Where(Directory.Exists).OrderBy(dir => dir.Length).ToList())
+            Func<string, bool> holdsParts = path => Directory.Exists(path)
+                ? Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Any(WorkspacePolicy.IsSubmittableCad)
+                : File.Exists(path) && WorkspacePolicy.IsSubmittableCad(path);
+            foreach (string path in Status(client, Root, false, SvnDepth.Infinity)
+                .Where(x => x.Versioned && x.LocalNodeStatus != SvnStatus.Normal)
+                .Select(x => Path.GetFullPath(x.FullPath)).OrderBy(path => path.Length).ToList())
             {
-                WorkspacePolicy.RequireInside(Root, dir);
-                if (!Directory.Exists(dir) || holdsParts(dir)) continue;
-                var still = Status(client, dir, false, SvnDepth.Empty).FirstOrDefault();
-                if (still != null && still.LocalNodeStatus == SvnStatus.Added) client.Revert(dir, new SvnRevertArgs { Depth = SvnDepth.Infinity });
+                WorkspacePolicy.RequireInside(Root, path);
+                if (!MarkedNew(client, path) || holdsParts(path)) continue;
+                client.Revert(path, new SvnRevertArgs { Depth = SvnDepth.Infinity });
             }
             foreach (string dir in Status(client, Root, false, SvnDepth.Infinity)
                 .Where(x => !x.Versioned && Directory.Exists(x.FullPath))
@@ -199,6 +200,14 @@ namespace JocoRobos.Cad
                 WorkspacePolicy.RequireInside(Root, dir);
                 Directory.Delete(dir, true);
             }
+        }
+
+        // Scheduled to be added by the next Submit (not on the server yet), whatever its state on disk.
+        private static bool MarkedNew(SvnClient client, string path)
+        {
+            Collection<SvnInfoEventArgs> infos;
+            return client.GetInfo(new SvnPathTarget(path), new SvnInfoArgs { ThrowOnError = false }, out infos) &&
+                infos != null && infos.Count > 0 && infos[0].Schedule == SvnSchedule.Add;
         }
 
         internal string Edit(string path)

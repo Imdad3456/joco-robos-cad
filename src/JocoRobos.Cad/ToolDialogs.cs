@@ -214,7 +214,7 @@ namespace JocoRobos.Cad
         private readonly TextBox ring = new TextBox { Text = "0.15" };
         private readonly TextBox corner = new TextBox { Text = "0.0625" };
         private readonly TextBox smallest = new TextBox { Text = "0.35" };
-        private readonly TextBox size = new TextBox { Text = "3" };
+        private readonly TextBox size = new TextBox { Text = "2" };
         private readonly TextBox depth = new TextBox { Text = "through" };
 
         internal LightenSettings Settings
@@ -222,7 +222,7 @@ namespace JocoRobos.Cad
             get
             {
                 return new LightenSettings { Rib = Number(rib) ?? 0.15, Border = Number(border) ?? 0.25, Ring = Number(ring) ?? 0.15,
-                    CornerRadius = Number(corner) ?? 0.0625, MinPocket = Number(smallest) ?? 0.35, MaxPocket = Number(size) ?? 3 };
+                    CornerRadius = Number(corner) ?? 0.0625, MinPocket = Number(smallest) ?? 0.35, MaxPocket = Number(size) ?? 2 };
             }
         }
 

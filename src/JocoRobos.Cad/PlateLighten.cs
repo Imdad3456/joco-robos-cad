@@ -12,7 +12,7 @@ namespace JocoRobos.Cad
         internal double Ring = 0.15;         // solid material kept around every hole, beyond its edge
         internal double CornerRadius = 0.0625; // the router bit's radius: pockets get rounded corners at least this big
         internal double MinPocket = 0.35;    // pockets narrower than this are left solid
-        internal double MaxPocket = 3;     // pockets bigger across than about this are split by another rib junction
+        internal double MaxPocket = 2;     // pockets bigger across than about this are split by another rib junction
     }
 
     internal sealed class Circle2
