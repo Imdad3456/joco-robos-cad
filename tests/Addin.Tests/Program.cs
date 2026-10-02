@@ -148,6 +148,7 @@ static class Program
             ToolChecks();
             FeatureChecks();
             PowertrainChecks();
+            WiringChecks();
             HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
@@ -314,6 +315,41 @@ static class Program
         }
         Check(Math.Abs(drawn - BeltChain.Length(6.0, 1.5, 3.0)) < 1e-6 && path.Count == 4 && BeltChain.Path(1, 3, 0.5) == null,
             "Belt layout path is exactly the calculator's belt length (" + drawn.ToString("0.0000") + " in)");
+    }
+
+    // Electrical: wire ids, cut lengths, the harness table, and the CAN and power checks.
+    static void WiringChecks()
+    {
+        Check(Wiring.NextId(new[] { "W1", "W2", "w4" }) == "W3" && Wiring.NextId(new string[0]) == "W1", "Wire ids: the next free W number");
+        var w = new WireInfo { Id = "W1", Routed = 40, Slack = 0.1 };
+        Check(w.CutLength == 44, "Cut length is routed plus slack");
+        Check(Math.Abs(Wiring.BundleDiameter(new[] { Wiring.Type(5), Wiring.Type(5), Wiring.Type(3) }) - Math.Round(Math.Sqrt((0.0144 * 2 + 0.0289) / 0.75), 2)) < 1e-9,
+            "Bundle diameter from its wires");
+        var rows = Wiring.TableRows(new[] { new WireInfo { Id = "W10", From = "PDH: Power Out", To = "SPARK MAX 1", Type = 3, Routed = 30, Slack = 0.15 },
+            new WireInfo { Id = "W2", From = "roboRIO, CAN", To = "SPARK MAX 1", Type = 5, Routed = 12.04, Slack = 0.1 } });
+        Check(rows[0][0] == "W2" && rows[1][0] == "W10" && rows[1][4] == "12 AWG" && rows[1][8] == "34.5", "Harness table sorted by wire number, with type, gauge and cut length");
+        string csv = Wiring.Csv(rows);
+        Check(csv.StartsWith("Wire,Harness,From,To,") && csv.Contains("\"roboRIO, CAN\"") && csv.Split(new[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries).Length == 3,
+            "CSV quotes cells with commas, one line per wire plus the header");
+
+        Func<string, int, ConnectorInfo> c = (device, type) => new ConnectorInfo { Device = device, Type = type };
+        Func<string, string, int, WireInfo> wire = (a, b, type) => new WireInfo { Id = a + b, FromDevice = a, ToDevice = b, Type = type };
+        var can = new[] { c("roboRIO", 0), c("SPARK A", 0), c("SPARK A", 1), c("SPARK B", 0), c("PDH", 0) };
+        var chain = Wiring.CanReport(can, new[] { wire("roboRIO", "SPARK A", 5), wire("SPARK A", "SPARK B", 5), wire("SPARK B", "PDH", 5) });
+        Check(chain[0].StartsWith("✓") && chain.Any(l => l.Contains("roboRIO → SPARK A → SPARK B → PDH")), "CAN: one chain, in order from the roboRIO");
+        var broken = Wiring.CanReport(can, new[] { wire("roboRIO", "SPARK A", 5), wire("SPARK B", "PDH", 5) });
+        Check(broken.Any(l => l.Contains("2 separate pieces")) && broken[0].StartsWith("✗"), "CAN: a gap in the chain is found");
+        var branched = Wiring.CanReport(can, new[] { wire("roboRIO", "SPARK A", 5), wire("roboRIO", "SPARK B", 5), wire("roboRIO", "PDH", 5) });
+        Check(branched.Any(l => l.Contains("roboRIO branches to 3")), "CAN: a branch is found");
+        var lonely = Wiring.CanReport(can, new[] { wire("roboRIO", "SPARK A", 5), wire("SPARK A", "SPARK B", 5) });
+        Check(lonely.Any(l => l == "✗ PDH has no CAN wire."), "CAN: a device with no CAN wire is found");
+        Check(Wiring.CanReport(can, new[] { wire("roboRIO", "SPARK A", 6) }).Any(l => l.Contains("roboRIO has no CAN wire")), "CAN: only CAN wires count");
+
+        var power = new[] { c("Battery", 5), c("PDH", 2), c("SPARK A", 2), c("SPARK B", 4) };
+        var powered = Wiring.PowerReport(power, new[] { wire("Battery", "PDH", 0), wire("PDH", "SPARK A", 3) });
+        Check(powered.Any(l => l == "✗ SPARK B isn't connected to the battery by power wires.") && powered.Any(l => l.Contains("2 devices powered")),
+            "Power: devices the battery doesn't reach are listed");
+        Check(Wiring.PowerReport(power, new[] { wire("Battery", "PDH", 0), wire("PDH", "SPARK A", 3), wire("PDH", "SPARK B", 2) }).Last().StartsWith("✓"), "Power: all reached");
     }
 
     static Clipper2Lib.PathD Poly(System.Collections.Generic.List<double[]> points) { return new Clipper2Lib.PathD(points.Select(p => new Clipper2Lib.PointD(p[0], p[1]))); }

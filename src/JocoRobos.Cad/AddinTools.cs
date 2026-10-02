@@ -148,8 +148,10 @@ namespace JocoRobos.Cad
                 }
                 if (!tool.AnyDocument)
                 {
-                    if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
-                        throw new InvalidOperationException(tool.Title + " works in a part. Open the part (right-click it → Open Part), then try again.");
+                    bool assembly = doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY;
+                    if (doc.GetType() != (int)swDocumentTypes_e.swDocPART && !(assembly && tool.WorksInAssembly))
+                        throw new InvalidOperationException(tool.Title + (tool.WorksInAssembly ? " works in an assembly or a part." :
+                            " works in a part. Open the part (right-click it → Open Part), then try again."));
                     if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
                 }
                 new ToolPage(application, doc, tool, Standards, null, null, text => ShowFlash(text)).Show();

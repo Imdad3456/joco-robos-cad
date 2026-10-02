@@ -26,6 +26,7 @@
     <Compile Include="../../src/JocoRobos.Cad/BeltChain.cs" Link="BeltChain.cs" />
     <Compile Include="../../src/JocoRobos.Cad/SpurGear.cs" Link="SpurGear.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Powertrain.cs" Link="Powertrain.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/Wiring.cs" Link="Wiring.cs" />
     <Compile Include="../../src/JocoRobos.Cad/PlateLighten.cs" Link="PlateLighten.cs" />
     <Compile Include="../../src/JocoRobos.Cad/FeatureParams.cs" Link="FeatureParams.cs" />
   </ItemGroup>

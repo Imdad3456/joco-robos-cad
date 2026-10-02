@@ -41,6 +41,9 @@ namespace JocoRobos.Cad
         private bool okay;
         private object chosen;
         private double[] chosenPoint;
+        // Every pick in the order they were clicked (Route Wire's start, bends and end), with where each was clicked.
+        private List<object> picks = new List<object>();
+        private List<double[]> pickPoints = new List<double[]>();
         private const int SelectionMark = 1, ResultId = 900;
 
         internal ToolPage(SldWorks application, ModelDoc2 doc, CadHubTool tool, TeamStandards standards, FeatureParams start, Feature editing, Action<string> report)
@@ -132,11 +135,16 @@ namespace JocoRobos.Cad
                         combo.CurrentSelection = (short)Math.Max(0, Math.Min(field.Items.Count - 1, (int)values.Number(field.Key, 0)));
                         control = combo;
                         break;
+                    case FieldKind.Text:
+                        var text = (PropertyManagerPageTextbox)group.AddControl2(id, (short)swPropertyManagerPageControlType_e.swControlType_Textbox, field.Label, align, options, field.Tip);
+                        text.Text = values[field.Key] ?? "";
+                        control = text;
+                        break;
                     case FieldKind.Selection:
                         var box = (PropertyManagerPageSelectionbox)group.AddControl2(id, (short)swPropertyManagerPageControlType_e.swControlType_Selectionbox, field.Label, align, options, field.Tip);
-                        box.SingleEntityOnly = true;
+                        box.SingleEntityOnly = !tool.MultipleSelections;
                         box.Mark = SelectionMark;
-                        box.Height = 30;
+                        box.Height = (short)(tool.MultipleSelections ? 90 : 30);
                         box.SetSelectionFilters(tool.SelectionFilters);
                         control = box;
                         break;
@@ -207,7 +215,7 @@ namespace JocoRobos.Cad
         {
             try
             {
-                if (!tool.SelectionFilters.Contains(SelType) || !Accepts(Selection)) return false;
+                if (!tool.SelectionFilters.Contains(SelType) || !tool.Accepts(Selection)) return false;
                 chosen = Selection;
                 var manager = (SelectionMgr)doc.SelectionManager;
                 chosenPoint = null;
@@ -217,25 +225,16 @@ namespace JocoRobos.Cad
             catch (Exception exception) { ErrorLog.Write(tool.Title + " selection", exception); return false; }
         }
 
-        // Only flat faces, round edges, and dimensions.
-        private static bool Accepts(object selection)
-        {
-            var face = selection as Face2;
-            if (face != null) { var surface = face.GetSurface() as Surface; return surface != null && surface.IsPlane(); }
-            var edge = selection as Edge;
-            if (edge != null) { var curve = edge.GetCurve() as Curve; return curve != null && curve.IsCircle(); }
-            var plane = selection as Feature;
-            if (plane != null) return plane.GetTypeName2() == "RefPlane";
-            return selection is DisplayDimension;
-        }
-
         public void OnSelectionboxListChanged(int Id, int Count)
         {
             try
             {
                 var manager = (SelectionMgr)doc.SelectionManager;
-                chosen = Count > 0 ? manager.GetSelectedObject6(1, SelectionMark) : null;
-                chosenPoint = Count > 0 ? manager.GetSelectionPoint2(1, SelectionMark) as double[] : null;
+                picks = Enumerable.Range(1, Count).Select(i => manager.GetSelectedObject6(i, SelectionMark)).ToList();
+                pickPoints = Enumerable.Range(1, Count).Select(i => manager.GetSelectionPoint2(i, SelectionMark) as double[]).ToList();
+                chosen = picks.FirstOrDefault();
+                chosenPoint = pickPoints.FirstOrDefault();
+                values.Set("picks", Count);
                 if (chosen == null) { foreach (var key in new[] { "cx", "cy", "cz", "ax", "ay", "az" }) values.Values.Remove(key); }
                 Refresh();
             }
@@ -278,7 +277,7 @@ namespace JocoRobos.Cad
                 if (!tool.MakesFeature)
                 {
                     ErrorLog.Step(tool.Title + ": applying");
-                    string done = tool.Apply(application, doc, values, chosen, standards);
+                    string done = tool.ApplyAll(application, doc, values, picks.Count > 0 ? picks : new List<object> { chosen }, pickPoints.Count > 0 ? pickPoints : new List<double[]> { chosenPoint }, standards);
                     ErrorLog.Step(tool.Title + ": done");
                     if (!String.IsNullOrEmpty(done)) report(done);
                 }
@@ -331,7 +330,7 @@ namespace JocoRobos.Cad
         {
             try
             {
-                if (preselected != null && Accepts(preselected))
+                if (preselected != null && tool.Accepts(preselected))
                 {
                     var data = (SelectData)((SelectionMgr)doc.SelectionManager).CreateSelectData();
                     data.Mark = SelectionMark;
@@ -340,7 +339,7 @@ namespace JocoRobos.Cad
                     if (entity != null) entity.Select4(true, data);
                     else if (preselected is Feature) ((Feature)preselected).Select2(true, SelectionMark);
                     else ((preselected as DisplayDimension)?.GetAnnotation() as Annotation)?.Select3(true, data);
-                    if (chosen == null) chosen = preselected; // In case SOLIDWORKS doesn't report the selection to the box.
+                    if (chosen == null) { chosen = preselected; picks = new List<object> { preselected }; pickPoints = new List<double[]> { null }; } // In case SOLIDWORKS doesn't report it to the box.
                 }
                 preselected = null;
                 Refresh();
@@ -360,7 +359,13 @@ namespace JocoRobos.Cad
         public void OnCheckboxCheck(int Id, bool Checked) { }
         public void OnOptionCheck(int Id) { }
         public void OnButtonPress(int Id) { }
-        public void OnTextboxChanged(int Id, string Text) { }
+        public void OnTextboxChanged(int Id, string Text)
+        {
+            ToolField field;
+            if (!byId.TryGetValue(Id, out field)) return;
+            values[field.Key] = Text ?? "";
+            Refresh();
+        }
         public void OnComboboxEditChanged(int Id, string Text) { }
         public void OnListboxSelectionChanged(int Id, int Item) { }
         public void OnSelectionboxFocusChanged(int Id) { }

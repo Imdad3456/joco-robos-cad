@@ -6,7 +6,7 @@ using SolidWorks.Interop.swconst;
 
 namespace JocoRobos.Cad
 {
-    internal enum FieldKind { Number, Length, Choice, Selection }
+    internal enum FieldKind { Number, Length, Choice, Selection, Text }
 
     /// <summary>One setting on a tool's PropertyManager page. Lengths are inches; Advanced ones sit in a collapsed group.</summary>
     internal sealed class ToolField
@@ -42,10 +42,31 @@ namespace JocoRobos.Cad
         internal virtual int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES, (int)swSelectType_e.swSelEDGES }; } }
         /// <summary>False: on OK the tool does its work directly (a sketch and a cut, a dimension) instead of adding a CAD Hub feature.</summary>
         internal virtual bool MakesFeature { get { return true; } }
+        /// <summary>Works on an assembly as well as a part (the electrical tools).</summary>
+        internal virtual bool WorksInAssembly { get { return false; } }
         /// <summary>Works in assemblies and drawings too (only a calculator).</summary>
         internal virtual bool AnyDocument { get { return false; } }
         /// <summary>For tools that don't make a feature: do the work, and say what was done.</summary>
         internal virtual string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards) { return null; }
+        /// <summary>The same with every pick in order and where each was clicked (Route Wire).</summary>
+        internal virtual string ApplyAll(SldWorks application, ModelDoc2 doc, FeatureParams p, IList<object> picks, IList<double[]> points, TeamStandards standards)
+        {
+            return Apply(application, doc, p, picks.FirstOrDefault(), standards);
+        }
+        /// <summary>The selection box takes several picks, kept in the order they're clicked.</summary>
+        internal virtual bool MultipleSelections { get { return false; } }
+
+        /// <summary>What the selection box takes: flat faces, round edges, planes and dimensions unless the tool says otherwise.</summary>
+        internal virtual bool Accepts(object selection)
+        {
+            var face = selection as Face2;
+            if (face != null) { var surface = face.GetSurface() as Surface; return surface != null && surface.IsPlane(); }
+            var edge = selection as Edge;
+            if (edge != null) { var curve = edge.GetCurve() as Curve; return curve != null && curve.IsCircle(); }
+            var plane = selection as Feature;
+            if (plane != null) return plane.GetTypeName2() == "RefPlane";
+            return selection is DisplayDimension;
+        }
         /// <summary>Called on OK: turn the selection into stored geometry (center, axis…) and freeze preset-derived numbers.</summary>
         internal virtual string Capture(object selection, double[] pickPoint, FeatureParams p, TeamStandards standards) { return null; }
         /// <summary>The body to add, or the tool to cut with, in meters.</summary>
@@ -61,7 +82,7 @@ namespace JocoRobos.Cad
         internal virtual string Folder { get { return Title + "s"; } }
 
         internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new SprocketTool(), new PulleyTool(), new ShaftTool(), new PlanetaryTool(),
-            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new BearingHoleTool() };
+            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new ConnectorTool(), new RouteWireTool(), new ZipTieTool(), new HarnessTool(), new BearingHoleTool() };
         // Bearing Hole is no longer on the tab: kept so the CAD Hub bearing holes earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
