@@ -57,11 +57,10 @@ namespace JocoRobos.Cad
                 {
                     if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(master)))
                         throw new InvalidOperationException("A teammate already made " + type.FileName + ". Get their changes first (Close & Update in the panel), then insert again.");
-                    var doc = BuildStock(type, length ?? 0, width ?? 0, configuration);
-                    SaveNewTeamFile(doc, master, svn, robot, "Add stock part " + type.FileName + " (" + configuration + ")");
+                    SaveNewFile(BuildStock(type, length ?? 0, width ?? 0, configuration), master);
                 }
                 else if (!HasConfiguration(master, configuration))
-                    AddStockSize(type, master, configuration, length ?? 0, width ?? 0, svn, robot);
+                    AddStockSize(type, master, configuration, length ?? 0, width ?? 0, svn);
                 DeliverConfigured(assembly, master, configuration, Math.Max(1, copies), type.FileName + (configuration == "Default" ? "" : " " + configuration));
             });
         }
@@ -88,8 +87,9 @@ namespace JocoRobos.Cad
             });
         }
 
-        // New size of an existing master: lock it (Edit checks it's the newest), add the configuration, save, and submit straight away.
-        private void AddStockSize(StockType type, string master, string configuration, double length, double width, SvnWorkspace svn, WorkspaceInfo robot)
+        // New size of an existing master: the same as Edit (it locks the part and checks it's the newest), then add the configuration
+        // and save. It goes to the team with this student's next Submit, like any edit.
+        private void AddStockSize(StockType type, string master, string configuration, double length, double width, SvnWorkspace svn)
         {
             LockForSize(svn, master);
             File.SetAttributes(master, File.GetAttributes(master) & ~FileAttributes.ReadOnly);
@@ -112,21 +112,16 @@ namespace JocoRobos.Cad
                 SetStockSize(doc, type, configuration, length, width);
                 if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
                     throw new InvalidOperationException("Couldn't save " + Path.GetFileName(master) + " (error " + errors + ").");
-                var item = new SubmitItem { Kind = SubmitKind.Modified, Path = master, Workspace = robot };
-                OperationDialog.Run("Sharing the new size with the team…", () => SvnWorkspace.Exclusive(() =>
-                    svn.Submit(new List<SubmitItem> { item }, "Add size " + configuration + " to " + type.FileName)));
             }
             finally
             {
                 if (opened) application.CloseDoc(doc.GetTitle());
-                else doc.SetReadOnlyState(true);
-                if (File.Exists(master)) File.SetAttributes(master, File.GetAttributes(master) | FileAttributes.ReadOnly);
             }
         }
 
-        // A brand-new team file (a stock master, a gear): saved into the robot and submitted on its own, so teammates get it and
-        // nobody makes a second one under the same name.
-        private void SaveNewTeamFile(ModelDoc2 doc, string path, SvnWorkspace svn, WorkspaceInfo robot, string comment)
+        // A new file (a stock master, a gear) saved into the robot: like any new part, it goes to the team with the student's
+        // next Submit (where they can still uncheck it).
+        private void SaveNewFile(ModelDoc2 doc, string path)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             int errors = 0, warnings = 0;
@@ -136,9 +131,6 @@ namespace JocoRobos.Cad
                     throw new InvalidOperationException("Couldn't save " + Path.GetFileName(path) + " (error " + errors + ").");
             }
             finally { application.CloseDoc(doc.GetTitle()); }
-            var item = new SubmitItem { Kind = SubmitKind.New, Path = path, Workspace = robot };
-            OperationDialog.Run("Sharing " + Path.GetFileNameWithoutExtension(path) + " with the team…", () => SvnWorkspace.Exclusive(() =>
-                svn.Submit(new List<SubmitItem> { item }, comment)));
         }
 
         // Inserts a configuration of a part, as many times as asked; without an assembly, opens it in that configuration.
@@ -150,11 +142,11 @@ namespace JocoRobos.Cad
                 var doc = application.OpenDoc6(path, (int)swDocumentTypes_e.swDocPART, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, configuration, ref errors, ref warnings);
                 if (doc == null) throw new InvalidOperationException(name + " is in the robot at\n" + path + "\nbut SOLIDWORKS couldn't open it (error " + errors + ").");
                 doc.ShowConfiguration2(configuration);
-                ShowFlash("✓ " + name + " is open (90_COTS/Stock). Drag it into any assembly; pick the size in the configuration list.");
+                ShowFlash("✓ " + name + " is open (90_COTS/Stock). Drag it into any assembly; it goes to the team with your next Submit.");
                 return;
             }
             for (int i = 0; i < copies; i++) AddToAssembly(assemblyDoc, path, configuration, i * 0.05);
-            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit.");
+            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit (new stock parts and sizes go with it).");
         }
 
         // ---------- building stock geometry ----------
@@ -229,19 +221,6 @@ namespace JocoRobos.Cad
                     Rectangle(doc, type.Width, type.Height);
                     Rectangle(doc, type.Width - 2 * type.Wall, type.Height - 2 * type.Wall);
                     dimensions.Add("D1@" + Extrude(doc, length).Name);
-                    // Holes for the longest tube: circles past the end of a shorter one cut nothing, so every length gets the pattern.
-                    // They follow the tube whichever way SOLIDWORKS extruded it (+X normally).
-                    var solid = (((PartDoc)doc).GetBodies2((int)swBodyType_e.swSolidBody, true) as object[])?.OfType<Body2>().FirstOrDefault();
-                    double direction = solid == null || ((double[])solid.GetBodyBox())[3] > 0.001 ? 1 : -1;
-                    var along = StockParts.HolePositions(type.MaxLength).Select(x => x * direction).ToList();
-                    SelectPlane(doc, Top);    // through the wide faces (top and bottom)
-                    doc.SketchManager.InsertSketch(true);
-                    foreach (double x in along) foreach (double row in type.WideRows) doc.SketchManager.CreateCircleByRadius(x * Meters, row * Meters, 0, StockType.HoleDiameter / 2 * Meters);
-                    CutThroughBoth(doc);
-                    SelectPlane(doc, Front);  // through the narrow faces (the sides)
-                    doc.SketchManager.InsertSketch(true);
-                    foreach (double x in along) foreach (double row in type.NarrowRows) doc.SketchManager.CreateCircleByRadius(x * Meters, row * Meters, 0, StockType.HoleDiameter / 2 * Meters);
-                    CutThroughBoth(doc);
                     break;
                 case StockShape.HexShaft:
                 case StockShape.RoundShaft:
@@ -403,7 +382,7 @@ namespace JocoRobos.Cad
                         doc.SketchManager.DisplayWhenAdded = true;
                         ((PartDoc)doc).SetMaterialPropertyName2("", "SOLIDWORKS Materials", "6061 Alloy");
                         doc.Extension.CustomPropertyManager[""].Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, name, (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-                        SaveNewTeamFile(doc, path, svn, robot, "Add " + name);
+                        SaveNewFile(doc, path);
                     }
                     DeliverConfigured(assembly, path, "Default", dialog.Copies, name);
                 });
@@ -606,6 +585,9 @@ namespace JocoRobos.Cad
                 if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocPART || surface == null || !surface.IsPlane())
                     throw new InvalidOperationException("Click the flat side of a tube once (in a part), then Add FRC Hole Pattern.");
                 if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
+                HolePatternDialog pattern;
+                using (pattern = new HolePatternDialog())
+                    if (pattern.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
                 var frame = PlaneFrame(surface, face);
                 var outline = new List<double[]>();
                 ReadFace(face, frame, outline, new List<Circle2>());
@@ -613,7 +595,8 @@ namespace JocoRobos.Cad
                 double minX = outline.Min(p => p[0]), maxX = outline.Max(p => p[0]), minY = outline.Min(p => p[1]), maxY = outline.Max(p => p[1]);
                 double length = maxX - minX, width = maxY - minY, middle = (minY + maxY) / 2;
                 if (width > length) throw new InvalidOperationException("Select a long side of the tube.");
-                var rows = width >= 1.9 ? new[] { -0.5, 0.5 } : width >= 1.4 ? new[] { -0.25, 0.25 } : new[] { 0.0 };
+                var rows = StockParts.RowOffsets(pattern.Rows, pattern.RowSpacing);
+                if (rows.Max() + pattern.Diameter / 2 > width / 2) throw new InvalidOperationException("Those rows don't fit across a " + StockParts.Inches(width) + "\" face.");
                 // How deep: the body's size across the face, so the holes go through both walls but nothing behind the tube.
                 var box = (double[])((Body2)face.GetBody()).GetBodyBox();
                 double[] normal = Normalize(Cross(new[] { frame[3], frame[4], frame[5] }, new[] { frame[6], frame[7], frame[8] }));
@@ -627,13 +610,13 @@ namespace JocoRobos.Cad
                 int count = 0;
                 try
                 {
-                    foreach (double x in StockParts.HolePositions(length))
+                    foreach (double x in StockParts.HolePositions(length, pattern.Start, pattern.Spacing, pattern.Diameter))
                         foreach (double row in rows)
                         {
                             double px = minX + x, py = middle + row;
                             var model = new[] { frame[0] + (px * frame[3] + py * frame[6]) * Meters, frame[1] + (px * frame[4] + py * frame[7]) * Meters, frame[2] + (px * frame[5] + py * frame[8]) * Meters };
                             var point = (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch)).ArrayData;
-                            doc.SketchManager.CreateCircleByRadius(point[0], point[1], 0, StockType.HoleDiameter / 2 * Meters);
+                            doc.SketchManager.CreateCircleByRadius(point[0], point[1], 0, pattern.Diameter / 2 * Meters);
                             count++;
                         }
                 }
@@ -643,55 +626,7 @@ namespace JocoRobos.Cad
                     doc.SketchManager.DisplayWhenAdded = true;
                 }
                 Extrude(doc, depth + 0.01, true);
-                ShowFlash("✓ Added " + count + " holes (⌀0.196\" every 0.5\"). It's an ordinary cut: edit or delete it like any feature.");
-            });
-        }
-
-        // ---------- tube profiles for Structural Members ----------
-
-        // Makes FRC box tube and hex shaft profiles and adds their folder to SOLIDWORKS' weldment profile locations, so
-        // Insert → Structural Member offers "FRC". Only CAD Hub's own folder is added; existing locations stay.
-        public void SetUpTubeProfiles()
-        {
-            Execute(() =>
-            {
-                string root = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "Weldment Profiles");
-                int made = 0;
-                foreach (var type in StockParts.Types.Where(t => t.Shape == StockShape.BoxTube || t.Shape == StockShape.HexShaft || t.Shape == StockShape.RoundShaft))
-                {
-                    string folder = Path.Combine(root, "FRC", type.Shape == StockShape.BoxTube ? "Box Tube" : "Shaft");
-                    string file = Path.Combine(folder, type.FileName + ".SLDLFP");
-                    if (File.Exists(file)) continue;
-                    Directory.CreateDirectory(folder);
-                    var doc = NewPart();
-                    SelectPlane(doc, Front);
-                    doc.SketchManager.InsertSketch(true);
-                    if (type.Shape == StockShape.BoxTube)
-                    {
-                        Rectangle(doc, type.Width, type.Height);
-                        Rectangle(doc, type.Width - 2 * type.Wall, type.Height - 2 * type.Wall);
-                    }
-                    else if (type.Shape == StockShape.HexShaft) Hexagon(doc, type.Size);
-                    else doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Size / 2 * Meters);
-                    doc.SketchManager.InsertSketch(true);
-                    doc.SketchManager.AddToDB = false;
-                    doc.SketchManager.DisplayWhenAdded = true;
-                    int errors = 0, warnings = 0;
-                    try
-                    {
-                        if (!doc.Extension.SaveAs3(file, (int)swSaveAsVersion_e.swSaveAsCurrentVersion, (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, null, ref errors, ref warnings))
-                            throw new InvalidOperationException("Couldn't save the profile " + Path.GetFileName(file) + " (error " + errors + ").");
-                    }
-                    finally { application.CloseDoc(doc.GetTitle()); }
-                    made++;
-                }
-                int setting = (int)swUserPreferenceStringValue_e.swFileLocationsWeldmentProfiles;
-                string locations = application.GetUserPreferenceStringValue(setting) ?? "";
-                if (!locations.Split(';').Any(l => String.Equals(l.Trim().TrimEnd('\\'), root, StringComparison.OrdinalIgnoreCase)))
-                    application.SetUserPreferenceStringValue(setting, locations.Length == 0 ? root : locations.TrimEnd(';') + ";" + root);
-                Message((made > 0 ? "Made " + made + " FRC profiles. " : "The FRC profiles are set up. ") +
-                    "To use them: sketch your frame in a part (lines where the tubes go), then Insert → Weldments → Structural Member, " +
-                    "Standard: FRC, Type: Box Tube, and pick the size. Click a tube's side and use Tools → CAD Hub → Add FRC Hole Pattern for the holes.");
+                ShowFlash("✓ Added " + count + " holes (⌀" + StockParts.Inches(pattern.Diameter) + "\" every " + StockParts.Inches(pattern.Spacing) + "\"). It's an ordinary cut: edit or delete it like any feature.");
             });
         }
     }

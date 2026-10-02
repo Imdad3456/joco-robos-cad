@@ -50,7 +50,6 @@ namespace JocoRobos.Cad
         [DispId(28)] void BeltChainCalculator();
         [DispId(29)] void LightenPlate();
         [DispId(30)] void AddHolePattern();
-        [DispId(31)] void SetUpTubeProfiles();
         [DispId(32)] void BearingHole();
     }
 
@@ -66,10 +65,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591911;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910 };
+        private const int GroupId = 591912;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591921;
+        private const int LayoutVersion = 591922;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -190,10 +189,9 @@ namespace JocoRobos.Cad
                 int stock = Add(group, "Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, both, 20);
                 int gear = Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore (an editable CAD Hub feature in a part)", nameof(MakeGear), 26, both, 18);
                 int bearingHole = Add(group, "Bearing Hole", "Click a face: a bore sized for the bearing you pick, with the team's fit (an editable CAD Hub feature)", nameof(BearingHole), 31, both, 19);
-                int beltChain = Add(group, "Belt & Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
+                int beltChain = Add(group, "Belt and Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
                 int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
-                int holes = Add(group, "Hole Pattern", "Holes every 0.5\" along the selected side of a tube", nameof(AddHolePattern), 29, both, 22);
-                int profiles = Add(group, "Tube Profiles", "Adds FRC box tube and shaft profiles to Insert → Structural Member", nameof(SetUpTubeProfiles), 30, both, 24);
+                int holes = Add(group, "Hole Pattern", "A row (or rows) of holes along the selected side of a tube: your spacing, size and rows", nameof(AddHolePattern), 29, both, 22);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
@@ -223,7 +221,7 @@ namespace JocoRobos.Cad
                     // The tab is for modeling (Structure, Powertrain, Hardware); team work (Open Robot, Edit, Submit, Library)
                     // lives in the CAD Hub task pane and the Tools menu.
                     int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
-                    foreach (var section in new[] { new[] { stock, profiles, holes, lighten }, new[] { gear, beltChain }, new[] { bearingHole } })
+                    foreach (var section in new[] { new[] { stock, holes, lighten }, new[] { gear, beltChain }, new[] { bearingHole } })
                     {
                         CommandTabBox box = tab.AddCommandTabBox();
                         int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();

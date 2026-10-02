@@ -84,19 +84,19 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
-| 3d.2 | A | Edit an assembly → Library → **Make a stock part** → 2×1 box tube 1/16", 23.75 in, ×2 | Two tubes inserted at once, 23.75" long, ⌀0.196" holes every 0.5" (two rows on the 2" sides, one on the 1"), starting 0.25" from the end. Measure one against a real tube | ☐ |
-| 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); A gets it on their next update. Nothing else to Submit for the tube | ☐ |
+| 3d.2 | A | Edit an assembly → Library → **Make a stock part** → 2×1 box tube 1/16", 23.75 in, ×2 | Two plain tubes inserted at once, 23.75" long (no holes: add your pattern with Hole Pattern) | ☐ |
+| 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); the part is now locked by B and shows in B's Submit. Nothing was shared until B submits | ☐ |
 | 3d.4 | A | Stock part: 1/2" hex shaft 7.25; spacer 0.25; aluminum plate 1/4" 6 × 12; FR8ZZ bearing | Each correct size; the Parts List shows them under Buy: Stock with their sizes | ☐ |
-| 3d.5 | A | **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore; it meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
+| 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
 | 3d.6 | A | **Belt & Chain Calculator**: HTD 5 mm, 18T and 36T, 100 teeth. Then select a sketch's center dimension → **Use for selected dimension** | A center distance that matches a vendor's calculator; the dimension changes to it | ☐ |
-| 3d.7 | A | Open a flat plate with holes, Edit it, click its face → **Tools → CAD Hub → Lighten Plate** (defaults) | Triangle pockets between the holes, rounded corners, a border along the edge and rings around holes; flash with weight saved. Undo removes it | ☐ |
-| 3d.8 | A | **Set Up FRC Tube Profiles**, then Insert → Weldments → Structural Member | Standard "FRC", types Box Tube and Shaft; a sketched frame becomes tubes. Click a tube's side → **Add FRC Hole Pattern** | ☐ |
+| 3d.7 | A | Open a flat plate with holes, Edit it, click its face → **Lighten Plate** (defaults) | Triangle pockets with ribs meeting at hole groups and the plate's corners (none at points along curved edges); no thin slivers; bolt clusters stay solid; rounded corners, a border along the edge; flash with weight saved. Undo removes it | ☐ |
+| 3d.8 | A | Click a tube's side → **Hole Pattern** → your tube's spacing, hole size, rows | Holes through both walls of that side, rows centered; the dialog remembers the settings next time | ☐ |
 
 ## 3e. CAD Hub tab and editable features
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Stock Part, Tube Profiles, Hole Pattern, Lighten Plate · Spur Gear, Belt & Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Stock Part, Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
 | 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
 | 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |
 | 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit | "Resulting bore 1.1265 in". A preview cylinder at the click point. ✓ → a through hole; "CAD Hub Bearing Hole1" in the tree | ☐ |

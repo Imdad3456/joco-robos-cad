@@ -202,9 +202,11 @@ static class Program
             StockParts.ConfigurationName(StockParts.Find("bearing-fr8zz"), 0, 0) == "Default", "One configuration per size, named by size");
         Check(StockParts.Problem(tube, 23.75, null) == null && StockParts.Problem(tube, 100, null) != null && StockParts.Problem(tube, null, null) != null &&
             StockParts.Problem(StockParts.Find("plate-al-25"), 12, null) != null, "Sizes checked before anything is built");
-        var holes = StockParts.HolePositions(2.0);
-        Check(holes.SequenceEqual(new[] { 0.25, 0.75, 1.25, 1.75 }), "Tube holes every 0.5\" from 0.25\": " + String.Join(",", holes));
-        Check(tube.WideRows.SequenceEqual(new[] { -0.5, 0.5 }) && tube.NarrowRows.SequenceEqual(new[] { 0.0 }), "2x1 tube: two rows on the 2\" face, one on the 1\"");
+        var holes = StockParts.HolePositions(2.0, 0.25, 0.5, 0.196);
+        Check(holes.SequenceEqual(new[] { 0.25, 0.75, 1.25, 1.75 }), "Holes every 0.5\" from 0.25\": " + String.Join(",", holes));
+        Check(StockParts.HolePositions(3.0, 0.5, 1.0, 0.25).SequenceEqual(new[] { 0.5, 1.5, 2.5 }), "Other spacings and starts");
+        Check(StockParts.RowOffsets(1, 0.5).SequenceEqual(new[] { 0.0 }) && StockParts.RowOffsets(2, 0.5).SequenceEqual(new[] { -0.25, 0.25 }) &&
+            StockParts.RowOffsets(3, 0.5).SequenceEqual(new[] { -0.5, 0.0, 0.5 }), "Rows centered across the face");
         Check(StockParts.Types.Select(t => t.Id).Distinct().Count() == StockParts.Types.Count && StockParts.Types.Select(t => t.FileName).Distinct().Count() == StockParts.Types.Count,
             "Every stock type has its own id and file");
 

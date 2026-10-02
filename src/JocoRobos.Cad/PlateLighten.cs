@@ -51,9 +51,15 @@ namespace JocoRobos.Cad
             var border = outline.Select(p => new[] { p[0], p[1] }).ToList();
             if (SignedArea(border) < 0) border.Reverse();
             plan.PlateArea = SignedArea(border) - holes.Sum(h => Math.PI * h.R * h.R);
+            // Where ribs meet: the plate's real corners (not points along its arcs), one point per group of close holes (a bolt
+            // circle or a row of edge holes is one junction, not a dozen), and any points the student added.
+            var groups = HoleGroups(holes, settings);
             var nodes = new List<double[]>();
-            foreach (var p in border.Concat(holes.Select(h => new[] { h.X, h.Y })).Concat(extraPoints ?? new List<double[]>()))
-                if (!nodes.Any(n => Math.Abs(n[0] - p[0]) < 1e-6 && Math.Abs(n[1] - p[1]) < 1e-6)) nodes.Add(new[] { p[0], p[1] });
+            foreach (var group in groups) nodes.Add(new[] { group.Average(h => h.X), group.Average(h => h.Y) });
+            foreach (var corner in Corners(border))
+                if (groups.All(g => g.All(h => Distance(corner, new[] { h.X, h.Y }) > h.R + settings.Ring + settings.Rib + settings.MinPocket))) nodes.Add(corner);
+            foreach (var p in extraPoints ?? new List<double[]>()) nodes.Add(new[] { p[0], p[1] });
+            nodes = nodes.Where((p, i) => !nodes.Take(i).Any(n => Distance(n, p) < 1e-6)).ToList();
             foreach (var triangle in Triangulate(nodes))
             {
                 var centroid = new[] { triangle.Average(p => p[0]), triangle.Average(p => p[1]) };
@@ -96,9 +102,9 @@ namespace JocoRobos.Cad
                 polygon = ClipHalfPlane(polygon, p => (p[0] - hole.X) * dx + (p[1] - hole.Y) * dy - keep);
             }
             if (polygon.Count < 3) return null;
-            double area = SignedArea(polygon), perimeter = Perimeter(polygon);
-            // Inscribed size of a convex pocket: about 4·area/perimeter (exact for triangles and squares).
-            if (area <= 0 || 4 * area / perimeter < s.MinPocket) return null;
+            double area = SignedArea(polygon);
+            // Too narrow anywhere (a sliver) or too small: leave it solid.
+            if (area <= 0 || MinimumWidth(polygon) < s.MinPocket) return null;
             if (polygon.Any(p => !Inside(border, p) || border.Select((q, i) => SegmentDistance(p, q, border[(i + 1) % border.Count])).Min() < s.Border - 1e-6)) return null;
             if (holes.Any(h => DistanceToPolygon(new[] { h.X, h.Y }, polygon) < h.R + s.Ring - 1e-6)) return null;
             return polygon;
@@ -135,6 +141,51 @@ namespace JocoRobos.Cad
                 pocket.Segments.Add(new PocketSegment { X1 = t2[i][0], Y1 = t2[i][1], X2 = nextStart[0], Y2 = nextStart[1] });
             }
             return pocket;
+        }
+
+        // Holes close enough that no pocket fits between them form one group.
+        private static List<List<Circle2>> HoleGroups(IList<Circle2> holes, LightenSettings s)
+        {
+            var group = Enumerable.Range(0, holes.Count).ToArray();
+            Func<int, int> find = null;
+            find = i => group[i] == i ? i : (group[i] = find(group[i]));
+            for (int i = 0; i < holes.Count; i++)
+                for (int j = i + 1; j < holes.Count; j++)
+                {
+                    double gap = Distance(new[] { holes[i].X, holes[i].Y }, new[] { holes[j].X, holes[j].Y }) - holes[i].R - holes[j].R - 2 * s.Ring;
+                    if (gap < s.Rib + 2 * s.MinPocket) group[find(i)] = find(j);
+                }
+            return Enumerable.Range(0, holes.Count).GroupBy(find).Select(g => g.Select(i => holes[i]).ToList()).ToList();
+        }
+
+        // Real corners: where the outline turns by more than 30° (points along an arc turn a little at a time and don't count).
+        private static List<double[]> Corners(List<double[]> border)
+        {
+            var corners = new List<double[]>();
+            for (int i = 0; i < border.Count; i++)
+            {
+                double[] prev = border[(i + border.Count - 1) % border.Count], v = border[i], next = border[(i + 1) % border.Count];
+                var a = Unit(v[0] - prev[0], v[1] - prev[1]); var b = Unit(next[0] - v[0], next[1] - v[1]);
+                if (a == null || b == null) continue;
+                double turn = Math.Acos(Math.Max(-1, Math.Min(1, a[0] * b[0] + a[1] * b[1])));
+                if (turn > Math.PI / 6) corners.Add(v);
+            }
+            return corners;
+        }
+
+        /// <summary>The narrowest width of a convex polygon: for each side, how far the farthest corner is from it; the smallest of those.</summary>
+        internal static double MinimumWidth(IList<double[]> polygon)
+        {
+            double best = double.MaxValue;
+            for (int i = 0; i < polygon.Count; i++)
+            {
+                double[] a = polygon[i], b = polygon[(i + 1) % polygon.Count];
+                double dx = b[0] - a[0], dy = b[1] - a[1], length = Math.Sqrt(dx * dx + dy * dy);
+                if (length < 1e-9) continue;
+                double far = polygon.Max(p => Math.Abs(dx * (p[1] - a[1]) - dy * (p[0] - a[0])) / length);
+                best = Math.Min(best, far);
+            }
+            return best;
         }
 
         // ---------- geometry ----------

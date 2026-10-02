@@ -16,9 +16,9 @@ namespace JocoRobos.Cad
     {
         internal string Id, Label, FileName, Group, Material = "6061 Alloy";
         internal StockShape Shape;
-        // Box tube: outside width (the wide face) and height, wall, outside corner radius; hole rows across each face (offsets from its center).
+        // Box tube: outside width (the wide face) and height, wall, outside corner radius. Plain: vendors' hole patterns differ,
+        // so holes are added with Hole Pattern (or use FRCDesignLib's vendor tubes for an exact pattern).
         internal double Width, Height, Wall, Corner;
-        internal double[] WideRows = { }, NarrowRows = { };
         // Hex: across flats. Round: diameter. Spacers: outside diameter and bore (hex across flats, or round diameter).
         internal double Size, Bore;
         // Plates: thickness. Bearings: outside diameter, width, flange diameter and thickness (0: none), bore is hex when BoreHex.
@@ -27,7 +27,6 @@ namespace JocoRobos.Cad
         internal double MinLength = 0.01, MaxLength = 72;
         internal bool HasLength = true, HasWidth;
 
-        internal const double HolePitch = 0.5, HoleDiameter = 0.196, FirstHole = 0.25;
     }
 
     internal static class StockParts
@@ -64,10 +63,8 @@ namespace JocoRobos.Cad
 
         private static StockType Tube(string id, string label, string file, double width, double height, double wall)
         {
-            // The FRC 0.5" pattern: one row down the middle of a 1"-wide face, rows 0.5" either side of center on a 2" face.
-            Func<double, double[]> rows = face => face >= 2 ? new[] { -0.5, 0.5 } : face >= 1.5 ? new[] { -0.25, 0.25 } : new[] { 0.0 };
-            return new StockType { Id = id, Label = label, FileName = file, Group = "Box tube", Shape = StockShape.BoxTube, Width = width, Height = height, Wall = wall,
-                Corner = wall, WideRows = rows(width), NarrowRows = rows(height), MaxLength = 72 };
+            return new StockType { Id = id, Label = label + ", plain", FileName = file, Group = "Box tube", Shape = StockShape.BoxTube, Width = width, Height = height, Wall = wall,
+                Corner = wall, MaxLength = 72 };
         }
 
         private static StockType Plate(string id, string label, string file, double thickness, string material)
@@ -138,12 +135,19 @@ namespace JocoRobos.Cad
             return type.FileName + (configuration == "Default" ? "" : ", " + configuration);
         }
 
-        /// <summary>Hole centers along a tube, from one end: 0.25", 0.75", … while a whole hole fits.</summary>
-        internal static List<double> HolePositions(double length)
+        /// <summary>Hole centers along a length: start, start + spacing, … while a whole hole still fits before the far end.</summary>
+        internal static List<double> HolePositions(double length, double start, double spacing, double diameter)
         {
             var positions = new List<double>();
-            for (double x = StockType.FirstHole; x + StockType.HoleDiameter / 2 <= length - 0.05 + 1e-9; x += StockType.HolePitch) positions.Add(Math.Round(x, 6));
+            if (spacing <= 0) return positions;
+            for (double x = start; x + diameter / 2 <= length - Math.Min(start, 0.05) + 1e-9; x += spacing) positions.Add(Math.Round(x, 6));
             return positions;
+        }
+
+        /// <summary>Row offsets across a face, centered: 1 row → 0; 2 rows 0.5 apart → −0.25, 0.25; 3 → −0.5, 0, 0.5.</summary>
+        internal static double[] RowOffsets(int rows, double rowSpacing)
+        {
+            return Enumerable.Range(0, Math.Max(1, rows)).Select(i => Math.Round((i - (rows - 1) / 2.0) * rowSpacing, 6)).ToArray();
         }
     }
 }

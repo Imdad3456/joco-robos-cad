@@ -58,7 +58,7 @@ namespace JocoRobos.Cad
             // Made in SOLIDWORKS by CAD Hub: instant, any size, and no Onshape calls.
             var tools = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
             foreach (var tool in new[] { Tuple.Create("Make a stock part (tube, shaft, spacer, plate, bearing)…", actions.MakeStock),
-                Tuple.Create("Spur gear…", actions.MakeGear), Tuple.Create("Belt & chain calculator…", actions.BeltChain) })
+                Tuple.Create("Spur gear…", actions.MakeGear), Tuple.Create("Belt and chain calculator…", actions.BeltChain) })
             {
                 var link = new LinkLabel { Text = tool.Item1, AutoSize = true, Margin = new Padding(0, 0, 12, 2) };
                 var run = tool.Item2;

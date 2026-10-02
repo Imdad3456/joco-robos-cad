@@ -149,6 +149,60 @@ namespace JocoRobos.Cad
         }
     }
 
+    /// <summary>Hole Pattern along a tube side: spacing, hole size, rows, row spacing, where the first hole is. Remembers the last settings.</summary>
+    internal sealed class HolePatternDialog : ToolForm
+    {
+        private const string Key = @"Software\JOCO ROBOS\CAD\HolePattern";
+        private readonly TextBox spacing = new TextBox(), diameter = new TextBox(), rowSpacing = new TextBox(), start = new TextBox();
+        private readonly NumericUpDown rows = new NumericUpDown { Minimum = 1, Maximum = 5 };
+
+        internal double Spacing { get { return Number(spacing) ?? 0; } }
+        internal double Diameter { get { return Number(diameter) ?? 0; } }
+        internal int Rows { get { return (int)rows.Value; } }
+        internal double RowSpacing { get { return Number(rowSpacing) ?? 0; } }
+        internal double Start { get { return Number(start) ?? 0; } }
+
+        internal HolePatternDialog() : base("Hole Pattern", "Add holes")
+        {
+            using (var saved = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(Key))
+            {
+                spacing.Text = saved?.GetValue("Spacing") as string ?? "0.5";
+                diameter.Text = saved?.GetValue("Diameter") as string ?? "0.196";
+                rows.Value = Math.Max(1, Math.Min(5, Convert.ToInt32(saved?.GetValue("Rows") ?? 1)));
+                rowSpacing.Text = saved?.GetValue("RowSpacing") as string ?? "0.5";
+                start.Text = saved?.GetValue("Start") as string ?? "0.25";
+            }
+            Row("Spacing along the tube (in)", spacing);
+            Row("Hole diameter (in)", diameter);
+            Row("Rows across the face", rows);
+            Row("Row spacing (in)", rowSpacing);
+            Row("First hole from the end (in)", start);
+            Note.Text = "Holes go through both walls of the side you selected, rows centered on it. Vendors' patterns differ: match your tube's " +
+                "(or use the vendor's tube from FRCDesignLib in the Library tab for its exact pattern). Your last settings are remembered.";
+        }
+
+        protected override string Check()
+        {
+            if (Spacing < 0.1 || Spacing > 12) return "Spacing from 0.1 to 12 in.";
+            if (Diameter < 0.05 || Diameter > 2 || Diameter >= Spacing) return "Hole diameter from 0.05 in, smaller than the spacing.";
+            if (Rows > 1 && (RowSpacing <= Diameter || RowSpacing > 6)) return "Row spacing larger than the hole diameter.";
+            if (Start < 0 || Start > 12) return "First hole from 0 to 12 in from the end.";
+            try
+            {
+                using (var saved = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(Key))
+                {
+                    saved.SetValue("Spacing", spacing.Text.Trim());
+                    saved.SetValue("Diameter", diameter.Text.Trim());
+                    saved.SetValue("Rows", Rows);
+                    saved.SetValue("RowSpacing", rowSpacing.Text.Trim());
+                    saved.SetValue("Start", start.Text.Trim());
+                }
+            }
+            catch (Exception) { } // Remembering is a convenience only.
+            return null;
+        }
+    }
+
     /// <summary>Lighten Plate: rib, border, ring around holes, corner radius, smallest pocket, depth.</summary>
     internal sealed class LightenDialog : ToolForm
     {
@@ -207,7 +261,7 @@ namespace JocoRobos.Cad
         private readonly Func<double, string> useForDimension;
         private double center = double.NaN;
 
-        internal BeltChainDialog(Func<double, string> useForDimension) : base("Belt & Chain Calculator", "Use for selected dimension")
+        internal BeltChainDialog(Func<double, string> useForDimension) : base("Belt and Chain Calculator", "Use for selected dimension")
         {
             this.useForDimension = useForDimension;
             foreach (var k in BeltChain.Kinds) kind.Items.Add(k.Name);
