@@ -61,6 +61,10 @@ namespace JocoRobos.Cad
         // A problem that stops editing on this computer (for example the wrong SOLIDWORKS version).
         internal string Warning;
         internal bool ShowHistory;
+        // The active file is someone else's: who to ask for it (null: nothing to ask).
+        internal string AskOwner;
+        // Teammates waiting for files this student is editing, one line each (empty: none).
+        internal string Requests = "";
         internal bool InterruptedSubmit;
 
         private static string Since(WorkspaceSnapshot owner, string path)
@@ -163,6 +167,7 @@ namespace JocoRobos.Cad
                 }
                 else if (owner.Locks.TryGetValue(activePath, out lockedBy))
                 {
+                    state.AskOwner = lockedBy;
                     state.ActiveStatus = "🔒 " + lockedBy + " is editing this" + Since(owner, activePath) + ".\nYou can still look, measure, and reference it." +
                         (activeReadOnly && activeDirty ? "\nYour unsaved changes here can't be saved into the robot: undo them, or Save As a copy outside the robot folder." : "");
                     state.ActiveTone = activeDirty ? Tone.Warn : Tone.Bad;

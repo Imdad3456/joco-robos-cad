@@ -84,6 +84,8 @@ namespace JocoRobos.Cad
         internal string Title;
         internal bool Dirty;
         internal bool ReadOnly;
+        // SOLIDWORKS' What's Wrong list (rebuild errors and warnings), when it could be read.
+        internal int RebuildProblems;
     }
 
     internal sealed class SubmitCheckInput
@@ -124,6 +126,11 @@ namespace JocoRobos.Cad
 
             // Unsaved documents: only the robot's and Library's own count; unrelated open files are left alone.
             var save = new List<string>();
+            // Rebuild errors travel with the file: teammates open it to the same red flags. Worth knowing, never blocking.
+            foreach (var doc in input.Documents.Where(d => d.RebuildProblems > 0 && d.Path != null && input.Selected.Contains(d.Path)))
+                issues.Add(new SubmitIssue { Level = IssueLevel.Warning, Key = "rebuild:" + doc.Path, Files = { doc.Path },
+                    Title = Path.GetFileName(doc.Path) + " has " + doc.RebuildProblems + " rebuild " + (doc.RebuildProblems == 1 ? "problem" : "problems"),
+                    Description = "Teammates will open it with the same errors. Have a look first (Tools → Evaluate → What's Wrong) if they're new. Submitting is still fine." });
             foreach (var doc in input.Documents.Where(d => d.Dirty))
             {
                 if (String.IsNullOrEmpty(doc.Path))

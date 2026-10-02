@@ -220,6 +220,13 @@ static class Program
         snap.LockedSince[part] = now.AddMinutes(-5);
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
         Check(s.EditTarget == null && s.ActiveStatus.Contains("sarah is editing this since") && s.ActiveTone == Tone.Bad, "Teammate's file: who and since when, no button");
+        Check(s.AskOwner == "sarah", "Teammate's file: offer to ask sarah for it");
+        // Requests to this student come from the server; only well-formed ones are shown.
+        var asked = EditRequests.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"requests\": [" +
+            "{\"id\": \"a1\", \"season\": \"2026-Robot\", \"path\": \"30_Shooter/Plate.SLDPRT\", \"from\": \"sarah\"}," +
+            "{\"id\": \"a2\", \"season\": \"../x\", \"path\": \"Plate.SLDPRT\", \"from\": \"eve\"}," +
+            "{\"id\": \"a3\", \"season\": \"2026-Robot\", \"path\": \"../../Windows/x.SLDPRT\", \"from\": \"eve\"}]}")));
+        Check(asked.Count == 1 && asked[0].From == "sarah" && asked[0].Path == "30_Shooter/Plate.SLDPRT", "Edit requests parsed, bad ones dropped");
         snap = fresh(); snap.Locks[part] = "sam"; snap.Mine.Add(part); snap.Changed.Add(part);
         s = PaneState.Describe("sam", snap, null, part, false, null, now, robotOpen: true);
         Check(s.EditTarget == null && s.SubmitCount == 1 && s.ActiveStatus.Contains("editing this (saved)") && s.Locks.Contains("ShooterPlate"), "Editing: Submit 1");
@@ -348,6 +355,12 @@ static class Program
             var added = run(new[] { shooter, camera }).Single();
             Check(added.Description.Contains("My New Bracket") && !added.Description.Contains("Part1"), "Only the newly added missing reference is reported");
             teamReferences.Clear();
+            // Rebuild problems: a warning about the file being submitted, never blocking.
+            documents.Add(new OpenDocument { Path = shooter, Title = "Shooter.SLDASM", RebuildProblems = 3 });
+            var rebuild = run(new[] { shooter, camera }).Where(x => x.Key.StartsWith("rebuild:")).ToList();
+            Check(rebuild.Count == 1 && !rebuild[0].Blocking && rebuild[0].Title.Contains("3 rebuild problems"), "Rebuild problems shown, not blocking");
+            Check(!run(new[] { camera }).Any(x => x.Key.StartsWith("rebuild:")), "Rebuild problems only for files being submitted");
+            documents.Clear();
             // Virtual components live inside their assembly (SOLIDWORKS unpacks them to temp while it's open): never an issue.
             references[shooter] = new[] { camera, Path.Combine(Path.GetDirectoryName(interconnect), "Belt1-4^Shooter.SLDPRT"),
                 Path.Combine(temp, "Gone", "Part6^Shooter.SLDPRT") };

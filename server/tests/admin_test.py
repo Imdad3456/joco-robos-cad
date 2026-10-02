@@ -414,4 +414,33 @@ check(req('/admin/diagnostics?file=' + name, *U)[0] == 403, 'students cannot ope
 check(req('/admin/diagnostics?file=..%2Fusers', *M)[0] == 404, 'report names cannot reach other files')
 s_, loc = post('/admin/diagnostics', {'action': 'delete-diagnostics', 'name': name}); check('Deleted' in loc, 'mentor deletes a report ' + loc)
 check(name not in req('/admin/diagnostics', *M)[2], 'deleted report is gone')
+# "Ask for it": sarah holds a lock; mentor1 asks for the file; sarah's add-in sees the request; it goes away when she lets go.
+def addin(user, method, path, body=None):
+    r = urllib.request.Request(BASE + path, data=None if body is None else json.dumps(body).encode(), method=method)
+    r.add_header('Authorization', 'Basic ' + base64.b64encode(f'{user[0]}:{user[1]}'.encode()).decode())
+    r.add_header('X-Joco-Client', 'addin')
+    try:
+        resp = urllib.request.urlopen(r); return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+svn('svnmucc -m "request test" put /etc/hostname http://localhost/svn/2027-Robot/00_Master/Ask.SLDPRT propset svn:needs-lock "*" http://localhost/svn/2027-Robot/00_Master/Ask.SLDPRT propset svn:mime-type application/octet-stream http://localhost/svn/2027-Robot/00_Master/Ask.SLDPRT', user=M)
+out = svn('svn lock -m editing http://localhost/svn/2027-Robot/00_Master/Ask.SLDPRT'); check(out.returncode == 0, 'sarah locks a file ' + out.stderr)
+s_, owner = addin(M, 'POST', '/admin/api/edit-request', {'season': '2027-Robot', 'path': '00_Master/Ask.SLDPRT'}); check(s_ == 200 and owner.strip() == 'sarah', 'mentor1 asks sarah for it ' + owner)
+check(addin(M, 'POST', '/admin/api/edit-request', {'season': '2027-Robot', 'path': '00_Master/Ask.SLDPRT'})[0] == 200, 'asking twice is harmless')
+s_, body = addin(U, 'GET', '/admin/api/edit-requests'); waiting = json.loads(body)['requests']
+check(s_ == 200 and len(waiting) == 1 and waiting[0]['from'] == 'mentor1' and waiting[0]['path'] == '00_Master/Ask.SLDPRT', 'sarah sees one request ' + body)
+check(json.loads(addin(M, 'GET', '/admin/api/edit-requests')[1])['requests'] == [], 'the asker gets no request')
+check(addin(U, 'POST', '/admin/api/edit-request', {'season': '2027-Robot', 'path': '00_Master/Ask.SLDPRT'})[0] == 400, "can't ask yourself")
+check(addin(M, 'POST', '/admin/api/edit-request', {'season': '2027-Robot', 'path': '../x'})[0] == 400, 'bad paths refused')
+check(req('/admin/api/edit-requests', *U)[0] == 403, 'only the add-in reads requests')
+check(addin(M, 'POST', '/admin/api/edit-request/dismiss', {'id': waiting[0]['id']})[0] == 200 and len(json.loads(addin(U, 'GET', '/admin/api/edit-requests')[1])['requests']) == 1, 'only the person asked can dismiss')
+svn('svn unlock http://localhost/svn/2027-Robot/00_Master/Ask.SLDPRT')
+check(json.loads(addin(U, 'GET', '/admin/api/edit-requests')[1])['requests'] == [], 'request ends when the lock is released')
+s_, body = addin(M, 'POST', '/admin/api/edit-request', {'season': '2027-Robot', 'path': '00_Master/Ask.SLDPRT'}); check(s_ == 400 and 'Nobody' in body, 'nothing to ask for once it is free')
+# Who's working: the heartbeat carries the robot and its revision.
+head = int(subprocess.run(['docker', 'exec', 'joco-test', 'svnlook', 'youngest', '/var/lib/svn/2027-Robot'], capture_output=True, text=True).stdout)
+check(addin(U, 'POST', '/admin/api/heartbeat', {'version': '9.9.9', 'computer': 'LAB-1', 'robot': '2027-Robot', 'revision': head - 2})[0] == 200, 'heartbeat with robot state')
+page = req('/admin', *M)[2]; check("Who's working" in page and '2 submits behind' in page and 'online' in page, 'mentor sees who is behind')
+addin(U, 'POST', '/admin/api/heartbeat', {'version': '9.9.9', 'computer': 'LAB-1', 'robot': '2027-Robot', 'revision': head})
+check('up to date' in req('/admin', *M)[2], 'mentor sees up to date')
 print(f'PASS: {n} server/admin checks')

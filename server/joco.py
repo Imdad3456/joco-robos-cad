@@ -44,6 +44,9 @@ DIAGNOSTICS = os.path.join(CONFIG, 'diagnostics')
 DIAGNOSTIC_NAME = re.compile(r'^\d{8}T\d{6}Z-[a-z0-9._-]{1,40}\.txt$')
 MAX_DIAGNOSTIC = 512 * 1024
 KEEP_DIAGNOSTICS, DIAGNOSTIC_DAYS = 200, 60
+# "Ask for it": a student asks whoever holds a file's lock to finish and give it back. Gone once the lock moves, or after 2 days.
+EDIT_REQUESTS = os.path.join(CONFIG, 'edit-requests.json')
+EDIT_REQUEST_DAYS = 2
 INVITES = os.path.join(CONFIG, 'invites.json')
 REQUESTS = os.path.join(CONFIG, 'requests.json')  # Students asking for an account, waiting for a mentor's code.
 MAX_REQUESTS = 40
@@ -430,7 +433,7 @@ def age_hours(stamp):
         return None
 
 
-def record_heartbeat(user, version, computer, solidworks=''):
+def record_heartbeat(user, version, computer, solidworks='', robot='', revision=None):
     if not re.match(r'^\d{1,4}\.\d{1,4}\.\d{1,4}$', version or ''):
         raise Refused('Bad version.')
     computer = re.sub(r'[^A-Za-z0-9._-]', '', computer or '')[:40]
@@ -439,11 +442,88 @@ def record_heartbeat(user, version, computer, solidworks=''):
     entry.update(version=version, seen=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
     if re.match(r'^(19|20)\d\d$', solidworks or ''):
         entry['solidworks'] = solidworks
+    # Which robot this computer has and how current it is, for the mentor page's activity view.
+    if SEASON.match(robot or '') and isinstance(revision, int) and revision >= 0:
+        entry.update(robot=robot, revision=revision)
     if computer:
         computers = [c for c in entry.get('computers', []) if c != computer]
         entry['computers'] = ([computer] + computers)[:3]
     beats[user] = entry
     write_atomic(HEARTBEATS, json.dumps(beats, indent=2) + '\n')
+
+
+def _lock_owner(season, path):
+    for held in locks(season):
+        if held['path'].lstrip('/') == path:
+            return held.get('owner')
+    return None
+
+
+def _live_edit_requests():
+    """Requests whose lock is still held by the person asked, and not expired. Everything else is dropped."""
+    requests = read_json(EDIT_REQUESTS) or {}
+    owners, live = {}, {}
+    for key, request in requests.items():
+        if time.time() - request['at'] > EDIT_REQUEST_DAYS * 86400 or request['season'] not in repositories():
+            continue
+        season = request['season']
+        if season not in owners:
+            owners[season] = {h['path'].lstrip('/'): h.get('owner') for h in locks(season)}
+        if owners[season].get(request['path']) == request['to']:
+            live[key] = request
+    if live != requests:
+        write_atomic(EDIT_REQUESTS, json.dumps(live, indent=2) + '\n')
+    return live
+
+
+def request_edit(user, season, path):
+    """Asks the lock holder of season/path to finish and give it back. Returns who holds it."""
+    path = (path or '').replace('\\', '/').strip('/')
+    if season not in repositories() or not SEASON.match(season) or not path or '..' in path.split('/'):
+        raise Refused('Unknown file.')
+    owner = _lock_owner(season, path)
+    if not owner:
+        raise Refused('Nobody is editing that file any more: open it and click Edit.')
+    if owner == user:
+        raise Refused('You are the one editing it.')
+    requests = _live_edit_requests()
+    if not any(r['from'] == user and r['season'] == season and r['path'] == path for r in requests.values()):
+        if len(requests) >= 300:
+            raise Refused('Too many open requests on the server. Try again later.')
+        requests[secrets.token_hex(6)] = {'season': season, 'path': path, 'from': user, 'to': owner, 'at': time.time()}
+        write_atomic(EDIT_REQUESTS, json.dumps(requests, indent=2) + '\n')
+    return owner
+
+
+def dismiss_edit_request(user, key):
+    requests = _live_edit_requests()
+    if key in requests and requests[key]['to'] == user:
+        del requests[key]
+        write_atomic(EDIT_REQUESTS, json.dumps(requests, indent=2) + '\n')
+
+
+def student_activity(state):
+    """One row per student seen in the last 30 days: online now, how current their robot is, what they hold."""
+    active = state.get('active')
+    head = youngest(active) if active in repositories() else None
+    held = {}
+    if active in repositories():
+        for lock in locks(active):
+            held.setdefault(lock.get('owner'), []).append(lock['path'].rsplit('/', 1)[-1])
+    rows = []
+    for name, beat in (read_json(HEARTBEATS) or {}).items():
+        hours = age_hours(beat.get('seen'))
+        if hours is None or hours > 24 * 30:
+            continue
+        if beat.get('robot') == active and head is not None and 'revision' in beat:
+            behind = max(0, head - beat['revision'])
+            current = 'up to date' if behind == 0 else '%d submit%s behind' % (behind, '' if behind == 1 else 's')
+        elif beat.get('robot'):
+            current = 'on ' + beat['robot']
+        else:
+            current = ''
+        rows.append((hours, name, current, held.get(name, [])))
+    return sorted(rows)
 
 
 def diagnostic_files():
@@ -990,6 +1070,8 @@ class Admin(BaseHTTPRequestHandler):
     def do_GET(self):
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('GET')
+        if urlsplit(self.path).path == '/admin/api/edit-requests':
+            return self.edit_request_api()
         state = self.guard()
         if state is None:
             return
@@ -1024,6 +1106,8 @@ class Admin(BaseHTTPRequestHandler):
             return self.heartbeat()
         if urlsplit(self.path).path == '/admin/api/diagnostics':
             return self.diagnostics_upload()
+        if urlsplit(self.path).path in ('/admin/api/edit-request', '/admin/api/edit-request/dismiss'):
+            return self.edit_request_api()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('POST')
         if urlsplit(self.path).path == '/account/setup':
@@ -1087,8 +1171,37 @@ class Admin(BaseHTTPRequestHandler):
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
             with Locked():
-                record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')), str(body.get('solidworks', '')))
+                revision = body.get('revision')
+                record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')), str(body.get('solidworks', '')),
+                                 str(body.get('robot', '')), revision if isinstance(revision, int) else None)
             self.reply(200, 'ok')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc))
+
+    def edit_request_api(self):
+        # Any signed-in student's add-in. GET: requests waiting for me. POST: ask for a file, or dismiss a request to me.
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        path = urlsplit(self.path).path
+        try:
+            if self.command == 'GET':
+                with Locked():
+                    mine = [dict(r, id=k) for k, r in _live_edit_requests().items() if r['to'] == self.user]
+                data = json.dumps({'requests': [{'id': r['id'], 'season': r['season'], 'path': r['path'], 'from': r['from']} for r in mine]}).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                return self.wfile.write(data)
+            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
+            if path.endswith('/dismiss'):
+                with Locked():
+                    dismiss_edit_request(self.user, str(body.get('id', '')))
+                return self.reply(200, 'ok')
+            _throttle(self.user, 'edit-request')
+            with Locked():
+                owner = request_edit(self.user, str(body.get('season', '')), str(body.get('path', '')))
+            self.reply(200, owner)
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
 
@@ -1224,15 +1337,25 @@ class Admin(BaseHTTPRequestHandler):
                   '<label><input type="checkbox" name="activate" value="1"> Make it active now</label><button class="primary">Create season</button></form>'
                   '<p class="muted">Creates the standard subsystem folders with lock rules and daily backups. Students switch automatically the next time they click Open Robot or Update. '
                   'Reuse parts by adding them to the Library; students insert them with “Insert from Library”.</p>') % (self.token(), next_year)
+        people = ''
+        for hours, name, current, holding in student_activity(state):
+            seen = '<span class="ok">● online</span>' if hours < 0.2 else '<span class="muted">%s</span>' % (
+                '%d min ago' % (hours * 60) if hours < 1 else '%d h ago' % hours if hours < 24 else '%d days ago' % (hours // 24))
+            people += '<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+                esc(name), seen, '<span class="warn">%s</span>' % esc(current) if 'behind' in current else esc(current),
+                esc(', '.join(holding[:5]) + (' …' if len(holding) > 5 else '')) if holding else '<span class="muted">nothing</span>')
         recent = activity(seasons[-2:] + [LIBRARY])
         log = ''.join('<tr><td>%s</td><td class="muted">%s r%d</td><td>%s</td><td>%s<div class="muted">%s</div></td><td>%s</td></tr>' % (
             esc(e['date']), esc(e['repo']), e['rev'], esc(e['author']), esc(e['msg']),
             esc(', '.join(f.rsplit('/', 1)[-1] for f in e['files'][:6]) + (' …' if len(e['files']) > 6 else '')),
             '<a href="/admin/undo?repo=%s&amp;rev=%d">Undo…</a>' % (quote(e['repo']), e['rev']) if e['rev'] > 1 and e['files'] else '') for e in recent)
         return (self.health() + '<section><h2>Robot seasons</h2><div class="scroll"><table><tr><th>Season</th><th>Revision</th><th>Locks</th><th>Status</th><th></th></tr>%s</table></div></section>'
+                '<section><h2>Who\'s working</h2><p class="muted">Seen from CAD Hub in SOLIDWORKS in the last 30 days, for the active season.</p>'
+                '<div class="scroll"><table><tr><th>Student</th><th>Seen</th><th>Their robot</th><th>Editing</th></tr>%s</table></div></section>'
                 '<section><h2>Start a new season</h2>%s</section>'
                 '<section><h2>Recent submits</h2><div class="scroll"><table><tr><th>When (UTC)</th><th>Where</th><th>Who</th><th>What</th><th></th></tr>%s</table></div></section>') % (
-                    rows or '<tr><td colspan="5" class="muted">No seasons yet.</td></tr>', create, log or '<tr><td colspan="5" class="muted">Nothing yet.</td></tr>')
+                    rows or '<tr><td colspan="5" class="muted">No seasons yet.</td></tr>',
+                    people or '<tr><td colspan="4" class="muted">Nobody yet. Students show up here once they start SOLIDWORKS with CAD Hub.</td></tr>', create, log or '<tr><td colspan="5" class="muted">Nothing yet.</td></tr>')
 
     def health(self):
         disk = os.statvfs(REPOS)

@@ -72,8 +72,11 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 |---|---|---|---|---|
 | 4.1 | A | Open `ABS_MotorCover_v2` → **Edit** | "✎ You're editing" | ☐ |
 | 4.2 | B | Open `ABS_MotorCover_v2` | "🔒 imdad is editing this. You can still look, measure, and reference it", and no Edit button | ☐ |
+| 4.2b | B | In the panel card, click **Ask imdad for it** | "✓ Asked imdad…"; the card now says you asked. A: within 3 min (or **Check now**) "✋ B is waiting for ABS_MotorCover_v2" in A's panel | ☐ |
 | 4.3 | B | Change something in it anyway | A warning right away that imdad is editing it. Close without saving | ☐ |
 | 4.4 | A | Change it, save, **Submit** | Submitted | ☐ |
+| 4.4b | B | After A's Submit, wait up to 3 min (or **Check now**) | "✓ ABS_MotorCover_v2 is free now… Open it and click Edit." A's panel no longer shows the request | ☐ |
+| 4.4c | A | Web mentor page → **Seasons** → **Who's working** | A and B with "online", their robot "up to date" (or "N submits behind"), and what each is editing | ☐ |
 | 4.5 | B | Keep `Robot.SLDASM`, a sub-assembly and a part open in their own windows, part active. Wait up to 3 min (or **Check now**) | "⬇ 1 new change on the server", A's comment, and **Close & Update** | ☐ |
 | 4.6 | B | **Close & Update** | All three close, update, and reopen, with the part active again; "✓ Up to date" | ☐ |
 | 4.7 | A | Close **all** documents. B: change and **Submit** any small file | Within 3 min A's panel says "Getting 1 new change…" then "✓ Got 1 new change", with no clicks | ☐ |

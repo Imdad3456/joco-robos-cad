@@ -25,7 +25,8 @@ namespace JocoRobos.Cad
             Post("admin/api/password", login, "{\"password\": " + Json(password) + "}");
         }
 
-        private static void Post(string path, NetworkCredential login, string json)
+        /// <summary>POSTs JSON as this add-in and returns the server's answer; a refusal becomes an InvalidOperationException with its reason.</summary>
+        internal static string Post(string path, NetworkCredential login, string json)
         {
             var request = (HttpWebRequest)WebRequest.Create(new Uri(WorkspaceInfo.Server, path));
             request.Method = "POST";
@@ -40,7 +41,9 @@ namespace JocoRobos.Cad
             try
             {
                 using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
-                using (request.GetResponse()) { }
+                using (var response = request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream()))
+                    return reader.ReadToEnd().Trim();
             }
             catch (WebException exception)
             {
@@ -57,7 +60,7 @@ namespace JocoRobos.Cad
             }
         }
 
-        private static string Json(string text)
+        internal static string Json(string text)
         {
             var builder = new StringBuilder("\"");
             foreach (char c in text ?? "")

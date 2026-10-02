@@ -74,6 +74,10 @@ namespace JocoRobos.Cad
         // The robot from the last catalog read, so the file browser still lists local files when the server check fails.
         private WorkspaceInfo robotInfo;
         private Timer closedTimer;
+        // "Ask for it": requests waiting for files this student holds, and the files they asked for (path → who had it).
+        private List<EditRequests.Request> editRequests = new List<EditRequests.Request>();
+        private readonly HashSet<string> seenRequests = new HashSet<string>();
+        private readonly Dictionary<string, string> askedFor = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private WorkspaceSnapshot robotOffline;
         private string paneUser, paneError;
         private Catalog.AddinRelease offeredUpdate;
@@ -289,6 +293,7 @@ namespace JocoRobos.Cad
                 History = FileHistory, Diagnostics = CopyDiagnostics,
                 OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
+                AskForFile = AskForActiveFile, DismissRequests = DismissRequests,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
             });
             pane.CreateControl();
@@ -313,7 +318,8 @@ namespace JocoRobos.Cad
             bool signedIn;
             try { signedIn = CredentialStore.Read() != null; }
             catch (Exception) { signedIn = true; }
-            if (!signedIn) OnUi("first sign-in", () => Execute(() => SetUpAccount(null)));
+            // First run: team server, account, then straight on to downloading and opening the robot.
+            if (!signedIn) OnUi("first sign-in", () => Execute(() => { if (SetUpAccount(null) != null) OnUi("first Open Robot", OpenRobot); }));
             statusTimer = new Timer { Interval = 3 * 60 * 1000 };
             statusTimer.Tick += (s, e) => { try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("status timer", exception); } };
             statusTimer.Start();
@@ -369,6 +375,18 @@ namespace JocoRobos.Cad
                     state.ActiveTone = Tone.Muted;
                     state.EditTarget = null;
                 }
+                // Already asked: say so instead of offering again.
+                string askedOwner;
+                if (path != null && state.AskOwner != null && askedFor.TryGetValue(path, out askedOwner) && askedOwner == state.AskOwner)
+                {
+                    state.ActiveStatus += "\nYou asked " + askedOwner + " for it; this panel tells you when it's free.";
+                    state.AskOwner = null;
+                }
+                var mineNow = new[] { robotSnapshot, librarySnapshot }.Where(x => x != null).SelectMany(x => x.Mine).ToList();
+                var stillWanted = editRequests.Where(r => mineNow.Any(m => m.Replace('\\', '/').EndsWith("/" + r.Season + "/" + r.Path, StringComparison.OrdinalIgnoreCase))).ToList();
+                if (stillWanted.Count > 0)
+                    state.Requests = String.Join("\n", stillWanted.Take(4).Select(r => "✋ " + r.From + " is waiting for " + Path.GetFileName(r.Path))) +
+                        (stillWanted.Count > 4 ? "\n… and " + (stillWanted.Count - 4) + " more" : "") + "\nSubmit (or give back) when you're done with it.";
                 state.Flash = flash;
                 if (state.CanAutoUpdate) pane.BeginInvoke((Action)(() => StartAutoUpdate()));
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
@@ -406,11 +424,14 @@ namespace JocoRobos.Cad
                 var clock = System.Diagnostics.Stopwatch.StartNew();
                 var catalog = cached ?? Catalog.Fetch(login);
                 knownRobot = catalog.Robot;
-                if (!heartbeatSent) heartbeatSent = SendHeartbeat(login, year);
                 var robot = new SvnWorkspace(login, catalog.Robot).Snapshot();
                 var library = catalog.Library == null ? null : new SvnWorkspace(login, catalog.Library).Snapshot();
+                // Every check: mentors see who's working and how current their robot is. Best effort, like the requests.
+                heartbeatSent = SendHeartbeat(login, year, robot);
+                List<EditRequests.Request> waiting = null;
+                try { waiting = EditRequests.ForMe(login); } catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO requests: " + exception.Message); }
                 ErrorLog.Slow("status check (background)", clock.ElapsedMilliseconds, 20000);
-                return Tuple.Create(catalog, robot, library);
+                return Tuple.Create(catalog, robot, library, waiting);
             }).ContinueWith(task =>
             {
                 if (pane == null || pane.IsDisposed) return;
@@ -425,6 +446,8 @@ namespace JocoRobos.Cad
                         if (task.Result.Item1 != paneCatalog) { paneCatalog = task.Result.Item1; paneCatalogAt = DateTime.UtcNow; }
                         robotSnapshot = task.Result.Item2;
                         librarySnapshot = task.Result.Item3;
+                        if (task.Result.Item4 != null) NoticeRequests(task.Result.Item4);
+                        NoticeFreedFiles();
                         paneError = null;
                         checkedAt = DateTime.Now;
                         offeredUpdate = Updater.Offer(task.Result.Item1.Addin, Updater.Current);
@@ -471,8 +494,65 @@ namespace JocoRobos.Cad
             using (var response = (HttpWebResponse)request.GetResponse()) return response.StatusCode == HttpStatusCode.OK;
         }
 
+        // ---------- "Ask for it" ----------
+
+        // Someone wants a file this student is editing: say so once, then keep it on the panel until they let go.
+        private void NoticeRequests(List<EditRequests.Request> waiting)
+        {
+            editRequests = waiting;
+            var fresh = waiting.Where(r => seenRequests.Add(r.Id)).ToList();
+            if (fresh.Count > 0)
+                ShowFlash("✋ " + fresh[0].From + " is waiting for " + Path.GetFileName(fresh[0].Path) + (fresh.Count > 1 ? " (and " + (fresh.Count - 1) + " more)" : "") +
+                    ". Submit it when you can.");
+        }
+
+        // A file this student asked for: tell them the moment it's free.
+        private void NoticeFreedFiles()
+        {
+            if (robotSnapshot == null || askedFor.Count == 0) return;
+            foreach (var asked in askedFor.ToList())
+            {
+                var snapshot = new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Contains(asked.Key));
+                string owner;
+                if (snapshot == null || (snapshot.Locks.TryGetValue(asked.Key, out owner) && owner == asked.Value)) continue;
+                askedFor.Remove(asked.Key);
+                ShowFlash("✓ " + Path.GetFileName(asked.Key) + " is free now: " + asked.Value + " gave it back. Open it and click Edit.");
+            }
+        }
+
+        // The panel's "Ask … for it" on the active file.
+        private void AskForActiveFile()
+        {
+            Execute(() =>
+            {
+                var doc = application.ActiveDoc as ModelDoc2;
+                string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
+                var snapshot = path == null ? null : new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Contains(path));
+                if (snapshot == null) return;
+                var login = GetLogin(false);
+                if (login == null) return;
+                string relative = path.Substring(snapshot.Info.Root.Length + 1).Replace('\\', '/');
+                string owner = OperationDialog.Run("Asking…", () => EditRequests.Ask(login, snapshot.Info.Name, relative));
+                askedFor[path] = owner;
+                ShowFlash("✓ Asked " + owner + " for " + Path.GetFileName(path) + ". This panel tells you when it's free.");
+            });
+        }
+
+        private void DismissRequests()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var dismissing = editRequests.ToList();
+                OperationDialog.Run("Letting them know…", () => { foreach (var r in dismissing) EditRequests.Dismiss(login, r.Id); return true; });
+                editRequests = new List<EditRequests.Request>();
+                RenderStatus();
+            });
+        }
+
         // Lets mentors see which add-in version each student runs (Accounts tab). Best effort, once per session.
-        private static bool SendHeartbeat(NetworkCredential login, int solidWorks)
+        private static bool SendHeartbeat(NetworkCredential login, int solidWorks, WorkspaceSnapshot robot)
         {
             try
             {
@@ -486,7 +566,8 @@ namespace JocoRobos.Cad
                     Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(login.UserName + ":" + login.Password));
                 byte[] body = System.Text.Encoding.UTF8.GetBytes("{\"version\": \"" + Updater.Current + "\", \"computer\": \"" +
                     System.Text.RegularExpressions.Regex.Replace(System.Environment.MachineName, "[^A-Za-z0-9._-]", "") + "\", \"solidworks\": \"" +
-                    (solidWorks > 0 ? solidWorks.ToString() : "") + "\"}");
+                    (solidWorks > 0 ? solidWorks.ToString() : "") + "\"" +
+                    (robot != null && robot.Local > 0 ? ", \"robot\": \"" + robot.Info.Name + "\", \"revision\": " + robot.Local : "") + "}");
                 using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
                 using (request.GetResponse()) { }
                 return true;
@@ -1732,8 +1813,10 @@ namespace JocoRobos.Cad
                 string path = doc.GetPathName();
                 // Virtual components ("Part1^Shooter") are saved inside their assembly.
                 if (!String.IsNullOrEmpty(path) && Path.GetFileName(path).Contains("^")) continue;
+                int problems = 0;
+                try { problems = doc.Extension.GetWhatsWrongCount(); } catch (Exception) { } // Older documents or drawings: skip.
                 states.Add(new OpenDocument { Path = String.IsNullOrEmpty(path) ? null : Path.GetFullPath(path), Title = doc.GetTitle(),
-                    Dirty = doc.GetSaveFlag(), ReadOnly = doc.IsOpenedReadOnly() });
+                    Dirty = doc.GetSaveFlag(), ReadOnly = doc.IsOpenedReadOnly(), RebuildProblems = problems });
             }
             return states;
         }

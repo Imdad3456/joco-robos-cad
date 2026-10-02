@@ -18,6 +18,8 @@ namespace JocoRobos.Cad
         // Robot tab file browser: open, show in Explorer, File History for a robot file.
         internal Action<string> OpenFile, RevealFile, FileHistoryOf;
         internal Action BrowseTeam, ImportDownloaded;
+        // "Ask for it": ask the person editing the active file; tell teammates who asked you "not yet".
+        internal Action AskForFile, DismissRequests;
     }
 
     /// <summary>
@@ -45,6 +47,9 @@ namespace JocoRobos.Cad
         private readonly Label activeStatus = Caption(9f, FontStyle.Regular);
         private readonly Button edit = Action("Edit", "Edit");
         private readonly LinkLabel history = Link("History of this file");
+        private readonly LinkLabel ask = Link("Ask for it");
+        private readonly Label requests = Caption(9f, FontStyle.Bold, "", Color.DarkOrange);
+        private readonly LinkLabel notNow = Link("Not yet: let them know");
         private readonly Label pending = Caption(9.5f, FontStyle.Bold, "", Color.DarkOrange);
         private readonly Button submit = Action("Submit", "Submit");
         private readonly Label locks = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
@@ -68,6 +73,8 @@ namespace JocoRobos.Cad
             submit.Click += (s, e) => actions.Submit();
             release.LinkClicked += (s, e) => actions.ReleaseUnchanged();
             history.LinkClicked += (s, e) => actions.History();
+            ask.LinkClicked += (s, e) => actions.AskForFile?.Invoke();
+            notNow.LinkClicked += (s, e) => actions.DismissRequests?.Invoke();
 
             // 1. Where am I: robot name on the left, whether it's up to date on the right.
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -79,7 +86,7 @@ namespace JocoRobos.Cad
 
             // 2. What do I need to do: only what applies now, the open file's part in a card.
             history.Margin = new Padding(0, 2, 0, 0);
-            foreach (var control in new Control[] { activeFile, activeStatus, edit, history, pending, submit, locks, release })
+            foreach (var control in new Control[] { activeFile, activeStatus, edit, ask, history, requests, notNow, pending, submit, locks, release })
                 card.Body.Controls.Add(control);
             card.Margin = new Padding(0, 10, 0, 0);
             foreach (var control in new Control[] { header, details, update, install, warning, flash, working, open, closeUpdate, card })
@@ -248,6 +255,10 @@ namespace JocoRobos.Cad
             edit.Visible = state.EditTarget != null;
             edit.Text = "  " + (String.IsNullOrEmpty(state.EditTarget) ? "Edit" : "Edit " + state.EditTarget);
             history.Visible = state.ShowHistory;
+            ask.Text = state.AskOwner == null ? "Ask for it" : "Ask " + state.AskOwner + " for it";
+            ask.Visible = state.AskOwner != null;
+            requests.Text = state.Requests;
+            requests.Visible = notNow.Visible = state.Requests.Length > 0;
             pending.Text = state.Pending;
             pending.Visible = state.Pending.Length > 0;
             bool showSubmit = state.SubmitCount > 0 || state.InterruptedSubmit;
@@ -258,13 +269,14 @@ namespace JocoRobos.Cad
             release.Visible = state.HasLocks;
             // The card exists only while it has something in it; sections inside it are spaced only after another section.
             bool hasFile = state.ActiveFile.Length > 0 || state.ActiveStatus.Length > 0 || state.EditTarget != null || state.ShowHistory;
+            requests.Margin = new Padding(0, hasFile ? 12 : 0, 0, 2);
             bool hasSubmit = state.Pending.Length > 0 || showSubmit;
             bool hasLocks = state.Locks.Length > 0 || state.HasLocks;
             pending.Margin = new Padding(0, hasFile ? 12 : 0, 0, 2);
             if (!pending.Visible) submit.Margin = new Padding(0, hasFile ? 12 : 0, 0, 2);
             else submit.Margin = new Padding(0, 8, 0, 2);
             locks.Margin = new Padding(0, hasFile || hasSubmit ? 12 : 0, 0, 2);
-            card.Visible = hasFile || hasSubmit || hasLocks;
+            card.Visible = hasFile || hasSubmit || hasLocks || state.Requests.Length > 0;
             layout.ResumeLayout();
             FitWidth();
         }
