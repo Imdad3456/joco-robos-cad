@@ -288,8 +288,10 @@ namespace JocoRobos.Cad
             path = WorkspacePolicy.RequireInside(Root, path);
             using (var client = Client())
             {
+                // A file that isn't here (a new part someone referenced but never submitted) has no team version.
+                if (!File.Exists(path)) return false;
                 Collection<SvnStatusEventArgs> status;
-                client.GetStatus(path, new SvnStatusArgs { Depth = SvnDepth.Empty, RetrieveAllEntries = true }, out status);
+                if (!client.GetStatus(path, new SvnStatusArgs { Depth = SvnDepth.Empty, RetrieveAllEntries = true, ThrowOnError = false }, out status)) return false;
                 if (status == null || status.Count == 0 || !status[0].Versioned || status[0].LocalNodeStatus == SvnStatus.Added) return false;
                 using (var output = File.Create(target))
                     client.Write(new SvnPathTarget(path, SvnRevision.Base), output);

@@ -117,7 +117,9 @@ namespace JocoRobos.Cad
             string solidWorks = Process.GetCurrentProcess().MainModule.FileName;
             // Silent installs show no errors, so always keep a log next to the download.
             string log = Path.ChangeExtension(installer, ".log");
-            if (File.Exists(log)) File.Delete(log);
+            // The log still open means this installer is already running (Install was clicked again while it works).
+            try { if (File.Exists(log)) File.Delete(log); }
+            catch (IOException) { throw new InvalidOperationException("The CAD Hub update is already installing. SOLIDWORKS restarts by itself when it's done."); }
             Process.Start(new ProcessStartInfo
             {
                 FileName = installer,
