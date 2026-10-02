@@ -96,32 +96,76 @@ namespace JocoRobos.Cad
             var modeler = (Modeler)application.GetModeler();
             var math = (MathUtility)application.GetMathUtility();
             var v = new[] { n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0] };
-            Func<double, double, double[]> at = (x, y) => new[] { origin[0] + (x * u[0] + y * v[0]) * M, origin[1] + (x * u[1] + y * v[1]) * M, origin[2] + (x * u[2] + y * v[2]) * M };
-            var curves = new List<Curve>();
-            foreach (var loop in loops)
-                for (int i = 0; i < loop.Count; i++)
-                {
-                    double[] a = at(loop[i][0], loop[i][1]), b = at(loop[(i + 1) % loop.Count][0], loop[(i + 1) % loop.Count][1]);
-                    var direction = new[] { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
-                    if (Math.Abs(direction[0]) + Math.Abs(direction[1]) + Math.Abs(direction[2]) < 1e-12) continue;
-                    var line = (Curve)modeler.CreateLine(a, direction);
-                    curves.Add(line.CreateTrimmedCurve2(a[0], a[1], a[2], b[0], b[1], b[2]));
-                }
-            foreach (var circle in circles ?? new List<double[]>()) // [x, y, radius] in inches: two half arcs
+            Func<double, double, double, double[]> at = (x, y, z) => new[] { origin[0] + (x * u[0] + y * v[0]) * M + z * n[0], origin[1] + (x * u[1] + y * v[1]) * M + z * n[1],
+                origin[2] + (x * u[2] + y * v[2]) * M + z * n[2] };
+            // Every loop with its size: the biggest is the outside, the rest are holes (bores; a ring gear's teeth).
+            var profiles = (loops ?? new List<List<double[]>>()).Where(l => l != null && l.Count >= 3)
+                .Select(l => new { Points = l, Circle = (double[])null, Area = Math.Abs(PlateLighten.SignedArea(l)) })
+                .Concat((circles ?? new List<double[]>()).Select(c => new { Points = (List<double[]>)null, Circle = c, Area = Math.PI * c[2] * c[2] }))
+                .OrderByDescending(p => p.Area).ToList();
+            if (profiles.Count == 0) throw new InvalidOperationException("Nothing to extrude.");
+            // One loop's curves on the plane at height z (meters), going counterclockwise around n, or clockwise for a hole.
+            Func<List<double[]>, double[], bool, double, List<Curve>> curvesOf = (points, circle, clockwise, z) =>
             {
-                var center = at(circle[0], circle[1]);
-                double[] east = at(circle[0] + circle[2], circle[1]), west = at(circle[0] - circle[2], circle[1]);
-                foreach (var half in new[] { new[] { east, west }, new[] { west, east } })
+                var curves = new List<Curve>();
+                if (points != null)
                 {
-                    var arc = (Curve)modeler.CreateArc(center, n, circle[2] * M, half[0], half[1]);
-                    curves.Add(arc.CreateTrimmedCurve2(half[0][0], half[0][1], half[0][2], half[1][0], half[1][1], half[1][2]));
+                    var ordered = points.ToList();
+                    if ((PlateLighten.SignedArea(ordered) < 0) != clockwise) ordered.Reverse();
+                    for (int i = 0; i < ordered.Count; i++)
+                    {
+                        double[] a = at(ordered[i][0], ordered[i][1], z), b = at(ordered[(i + 1) % ordered.Count][0], ordered[(i + 1) % ordered.Count][1], z);
+                        var direction = new[] { b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+                        if (Math.Abs(direction[0]) + Math.Abs(direction[1]) + Math.Abs(direction[2]) < 1e-12) continue;
+                        curves.Add(((Curve)modeler.CreateLine(a, direction)).CreateTrimmedCurve2(a[0], a[1], a[2], b[0], b[1], b[2]));
+                    }
                 }
+                else
+                {
+                    // Two half arcs, around n (counterclockwise) or around −n (clockwise).
+                    var center = at(circle[0], circle[1], z);
+                    double[] east = at(circle[0] + circle[2], circle[1], z), west = at(circle[0] - circle[2], circle[1], z);
+                    var axis = clockwise ? new[] { -n[0], -n[1], -n[2] } : n;
+                    foreach (var half in new[] { new[] { east, west }, new[] { west, east } })
+                        curves.Add(((Curve)modeler.CreateArc(center, axis, circle[2] * M, half[0], half[1])).CreateTrimmedCurve2(half[0][0], half[0][1], half[0][2], half[1][0], half[1][1], half[1][2]));
+                }
+                return curves;
+            };
+            Func<object[], double, double, Body2> extrude = (curves, z, length) =>
+            {
+                try
+                {
+                    var plane = (Surface)modeler.CreatePlanarSurface2(at(0, 0, z), n, u);
+                    var sheet = plane.CreateTrimmedSheet4(curves, true) as Body2;
+                    return sheet == null ? null : modeler.CreateExtrudedBody(sheet, (MathVector)math.CreateVector(n), length) as Body2;
+                }
+                catch (Exception exception) { ErrorLog.Write("profile (" + curves.Length + " curves)", exception); return null; } // The next way is tried.
+            };
+            var outer = curvesOf(profiles[0].Points, profiles[0].Circle, false, 0);
+            var holes = profiles.Skip(1).Select(p => curvesOf(p.Points, p.Circle, true, 0)).ToList();
+            double depthMeters = depth * M;
+            // 1: one face with the holes, loops separated by an empty entry (how SOLIDWORKS takes trimming loops).
+            var separated = new List<object>(outer);
+            foreach (var hole in holes) { separated.Add(null); separated.AddRange(hole); }
+            var body = extrude(separated.ToArray(), 0, depthMeters);
+            if (body != null) return body;
+            // 2: the same loops without separators.
+            ErrorLog.Step("profile: one face with separated loops failed (" + outer.Count + " edges, " + holes.Count + " holes); trying the others");
+            if (holes.Count > 0) body = extrude(outer.Concat(holes.SelectMany(h => h)).Cast<object>().ToArray(), 0, depthMeters);
+            if (body != null) { ErrorLog.Step("profile: loops without separators worked"); return body; }
+            // 3: the outside alone, then each hole cut out of it as its own solid (a little longer, so no faces coincide).
+            body = extrude(outer.Cast<object>().ToArray(), 0, depthMeters);
+            if (body == null) throw new InvalidOperationException("SOLIDWORKS couldn't make the profile (" + outer.Count + " edges).");
+            foreach (var hole in profiles.Skip(1))
+            {
+                var tool = extrude(curvesOf(hole.Points, hole.Circle, false, -0.0005).Cast<object>().ToArray(), -0.0005, depthMeters + 0.001);
+                if (tool == null) throw new InvalidOperationException("SOLIDWORKS couldn't make the bore.");
+                int error;
+                var cut = body.Operations2((int)swBodyOperationType_e.SWBODYCUT, tool, out error) as object[];
+                body = cut?.OfType<Body2>().OrderByDescending(b => { var box = (double[])b.GetBodyBox(); return box == null ? 0 : (box[3] - box[0]) * (box[4] - box[1]); }).FirstOrDefault();
+                if (body == null) throw new InvalidOperationException("SOLIDWORKS couldn't cut the bore (error " + error + ").");
             }
-            var plane = (Surface)modeler.CreatePlanarSurface2(origin, n, u);
-            var sheet = plane.CreateTrimmedSheet4(curves.ToArray(), true) as Body2;
-            if (sheet == null) throw new InvalidOperationException("SOLIDWORKS couldn't make the profile.");
-            var body = modeler.CreateExtrudedBody(sheet, (MathVector)math.CreateVector(n), depth * M);
-            if (body == null) throw new InvalidOperationException("SOLIDWORKS couldn't extrude the profile.");
+            ErrorLog.Step("profile: outside then holes cut worked");
             return body;
         }
 
