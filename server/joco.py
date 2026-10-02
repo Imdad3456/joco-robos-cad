@@ -47,6 +47,9 @@ KEEP_DIAGNOSTICS, DIAGNOSTIC_DAYS = 200, 60
 # "Ask for it": a student asks whoever holds a file's lock to finish and give it back. Gone once the lock moves, or after 2 days.
 EDIT_REQUESTS = os.path.join(CONFIG, 'edit-requests.json')
 EDIT_REQUEST_DAYS = 2
+# Parts lists sent from SOLIDWORKS (Tools → CAD Hub → Parts List): the latest per season, and the one before it to compare.
+PARTS = os.path.join(CONFIG, 'parts')
+MAX_PARTS_BODY = 2 * 1024 * 1024
 INVITES = os.path.join(CONFIG, 'invites.json')
 REQUESTS = os.path.join(CONFIG, 'requests.json')  # Students asking for an account, waiting for a mentor's code.
 MAX_REQUESTS = 40
@@ -524,6 +527,69 @@ def student_activity(state):
             current = ''
         rows.append((hours, name, current, held.get(name, [])))
     return sorted(rows)
+
+
+def _part_key(row):
+    return (row['buy'], row['vendor'].lower(), row['number'].lower(), row['name'].lower(), row['config'].lower(), row['folder'].lower())
+
+
+def save_parts(user, body):
+    season = str(body.get('season', ''))
+    if not SEASON.match(season) or season not in repositories():
+        raise Refused('Unknown season.')
+    raw = body.get('rows')
+    if not isinstance(raw, list) or not raw or len(raw) > 5000:
+        raise Refused('No parts in the list.')
+    rows = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise Refused('Bad parts list.')
+        qty = item.get('qty')
+        if not isinstance(qty, int) or not 0 < qty <= 100000:
+            raise Refused('Bad quantity.')
+        rows.append({'buy': bool(item.get('buy')), 'qty': qty,
+                     **{k: str(item.get(k, ''))[:200] for k in ('vendor', 'number', 'name', 'config', 'folder')}})
+    path = os.path.join(PARTS, season + '.json')
+    old = read_json(path) or {}
+    record = {'latest': {'at': time.time(), 'by': user, 'assembly': str(body.get('assembly', ''))[:200], 'rows': rows}}
+    if old.get('latest'):
+        record['previous'] = old['latest']
+    write_atomic(path, json.dumps(record) + '\n')
+    return len(rows)
+
+
+def parts_changes(record):
+    """(rows with a change note, rows no longer used) comparing the latest list with the previous one."""
+    latest = record['latest']['rows']
+    previous = {_part_key(r): r for r in (record.get('previous') or {}).get('rows', [])}
+    noted = []
+    for row in latest:
+        before = previous.pop(_part_key(row), None)
+        if not record.get('previous'):
+            change = ''
+        elif before is None:
+            change = 'new'
+        elif before['qty'] != row['qty']:
+            change = '%+d' % (row['qty'] - before['qty'])
+        else:
+            change = ''
+        noted.append((row, change))
+    return noted, list(previous.values())
+
+
+def parts_csv(record):
+    def cell(value):
+        value = str(value)
+        if value[:1] in ('=', '+', '-', '@'):
+            value = "'" + value
+        return '"' + value.replace('"', '""') + '"' if any(c in value for c in ',"\r\n') else value
+    lines = ['Type,Vendor,Part number,Name,Configuration,Quantity,Change,Folder']
+    noted, gone = parts_changes(record)
+    for row, change in noted:
+        lines.append(','.join(cell(v) for v in ('Buy' if row['buy'] else 'Make', row['vendor'], row['number'], row['name'], row['config'], row['qty'], change, row['folder'])))
+    for row in gone:
+        lines.append(','.join(cell(v) for v in ('Buy' if row['buy'] else 'Make', row['vendor'], row['number'], row['name'], row['config'], 0, 'removed', row['folder'])))
+    return '\r\n'.join(lines) + '\r\n'
 
 
 def diagnostic_files():
@@ -1079,11 +1145,13 @@ class Admin(BaseHTTPRequestHandler):
         query = parse_qs(urlsplit(self.path).query)
         if path == '/admin/diagnostics' and 'file' in query:
             return self.diagnostic_file(query['file'][0])
+        if path == '/admin/parts.csv':
+            return self.parts_download(query.get('season', [state.get('active') or ''])[0])
         notice = query.get('ok', [''])[0]
         error = query.get('error', [''])[0]
         self.query = query
         pages = {'/admin': self.home, '/admin/locks': self.locks_page, '/admin/library': self.library_page, '/admin/users': self.users_page,
-                 '/admin/addin': self.addin_page, '/admin/undo': self.undo_page, '/admin/diagnostics': self.diagnostics_page}
+                 '/admin/addin': self.addin_page, '/admin/undo': self.undo_page, '/admin/diagnostics': self.diagnostics_page, '/admin/parts': self.parts_page}
         if path not in pages:
             self.send_error(404)
             return
@@ -1097,7 +1165,7 @@ class Admin(BaseHTTPRequestHandler):
         if error:
             banner = '<div class="notice bad">' + esc(error) + '</div>'
         self.page({'/admin': 'Seasons', '/admin/locks': 'Locks', '/admin/library': 'Library', '/admin/users': 'Accounts', '/admin/addin': 'Add-in',
-                   '/admin/undo': 'Undo a submit', '/admin/diagnostics': 'Diagnostics'}[path], banner + body, path)
+                   '/admin/undo': 'Undo a submit', '/admin/diagnostics': 'Diagnostics', '/admin/parts': 'Parts'}[path], banner + body, path)
 
     def do_POST(self):
         if urlsplit(self.path).path == '/admin/api/stage-addin':
@@ -1108,6 +1176,8 @@ class Admin(BaseHTTPRequestHandler):
             return self.diagnostics_upload()
         if urlsplit(self.path).path in ('/admin/api/edit-request', '/admin/api/edit-request/dismiss'):
             return self.edit_request_api()
+        if urlsplit(self.path).path == '/admin/api/parts':
+            return self.parts_upload()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('POST')
         if urlsplit(self.path).path == '/account/setup':
@@ -1175,6 +1245,21 @@ class Admin(BaseHTTPRequestHandler):
                 record_heartbeat(self.user, str(body.get('version', '')), str(body.get('computer', '')), str(body.get('solidworks', '')),
                                  str(body.get('robot', '')), revision if isinstance(revision, int) else None)
             self.reply(200, 'ok')
+        except (Refused, ValueError) as exc:
+            self.reply(400, str(exc))
+
+    def parts_upload(self):
+        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
+            return self.reply(403, 'Not allowed.')
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if length > MAX_PARTS_BODY:
+                raise Refused('Parts list too large.')
+            body = json.loads(self.rfile.read(length) or b'{}')
+            _throttle(self.user, 'parts')
+            with Locked():
+                count = save_parts(self.user, body)
+            self.reply(200, '%d lines' % count)
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
 
@@ -1290,8 +1375,8 @@ class Admin(BaseHTTPRequestHandler):
         self.end_headers()
 
     def page(self, title, body, current, status=200):
-        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'), ('/admin/addin', 'Add-in'),
-                 ('/admin/diagnostics', 'Diagnostics')]
+        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/parts', 'Parts'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'),
+                 ('/admin/addin', 'Add-in'), ('/admin/diagnostics', 'Diagnostics')]
         nav = ''.join('<a href="%s"%s>%s</a>' % (h, ' class="on"' if h == current else '', t) for h, t in links)
         text = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>%s · CAD Hub</title><style>%s</style></head><body><header><b>CAD Hub</b><nav>%s</nav>'
@@ -1506,6 +1591,61 @@ class Admin(BaseHTTPRequestHandler):
                     '<span class="ok">ready</span>' if configured else '<span class="bad">no Onshape key on the server</span>',
                     today, frcdesign.DAILY_EXPORTS, len(ready), (', %d in progress' % len(pending)) if pending else '', calls, frcdesign.ANNUAL_CALLS,
                     rows or '<tr><td colspan="3" class="muted">Nothing imported yet.</td></tr>')
+
+    def parts_page(self, state):
+        seasons = sorted((n[:-5] for n in os.listdir(PARTS) if n.endswith('.json') and SEASON.match(n[:-5])), reverse=True) if os.path.isdir(PARTS) else []
+        season = self.query.get('season', [state.get('active') if state.get('active') in seasons else (seasons[0] if seasons else '')])[0]
+        record = read_json(os.path.join(PARTS, season + '.json')) if season in seasons else None
+        how = ('<p class="muted">In SOLIDWORKS, open the robot (or any assembly) and click <b>Tools → CAD Hub → Parts List</b>. '
+               'It counts every part (suppressed and excluded-from-BOM ones don\'t count; a bought gearbox or motor counts once), '
+               'saves a spreadsheet on that computer, and sends the list here.</p>')
+        if not record:
+            return '<section><h2>Parts list</h2>%s<p>No parts list yet.</p></section>' % how
+        latest = record['latest']
+        noted, gone = parts_changes(record)
+        def table(rows, buy):
+            out, vendor = '', None
+            for row, change in rows:
+                if row['buy'] != buy:
+                    continue
+                if buy and row['vendor'] != vendor:
+                    vendor = row['vendor']
+                    out += '<tr><th colspan="5" style="text-align:left;padding-top:14px">%s</th></tr>' % esc(vendor)
+                tag = '' if not change else '<span class="%s">%s</span>' % ('ok' if change == 'new' or change.startswith('+') else 'warn', esc(change))
+                out += '<tr><td>%s</td><td><b>%s</b>%s</td><td>%d</td><td>%s</td><td class="muted">%s</td></tr>' % (
+                    esc(row['number']), esc(row['name']), (' <span class="muted">(' + esc(row['config']) + ')</span>') if row['config'] else '',
+                    row['qty'], tag, esc(row['folder']))
+            return out or '<tr><td colspan="5" class="muted">None.</td></tr>'
+        others = ' · '.join('<a href="/admin/parts?season=%s">%s</a>' % (quote(s), esc(s)) for s in seasons if s != season)
+        removed = ''.join('<tr><td>%s</td><td>%s%s</td><td>%d</td><td class="muted">%s</td></tr>' % (
+            esc('Buy' if r['buy'] else 'Make'), esc(r['name']), (' (' + esc(r['config']) + ')') if r['config'] else '', r['qty'], esc(r['vendor'])) for r in gone)
+        buy_count = sum(r['qty'] for r in latest['rows'] if r['buy'])
+        make_count = sum(r['qty'] for r in latest['rows'] if not r['buy'])
+        return ('<section><h2>Parts list: %s</h2><p>From <b>%s</b>, sent by %s on %s. <b>%d</b> to buy, <b>%d</b> team-made. '
+                '<a href="/admin/parts.csv?season=%s">Download spreadsheet (CSV)</a>%s</p>%s%s</section>'
+                '<section><h2>Buy</h2><div class="scroll"><table><tr><th>Part number</th><th>Name</th><th>Qty</th><th>Change</th><th>Folder</th></tr>%s</table></div></section>'
+                '<section><h2>Make</h2><div class="scroll"><table><tr><th></th><th>Name</th><th>Qty</th><th>Change</th><th>Folder</th></tr>%s</table></div></section>'
+                '%s') % (
+            esc(season), esc(latest['assembly']), esc(latest['by']), time.strftime('%b %d %H:%M', time.localtime(latest['at'])), buy_count, make_count,
+            quote(season), (' · Other seasons: ' + others) if others else '',
+            '<p class="muted">Changes compare with the list sent before this one.</p>' if record.get('previous') else '', how,
+            table(noted, True), table(noted, False),
+            ('<section><h2>No longer in the robot</h2><table><tr><th></th><th>Name</th><th>Was</th><th>Vendor</th></tr>%s</table></section>' % removed) if removed else '')
+
+    def parts_download(self, season):
+        if self.guard() is None:
+            return
+        record = read_json(os.path.join(PARTS, season + '.json')) if SEASON.match(season or '') else None
+        if not record:
+            return self.send_error(404)
+        data = ('\ufeff' + parts_csv(record)).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/csv; charset=utf-8')
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Content-Disposition', 'attachment; filename="Parts - %s.csv"' % season)
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+        self.wfile.write(data)
 
     def diagnostics_page(self, state):
         rows = ''

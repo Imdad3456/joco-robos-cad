@@ -21,7 +21,7 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
    - **Submit** when you're done: one window lists your files and fixes any problems. The panel confirms it.
 4. **The CAD Hub panel** (right side) shows what's going on and only the button you need right now: Open Robot, Edit, Submit 3, or Close & Update when teammates have new changes. Below that, **Robot Files** lists the robot's folders and parts: search by name or folder, double-click to open (✎ yours, 🔒 someone else is editing, ● new). Teammates' changes come in by themselves whenever none of your robot documents are open. The **Library** tab finds any part: the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, tube…) in one search, plus "Import a downloaded CAD file" for vendor downloads.
 
-Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History), your account (Sign In, Change Password, Test Connection, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
+Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List), your account (Sign In, Change Password, Test Connection, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
 **Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or codes.
 
@@ -32,6 +32,7 @@ Everything is on your server's mentor page, **https://*your server*/admin** (Tea
 | Tab | Use it to |
 |---|---|
 | **Seasons** | Check health (backups, disk), see **who's working** (online, how current their robot is, what they're editing), create the next season, choose which season students open, archive old ones, see recent submits and **undo** a bad one |
+| **Parts** | The robot's parts list (sent from SOLIDWORKS with **Tools → CAD Hub → Parts List**): what to buy by vendor with part numbers, what to make, quantities, what changed since the last list, and a spreadsheet download |
 | **Locks** | See who's editing what and since when; release a lock someone abandoned (after they've confirmed they're done: releasing doesn't keep their unsubmitted changes) |
 | **Library** | Add reusable parts; see what's been imported from FRCDesignLib |
 | **Accounts** | Give waiting students their code (they asked from SOLIDWORKS with their own username and password), reject requests you don't recognize, reset a forgotten password, see add-in versions |

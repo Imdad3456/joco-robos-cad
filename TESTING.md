@@ -66,6 +66,14 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3b.9 | Both | Look at the file tree, then type `frame` | Folder, part, assembly and drawing icons; roomy rows; no heavy border. Results start with "Search results for "frame"", each with its folder in grey. **Esc** clears the search; **↻** (tooltip "Refresh robot files") reloads | ☐ |
 | 3b.10 | Both | Footer at the bottom of the Robot tab | **Check now · Diagnostics** on the left, the version on the right; both links work | ☐ |
 
+## 3c. Parts list
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3c.1 | A | Open the robot → **Tools → CAD Hub → Parts List** | A spreadsheet opens: Buy lines by vendor (AndyMark, WCP, REV…) with part numbers, then Make lines; a flash with the counts. Suppressed parts aren't in it; a COTS gearbox is one line | ☐ |
+| 3c.2 | A | Mentor page → **Parts** | The same list, sent by A, with **Download spreadsheet** | ☐ |
+| 3c.3 | A | Add two of any COTS part to the robot, save, **Parts List** again, reload **Parts** | That part shows **+2** (or **new**) | ☐ |
+
 ## 4. Together: nobody overwrites anybody
 
 | # | Who | Do | Expect | ✓ |

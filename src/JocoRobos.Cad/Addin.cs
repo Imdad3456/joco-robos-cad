@@ -42,6 +42,7 @@ namespace JocoRobos.Cad
         [DispId(20)] void ShowLibrary();
         [DispId(21)] void FileHistory();
         [DispId(22)] void CopyDiagnostics();
+        [DispId(23)] void PartsList();
     }
 
     [ComVisible(true)]
@@ -56,10 +57,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591907;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906 };
+        private const int GroupId = 591908;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591917;
+        private const int LayoutVersion = 591918;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -172,6 +173,7 @@ namespace JocoRobos.Cad
                 Add(group, "Choose Robot", "Pick which season's robot to work on", nameof(ChooseRobot), 9, menu, 9);
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu, 10);
                 Add(group, "File History", "Who changed the active file, when, and why; save an older version as a copy", nameof(FileHistory), 20, menu);
+                Add(group, "Parts List", "What to buy (by vendor) and what to make, with quantities, from the robot or the open assembly", nameof(PartsList), 22, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
@@ -492,6 +494,67 @@ namespace JocoRobos.Cad
             byte[] body = System.Text.Encoding.UTF8.GetBytes(report);
             using (var stream = request.GetRequestStream()) stream.Write(body, 0, body.Length);
             using (var response = (HttpWebResponse)request.GetResponse()) return response.StatusCode == HttpStatusCode.OK;
+        }
+
+        // ---------- parts list ----------
+
+        // The robot's (or the open assembly's) parts: a spreadsheet here, and the mentor page's Parts tab with what changed.
+        public void PartsList()
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                var robot = catalog.Robot;
+                var doc = application.ActiveDoc as ModelDoc2;
+                string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
+                if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY || !robot.Contains(path))
+                {
+                    path = FindMaster(robot);
+                    doc = path == null ? null : FindOpen(path);
+                }
+                if (doc == null)
+                    throw new InvalidOperationException("Open the robot (Open Robot), or the assembly you want a parts list of, then try again.");
+                var uses = new List<PartUse>();
+                CollectParts(robot.Root, ((AssemblyDoc)doc).GetComponents(true) as object[], uses, 0);
+                var rows = PartsSheet.Build(robot.Root, uses);
+                if (rows.Count == 0) throw new InvalidOperationException(Path.GetFileName(path) + " has no parts to list.");
+                string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments), "CAD Hub");
+                Directory.CreateDirectory(folder);
+                string file = Path.Combine(folder, "Parts - " + Path.GetFileNameWithoutExtension(path) + " - " + DateTime.Now.ToString("yyyy-MM-dd HHmm") + ".csv");
+                File.WriteAllText(file, PartsSheet.Csv(rows), new System.Text.UTF8Encoding(true)); // With a BOM, so Excel reads names right.
+                bool sent = false;
+                try { OperationDialog.Run("Sending to the mentor page…", () => Accounts.Post("admin/api/parts", login, PartsSheet.Json(robot.Name, Path.GetFileName(path), rows))); sent = true; }
+                catch (Exception exception) { ErrorLog.Write("send parts list", exception); }
+                int buy = rows.Where(r => r.Buy).Sum(r => r.Quantity), make = rows.Where(r => !r.Buy).Sum(r => r.Quantity);
+                ShowFlash("✓ Parts list of " + Path.GetFileName(path) + ": " + buy + " to buy (" + rows.Where(r => r.Buy).Select(r => r.Vendor).Distinct().Count() +
+                    " vendors), " + make + " team-made" + (sent ? ". Also on the mentor page's Parts tab." : "."));
+                try { System.Diagnostics.Process.Start(file); }
+                catch (Exception) { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\""); }
+            });
+        }
+
+        // Every counted component: suppressed, excluded-from-BOM and envelope ones aren't parts of the robot. Team sub-assemblies are
+        // opened up; bought ones (gearboxes, motors) count as one item.
+        private static void CollectParts(string robotRoot, object[] components, List<PartUse> uses, int depth)
+        {
+            if (components == null || depth > 40) return;
+            foreach (var item in components)
+            {
+                var component = item as Component2;
+                if (component == null) continue;
+                try
+                {
+                    if (component.IsSuppressed() || component.ExcludeFromBOM || component.IsEnvelope()) continue;
+                    string file = component.GetPathName();
+                    if (String.IsNullOrEmpty(file)) continue;
+                    if (file.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) && !PartsSheet.IsBoughtAssembly(robotRoot, file))
+                        CollectParts(robotRoot, component.GetChildren() as object[], uses, depth + 1);
+                    else uses.Add(new PartUse { Path = file, Configuration = component.ReferencedConfiguration });
+                }
+                catch (System.Runtime.InteropServices.COMException) { } // A component SOLIDWORKS can't describe: skip it, never fail the list.
+            }
         }
 
         // ---------- "Ask for it" ----------

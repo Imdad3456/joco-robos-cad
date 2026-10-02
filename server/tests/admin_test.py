@@ -443,4 +443,19 @@ check(addin(U, 'POST', '/admin/api/heartbeat', {'version': '9.9.9', 'computer': 
 page = req('/admin', *M)[2]; check("Who's working" in page and '2 submits behind' in page and 'online' in page, 'mentor sees who is behind')
 addin(U, 'POST', '/admin/api/heartbeat', {'version': '9.9.9', 'computer': 'LAB-1', 'robot': '2027-Robot', 'revision': head})
 check('up to date' in req('/admin', *M)[2], 'mentor sees up to date')
+# Parts list: a student's add-in sends it; mentors see it with what changed since the previous one, and download it.
+def part(name, qty, buy=True, vendor='AndyMark', number='', config=''):
+    return {'buy': buy, 'vendor': vendor if buy else 'Team-made', 'number': number, 'name': name, 'config': config, 'qty': qty, 'folder': '90_COTS/' + vendor if buy else '30_Shooter'}
+first = [part('am-1635 Collar', 4, number='am-1635'), part('NEO', 2, vendor='REV'), part('Plate', 2, buy=False), part('Old Bracket', 1, buy=False)]
+check(addin(U, 'POST', '/admin/api/parts', {'season': '2027-Robot', 'assembly': 'Robot.SLDASM', 'rows': first})[0] == 200, 'student sends a parts list')
+second = [part('am-1635 Collar', 6, number='am-1635'), part('NEO', 2, vendor='REV'), part('Plate', 2, buy=False), part('=cmd|x', 1, buy=False), part('WCP-0940 Swerve', 4, vendor='WCP', number='WCP-0940')]
+check(addin(U, 'POST', '/admin/api/parts', {'season': '2027-Robot', 'assembly': 'Robot.SLDASM', 'rows': second})[0] == 200, 'a newer parts list')
+check(addin(U, 'POST', '/admin/api/parts', {'season': '../x', 'rows': second})[0] == 400 and addin(U, 'POST', '/admin/api/parts', {'season': '2027-Robot', 'rows': [part('x', -1)]})[0] == 400, 'bad parts lists refused')
+check(req('/admin/parts', *U)[0] == 403, 'students cannot read the parts page')
+page = req('/admin/parts', *M)[2]
+check('Parts list: 2027-Robot' in page and 'am-1635' in page and '+2' in page and 'WCP-0940 Swerve' in page and 'new' in page, 'mentor sees parts with changes')
+check('No longer in the robot' in page and 'Old Bracket' in page and '=cmd|x' in page, 'removed parts listed; names escaped not executed')
+s_, _, text = req('/admin/parts.csv?season=2027-Robot', *M)
+check(s_ == 200 and "'=cmd|x" in text and 'removed' in text and 'am-1635' in text, 'CSV download, formulas neutralized ' + text[:200])
+check(req('/admin/parts.csv?season=2027-Robot', *U)[0] == 403, 'students cannot download it')
 print(f'PASS: {n} server/admin checks')

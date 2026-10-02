@@ -143,6 +143,7 @@ static class Program
             SubmitChecks(temp);
             PaneChecks();
             RobotFileChecks(temp);
+            PartsChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
 
@@ -165,6 +166,39 @@ static class Program
             "https://cad.example.org/svn/2026-Robot/", "Another team's server: its own address, nothing moved from 5919's old one");
         TeamServer.Use(new Uri(TeamServer.Original));
         Check(WorkspaceInfo.OldServerHosts.Length == 1, "Team 5919 keeps moving copies from its old address");
+    }
+
+    // Parts list: buy (by vendor, part number) vs make, quantities, configurations, bought assemblies counted once.
+    static void PartsChecks(string temp)
+    {
+        string root = Path.Combine(temp, "Parts", "2026-Robot");
+        Func<string, string, PartUse> use = (relative, config) => new PartUse { Path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)), Configuration = config };
+        var uses = new System.Collections.Generic.List<PartUse>();
+        for (int i = 0; i < 3; i++) uses.Add(use("90_COTS/AndyMark/am-1635 500Hex Thin Collar Clamp.SLDPRT", "Default"));
+        uses.Add(use("90_COTS/Hardware/Fasteners/97145A104_Retaining Ring.SLDPRT", null));
+        uses.Add(use("90_COTS/REV/Motors/NEOmotor.SLDPRT", null));
+        uses.Add(use("30_Shooter/Plate.SLDPRT", "Default"));
+        uses.Add(use("30_Shooter/Plate.SLDPRT", "Default"));
+        uses.Add(use("30_Shooter/Bracket^Shooter.SLDPRT", null));
+        uses.Add(use("10_Drivetrain/Tube.SLDPRT", "Default"));
+        uses.Add(use("10_Drivetrain/Tube.SLDPRT", "24in"));
+        uses.Add(use("40_Climber/am-4668 2 Stage Climber.SLDASM", null));
+        var rows = PartsSheet.Build(root, uses);
+        Func<string, string, PartsRow> row = (name, config) => rows.Single(r => r.Name == name && r.Configuration == config);
+        var collar = row("am-1635 500Hex Thin Collar Clamp", "");
+        Check(collar.Buy && collar.Vendor == "AndyMark" && collar.PartNumber == "am-1635" && collar.Quantity == 3, "COTS part: vendor folder, part number, quantity");
+        var ring = row("97145A104_Retaining Ring", "");
+        Check(ring.Buy && ring.Vendor == "McMaster-Carr" && ring.PartNumber == "97145A104", "Hardware folder: the part number names the vendor");
+        Check(row("NEOmotor", "").Vendor == "REV" && row("NEOmotor", "").PartNumber == "", "Vendor from the folder when there's no part number");
+        Check(!row("Plate", "").Buy && row("Plate", "").Quantity == 2 && row("Plate", "").Vendor == "Team-made", "Team part: make, counted");
+        Check(!row("Bracket", "").Buy && row("Bracket", "").Folder.Contains("inside its assembly"), "Virtual component: team-made, saved in its assembly");
+        Check(row("Tube", "").Quantity == 1 && row("Tube", "24in").Quantity == 1, "Configurations are separate lines");
+        Check(row("am-4668 2 Stage Climber", "").Buy && row("am-4668 2 Stage Climber", "").Vendor == "AndyMark", "Vendor-numbered assembly bought as one");
+        Check(rows.TakeWhile(r => r.Buy).Count() == rows.Count(r => r.Buy), "Buy lines first");
+        Check(PartsSheet.IsBoughtAssembly(root, Path.Combine(root, "90_COTS", "AndyMark", "Gearbox.SLDASM")) &&
+            !PartsSheet.IsBoughtAssembly(root, Path.Combine(root, "30_Shooter", "Shooter.SLDASM")), "COTS assemblies counted once, team assemblies opened up");
+        string csv = PartsSheet.Csv(new[] { new PartsRow { Name = "=HYPERLINK(1)", Vendor = "A, B", Quantity = 1 } });
+        Check(csv.Contains("'=HYPERLINK(1)") && csv.Contains("\"A, B\""), "CSV: no formulas, commas quoted");
     }
 
     // The Robot tab's file browser: only robot CAD, real folders, searchable by name or folder.
