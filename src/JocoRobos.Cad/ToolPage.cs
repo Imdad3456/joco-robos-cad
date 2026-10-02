@@ -88,13 +88,15 @@ namespace JocoRobos.Cad
 
         // The page on screen, if any: SOLIDWORKS can crash when a second PropertyManager page is opened over one that's still up.
         private static ToolPage open;
+        private object preselected;
 
         internal void Show()
         {
             if (open != null)
                 throw new InvalidOperationException(open.tool.Title + " is already open on the left. Finish it with ✓ (or cancel with ✗) first.");
             // Something already selected that this tool takes (the plate's face, the tube's side): it starts in the box.
-            object preselected = null;
+            ErrorLog.Step("opening " + tool.Title);
+            preselected = null;
             try
             {
                 var manager = (SelectionMgr)doc.SelectionManager;
@@ -154,21 +156,7 @@ namespace JocoRobos.Cad
                 (short)swPropertyManagerPageControlLeftAlign_e.swControlAlign_LeftEdge, (int)(swAddControlOptions_e.swControlOptions_Visible | swAddControlOptions_e.swControlOptions_Enabled), "");
             page.Show2(0);
             open = this;
-            if (preselected != null && Accepts(preselected))
-            {
-                try
-                {
-                    var data = (SelectData)((SelectionMgr)doc.SelectionManager).CreateSelectData();
-                    data.Mark = SelectionMark;
-                    doc.ClearSelection2(true);
-                    var entity = preselected as Entity;
-                    if (entity != null) entity.Select4(true, data);
-                    else ((preselected as DisplayDimension)?.GetAnnotation() as Annotation)?.Select3(true, data);
-                }
-                catch (Exception) { }
-                if (chosen == null) chosen = preselected; // In case SOLIDWORKS doesn't report the selection to the box.
-            }
-            Refresh();
+            ErrorLog.Step(tool.Title + " shown");
         }
 
         // New values: update the result line and the preview body.
@@ -284,7 +272,9 @@ namespace JocoRobos.Cad
             {
                 if (!tool.MakesFeature)
                 {
+                    ErrorLog.Step(tool.Title + ": applying");
                     string done = tool.Apply(application, doc, values, chosen, standards);
+                    ErrorLog.Step(tool.Title + ": done");
                     if (!String.IsNullOrEmpty(done)) report(done);
                 }
                 else if (editing != null) { Update(); report("✓ Updated " + editing.Name + "."); }
@@ -326,7 +316,26 @@ namespace JocoRobos.Cad
         }
 
         // ---------- the rest of the handler interface (unused) ----------
-        public void AfterActivation() { }
+        // The page is fully up: now the face already selected goes into its box (not while SOLIDWORKS is still building the page).
+        public void AfterActivation()
+        {
+            try
+            {
+                if (preselected != null && Accepts(preselected))
+                {
+                    var data = (SelectData)((SelectionMgr)doc.SelectionManager).CreateSelectData();
+                    data.Mark = SelectionMark;
+                    doc.ClearSelection2(true);
+                    var entity = preselected as Entity;
+                    if (entity != null) entity.Select4(true, data);
+                    else ((preselected as DisplayDimension)?.GetAnnotation() as Annotation)?.Select3(true, data);
+                    if (chosen == null) chosen = preselected; // In case SOLIDWORKS doesn't report the selection to the box.
+                }
+                preselected = null;
+                Refresh();
+            }
+            catch (Exception exception) { ErrorLog.Write(tool.Title + " opening", exception); }
+        }
         public bool OnHelp() { return false; }
         public bool OnPreviousPage() { return false; }
         public bool OnNextPage() { return false; }

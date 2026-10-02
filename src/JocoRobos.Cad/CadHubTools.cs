@@ -270,13 +270,10 @@ namespace JocoRobos.Cad
                 CornerRadius = p.Number("corner", 0.0625), MinPocket = p.Number("smallest", 0.35) };
         }
 
+        // Kept light: the pockets are worked out once, on ✓ (the flash then says how many and the weight saved).
         internal override string Result(FeatureParams p, TeamStandards standards, object selection)
         {
-            var face = selection as Face2;
-            if (face == null) return "Click the plate's flat face.";
-            var plan = Addin.PlanPockets(face, Settings(p));
-            return plan.Count == 0 ? "No pockets fit: try narrower ribs, a smaller border or ring, or a smaller smallest pocket." :
-                plan.Count + " pockets, about " + plan.Percent.ToString("0") + "% of the face removed.";
+            return selection is Face2 ? "Ready: ✓ cuts the pockets (about " + StockParts.Inches(p.Number("size", 2)) + " in across)." : "Click the plate's flat face.";
         }
 
         internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return null; }

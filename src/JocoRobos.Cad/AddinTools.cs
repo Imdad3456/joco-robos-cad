@@ -256,17 +256,6 @@ namespace JocoRobos.Cad
 
         public void LightenPlate() { ShowTool(CadHubTool.Find("lighten")); }
 
-        // The pockets for a face (for the page's result line, and the cut).
-        internal static LightenPlan PlanPockets(Face2 face, LightenSettings settings)
-        {
-            double[] frame;
-            List<double[]> outline;
-            List<Circle2> holes;
-            List<List<double[]>> cutouts;
-            ReadPlate(face, out frame, out outline, out holes, out cutouts);
-            return PlateLighten.Plan(outline, holes, null, settings, cutouts);
-        }
-
         private static void ReadPlate(Face2 face, out double[] frame, out List<double[]> outline, out List<Circle2> holes, out List<List<double[]>> cutouts)
         {
             var surface = face?.GetSurface() as Surface;

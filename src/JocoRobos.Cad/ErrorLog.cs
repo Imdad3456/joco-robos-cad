@@ -26,6 +26,17 @@ namespace JocoRobos.Cad
             catch (Exception) { }
         }
 
+        /// <summary>A breadcrumb before something that could take SOLIDWORKS down: after a crash, the last one says where it was.</summary>
+        internal static void Step(string what)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FilePath));
+                File.AppendAllText(FilePath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + Updater.Current + "  step: " + what + "\r\n");
+            }
+            catch (Exception) { }
+        }
+
         internal static void Write(string where, Exception exception)
         {
             try
