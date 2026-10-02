@@ -43,3 +43,11 @@ Everything people see says **CAD Hub** (panel, menus, dialogs, installer, SOLIDW
 - The Deck also runs a Discord bot, Lavalink and Pterodactyl: leave them alone.
 - Mentors release add-in versions themselves (Release to students); tags only stage them.
 - After 1.0: fixes only for anything that could lose or overwrite work, break someone else's robot, block recovery, or make Open → CAD → Submit confusing. Everything else waits for 1.1.
+
+## Phase 2–3 tools (1.11–1.13)
+
+- Powertrain (`Powertrain.cs`, `SpurGear.cs`, tested): sprocket (ANSI seats and flanks), timing pulley (HTD/GT2 printed-pulley grooves), ring gears (spur outline with addendum/dedendum swapped and negative backlash), planetary placement (`Planets`, `RingTurn`; the tests check the teeth don't overlap), gear ratios. Tools in `CadHubTools.cs` are macro features; `BuildBodies` lets one feature make several bodies (planetary). From an assembly, `ShowTool` opens the page on a new part and `FinishInAssembly` saves it to `90_COTS/Stock/<Folder>/<PartName>.SLDPRT` and inserts it.
+- Electrical (`Wiring.cs` tested; `ElectricalTools.cs`, `AddinElectrical.cs`): records live in the assembly's custom properties named `CADHub <Kind> <id> | <field>` (Connector C1…, Wire W1…, ZipTie Z1…, Harness/Bundle by name). Wires are 3D sketches named "Wire W3 (CAN)"; the report re-reads their lengths. Connector positions are kept in the component's coordinates and moved with it.
+- Mounting patterns (`Mounting.cs` tested): only vendor-published numbers (sources in the code and the panel). The MAXSpline bore profile isn't public, so the MAX option cuts a 1.125" round bore (MAXSpline bearings fit), not the spline.
+- Side panel (`ToolPage`): text fields, several picks in order (`MultipleSelections`, `ApplyAll`), remembered settings per tool, one page at a time.
+

@@ -264,6 +264,47 @@ namespace JocoRobos.Cad
             return "✓ Drew " + ((Feature)sketch).Name + ": pitch circles " + center.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " in apart and the belt's path.";
         }
 
+        // ---------- mounting patterns ----------
+
+        public void MountingPattern() { ShowTool(CadHubTool.Find("mounting")); }
+
+        // The holes (model points, meters) and the center hole, sketched on the face and cut through.
+        internal static string CutMountingPattern(SldWorks app, ModelDoc2 doc, object selection, List<double[]> holes, double[] center, double hole, double centerHole, string name)
+        {
+            var face = selection as Face2 ?? ((selection as Edge)?.GetTwoAdjacentFaces2() as object[] ?? new object[0]).OfType<Face2>()
+                .FirstOrDefault(f => (f.GetSurface() as Surface)?.IsPlane() == true);
+            if (face == null) throw new InvalidOperationException("Click the flat face where the pattern goes.");
+            doc.ClearSelection2(true);
+            ((Entity)face).Select4(false, null);
+            doc.SketchManager.InsertSketch(true);
+            var sketch = doc.SketchManager.ActiveSketch;
+            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
+            var math = (MathUtility)app.GetMathUtility();
+            Func<double[], double[]> at = model => (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(sketch.ModelToSketchTransform)).ArrayData;
+            doc.SketchManager.AddToDB = true;
+            doc.SketchManager.DisplayWhenAdded = false;
+            try
+            {
+                foreach (var model in holes) { var p = at(model); doc.SketchManager.CreateCircleByRadius(p[0], p[1], 0, hole / 2 * Meters); }
+                if (centerHole > 0) { var p = at(center); doc.SketchManager.CreateCircleByRadius(p[0], p[1], 0, centerHole / 2 * Meters); }
+            }
+            finally
+            {
+                doc.SketchManager.AddToDB = false;
+                doc.SketchManager.DisplayWhenAdded = true;
+            }
+            var feature = CutThroughBoth(doc);
+            string label = name.Split('(')[0].Trim();
+            for (int n = 1; n < 50 && !TryRename(feature, n == 1 ? label : label + " " + n); n++) { }
+            return "✓ " + feature.Name + ": " + holes.Count + " holes" + (centerHole > 0 ? " and the center hole" : "") + ", through. It's an ordinary cut.";
+        }
+
+        private static bool TryRename(Feature feature, string name)
+        {
+            try { feature.Name = name; return feature.Name == name; }
+            catch (Exception) { return false; }
+        }
+
         // ---------- lighten plate ----------
 
         public void LightenPlate() { ShowTool(CadHubTool.Find("lighten")); }
@@ -337,7 +378,7 @@ namespace JocoRobos.Cad
         }
 
         // The face's plane as origin (0..2), u axis (3..5), v axis (6..8), in meters: u along its longest straight edge.
-        private static double[] PlaneFrame(Surface surface, Face2 face)
+        internal static double[] PlaneFrame(Surface surface, Face2 face)
         {
             var plane = (double[])surface.PlaneParams; // normal x,y,z then a point x,y,z
             double[] normal = { plane[0], plane[1], plane[2] }, origin = { plane[3], plane[4], plane[5] };

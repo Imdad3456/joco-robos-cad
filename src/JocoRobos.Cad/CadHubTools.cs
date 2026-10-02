@@ -82,7 +82,7 @@ namespace JocoRobos.Cad
         internal virtual string Folder { get { return Title + "s"; } }
 
         internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new SprocketTool(), new PulleyTool(), new ShaftTool(), new PlanetaryTool(),
-            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new ConnectorTool(), new RouteWireTool(), new ZipTieTool(), new HarnessTool(), new BearingHoleTool() };
+            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new ConnectorTool(), new RouteWireTool(), new ZipTieTool(), new HarnessTool(), new MountingPatternTool(), new BearingHoleTool() };
         // Bearing Hole is no longer on the tab: kept so the CAD Hub bearing holes earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
@@ -753,6 +753,123 @@ namespace JocoRobos.Cad
             dimension.GetDimension2(0).SetSystemValue3(center * M, (int)swSetValueInConfiguration_e.swSetValue_InThisConfiguration, null);
             doc.EditRebuild3();
             return "✓ Set the dimension to " + Show(center) + " in.";
+        }
+    }
+
+    /// <summary>Mounting Pattern: a motor face, gearbox or REV/ThriftyBot grid pattern, centered where you click.</summary>
+    internal sealed class MountingPatternTool : CadHubTool
+    {
+        internal override string Kind { get { return "mounting"; } }
+        internal override string Title { get { return "Mounting Pattern"; } }
+        internal override bool Cuts { get { return true; } }
+        internal override bool NeedsSelection { get { return true; } }
+        internal override bool MakesFeature { get { return false; } }
+        internal override int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES, (int)swSelectType_e.swSelEDGES }; } }
+
+        internal override List<ToolField> Fields(TeamStandards standards)
+        {
+            return new List<ToolField>
+            {
+                new ToolField { Key = "where", Label = "Click the face where its center goes, or a round hole's edge to center on it", Kind = FieldKind.Selection },
+                new ToolField { Key = "pattern", Label = "Pattern", Kind = FieldKind.Choice, Items = Mounting.Patterns.Select(m => m.Name).ToList() },
+                new ToolField { Key = "holeSize", Label = "Holes", Kind = FieldKind.Choice, Items = Mounting.HoleSizes.ToList() },
+                new ToolField { Key = "angle", Label = "Turn (degrees, from the face's longest edge)", Kind = FieldKind.Number, Min = -360, Max = 360, Default = 0, Step = 15 },
+                new ToolField { Key = "center", Label = "Center hole", Kind = FieldKind.Choice, Items = new List<string> { "The pattern's (motor pilot, bearing)", "None", "Custom size" } },
+                new ToolField { Key = "centerSize", Label = "Custom center hole", Kind = FieldKind.Length, Min = 0.1, Max = 4, Default = 0.76, Step = 0.0625, Advanced = true },
+                new ToolField { Key = "count", Label = "Custom: holes", Kind = FieldKind.Number, Min = 2, Max = 24, Default = 4, Advanced = true },
+                new ToolField { Key = "circle", Label = "Custom: bolt circle", Kind = FieldKind.Length, Min = 0.25, Max = 12, Default = 2, Step = 0.125, Advanced = true },
+            };
+        }
+
+        private static MountPattern Pattern(FeatureParams p) { return Mounting.Pattern((int)p.Number("pattern", 0)); }
+        private static bool Custom(FeatureParams p) { return (int)p.Number("pattern", 0) == Mounting.Patterns.Count - 1; }
+        private static int Count(FeatureParams p) { return Custom(p) ? (int)p.Number("count", 4) : Pattern(p).Count; }
+        private static double Circle(FeatureParams p) { return Custom(p) ? p.Number("circle", 2) : Pattern(p).Circle; }
+        private static double Hole(FeatureParams p) { return Mounting.HoleDiameters[Math.Max(0, Math.Min(Mounting.HoleDiameters.Length - 1, (int)p.Number("holeSize", 0)))]; }
+
+        private static double Center(FeatureParams p)
+        {
+            switch ((int)p.Number("center", 0))
+            {
+                case 1: return 0;
+                case 2: return p.Number("centerSize", 0.76);
+                default: return Pattern(p).Center;
+            }
+        }
+
+        internal static List<double[]> Holes(FeatureParams p)
+        {
+            return Mounting.Holes(Pattern(p), p.Number("angle", 0), Count(p), Circle(p), Center(p), Hole(p));
+        }
+
+        internal override string Result(FeatureParams p, TeamStandards standards, object selection)
+        {
+            string what = Mounting.Describe(Pattern(p), p.Number("angle", 0), Count(p), Circle(p), Center(p), Hole(p), Holes(p).Count);
+            return selection == null ? "Click where it goes. " + what : what;
+        }
+
+        // The center (a click on the face, or a round edge's center), the face's normal, and its longest straight edge for 0°.
+        internal override string Capture(object selection, double[] pickPoint, FeatureParams p, TeamStandards standards)
+        {
+            double[] center = null;
+            var face = selection as Face2;
+            var curve = (selection as Edge)?.GetCurve() as Curve;
+            if (curve != null && curve.IsCircle())
+            {
+                var circle = (double[])curve.CircleParams;
+                center = new[] { circle[0], circle[1], circle[2] };
+                face = (((Edge)selection).GetTwoAdjacentFaces2() as object[] ?? new object[0]).OfType<Face2>().FirstOrDefault(f => (f.GetSurface() as Surface)?.IsPlane() == true);
+            }
+            var surface = face?.GetSurface() as Surface;
+            if (surface == null || !surface.IsPlane()) return "Click a flat face, or the edge of a round hole in one.";
+            var frame = Addin.PlaneFrame(surface, face);
+            var plane = (double[])surface.PlaneParams;
+            if (center == null)
+            {
+                if (pickPoint == null) return "Click on the face where the center goes.";
+                double offset = (pickPoint[0] - plane[3]) * plane[0] + (pickPoint[1] - plane[4]) * plane[1] + (pickPoint[2] - plane[5]) * plane[2];
+                center = new[] { pickPoint[0] - offset * plane[0], pickPoint[1] - offset * plane[1], pickPoint[2] - offset * plane[2] };
+            }
+            string[] names = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz" };
+            var values = center.Concat(new[] { plane[0], plane[1], plane[2] }).Concat(new[] { frame[3], frame[4], frame[5] }).ToArray();
+            for (int i = 0; i < names.Length; i++) p.Set(names[i], values[i]);
+            return null;
+        }
+
+        /// <summary>Where each hole goes in the model (meters): the center plus its offset along the face's axes.</summary>
+        internal static List<double[]> ModelPoints(FeatureParams p)
+        {
+            double[] c = { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) }, n = { p.Number("ax", 0), p.Number("ay", 0), p.Number("az", 1) },
+                u = { p.Number("ux", 1), p.Number("uy", 0), p.Number("uz", 0) };
+            double[] v = { n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0] };
+            return Holes(p).Select(h => new[] { c[0] + (h[0] * u[0] + h[1] * v[0]) * M, c[1] + (h[0] * u[1] + h[1] * v[1]) * M, c[2] + (h[0] * u[2] + h[1] * v[2]) * M }).ToList();
+        }
+
+        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return BuildBodies(application, p, preview).FirstOrDefault(); }
+
+        // The preview: a short pin through every hole (and the center hole), so you see where they land before cutting.
+        internal override List<Body2> BuildBodies(SldWorks application, FeatureParams p, bool preview)
+        {
+            var bodies = new List<Body2>();
+            if (p["cx"] == null) return bodies;
+            var modeler = (Modeler)application.GetModeler();
+            double[] n = { p.Number("ax", 0), p.Number("ay", 0), p.Number("az", 1) };
+            double length = 0.02;
+            Action<double[], double> pin = (at, diameter) =>
+            {
+                var start = new[] { at[0] - n[0] * length / 2, at[1] - n[1] * length / 2, at[2] - n[2] * length / 2 };
+                var body = modeler.CreateBodyFromCyl(new[] { start[0], start[1], start[2], n[0], n[1], n[2], diameter / 2 * M, length }) as Body2;
+                if (body != null) bodies.Add(body);
+            };
+            foreach (var at in ModelPoints(p)) pin(at, Hole(p));
+            if (Center(p) > 0) pin(new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) }, Center(p));
+            return bodies;
+        }
+
+        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
+        {
+            return Addin.CutMountingPattern(application, doc, selection, ModelPoints(p), new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) },
+                Hole(p), Center(p), Pattern(p).Name);
         }
     }
 }

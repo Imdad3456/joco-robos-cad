@@ -149,6 +149,7 @@ static class Program
             FeatureChecks();
             PowertrainChecks();
             WiringChecks();
+            MountingChecks();
             HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
@@ -350,6 +351,25 @@ static class Program
         Check(powered.Any(l => l == "✗ SPARK B isn't connected to the battery by power wires.") && powered.Any(l => l.Contains("2 devices powered")),
             "Power: devices the battery doesn't reach are listed");
         Check(Wiring.PowerReport(power, new[] { wire("Battery", "PDH", 0), wire("PDH", "SPARK A", 3), wire("PDH", "SPARK B", 2) }).Last().StartsWith("✓"), "Power: all reached");
+    }
+
+    // Mounting patterns: holes where the vendors put them.
+    static void MountingChecks()
+    {
+        var neo = Mounting.Holes(Mounting.Patterns[0], 0, 4, 2, 0.76, 0.196);
+        Check(neo.Count == 4 && neo.All(p => Math.Abs(Math.Sqrt(p[0] * p[0] + p[1] * p[1]) - 1) < 1e-9) && neo.Any(p => Math.Abs(p[0] - 1) < 1e-9 && Math.Abs(p[1]) < 1e-9),
+            "NEO/Kraken face: 4 holes on the 2\" circle, the first along the X axis");
+        var falcon = Mounting.Holes(Mounting.Patterns[1], 0, 6, 2, 0.76, 0.196);
+        // Kraken X60's 11 holes every 30°: the 4- and 6-hole sets must land on its holes (multiples of 30°) at 0°.
+        Check(falcon.Count == 6 && falcon.Concat(neo).All(p => { double a = Math.Atan2(p[1], p[0]) * 180 / Math.PI; return Math.Abs(a / 30 - Math.Round(a / 30)) < 1e-6; }),
+            "Falcon face: 6 holes; both motor sets line up with Kraken X60's 30° holes");
+        var turned = Mounting.Holes(Mounting.Patterns[2], 45, 2, 2, 0.76, 0.196);
+        Check(Math.Abs(turned[0][0] - Math.Sqrt(0.5)) < 1e-6 && Math.Abs(turned[0][1] - Math.Sqrt(0.5)) < 1e-6, "Turning the pattern turns the holes");
+        var grid = Mounting.Holes(Mounting.Patterns[4], 0, 0, 0, 1.125, 0.196);
+        Check(grid.Count == 20 && grid.All(p => Math.Sqrt(p[0] * p[0] + p[1] * p[1]) - 0.098 >= 1.125 / 2 + 0.03 - 1e-9) &&
+            grid.All(p => Math.Abs(p[0] * 2 - Math.Round(p[0] * 2)) < 1e-9 && Math.Abs(p[1] * 2 - Math.Round(p[1] * 2)) < 1e-9 && Math.Abs(p[0]) <= 1 && Math.Abs(p[1]) <= 1),
+            "MAX/ThriftyBot grid: #10 holes on the 1/2\" grid in a 2\" square, clear of the 1.125\" bearing bore (" + grid.Count + " holes)");
+        Check(Mounting.Describe(Mounting.Patterns[0], 0, 4, 2, 0.76, 0.196, 4).StartsWith("4 × ⌀0.196 on a 2\" circle"), "The panel says exactly what's cut");
     }
 
     static Clipper2Lib.PathD Poly(System.Collections.Generic.List<double[]> points) { return new Clipper2Lib.PathD(points.Select(p => new Clipper2Lib.PointD(p[0], p[1]))); }

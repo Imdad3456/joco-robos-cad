@@ -216,3 +216,13 @@ Send this list to Claude; each problem gets fixed and you retest just that step.
 | 3f.7 | A | Drag a wire's sketch point, then Wiring Report again | The routed length changed | ☐ |
 | 3f.8 | B | Open the assembly A submitted → Wiring Report | The same wires, harnesses and checks | ☐ |
 
+## 3g. Mounting patterns (a plate part you've clicked Edit on)
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3g.1 | A | **Mounting Pattern** → click the plate where a NEO goes → Motor face, 4 holes | Preview pins at four holes on a 2" circle and the center; the panel: "4 × ⌀0.196 on a 2\" circle … center ⌀0.760. From: REV NEO and WCP Kraken X60 docs …" | ☐ |
+| 3g.2 | A | Turn 45 | The preview turns | ☐ |
+| 3g.3 | A | ✓, then put a NEO (from the Library) on it | The NEO's holes and pilot line up with the cut | ☐ |
+| 3g.4 | A | Click an existing 1.125" hole's edge → 1/2" grid, 2" square | 20 holes on the grid around it, none breaking into the hole | ☐ |
+| 3g.5 | A | Custom bolt circle: 3 holes on 1.5" | The panel shows it; ✓ cuts it | ☐ |
+
