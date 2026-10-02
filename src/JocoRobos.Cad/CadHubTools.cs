@@ -80,9 +80,12 @@ namespace JocoRobos.Cad
         /// <summary>Used from an assembly: the part's file name (without .SLDPRT) and its folder under 90_COTS/Stock.</summary>
         internal virtual string PartName(FeatureParams p) { return Title; }
         internal virtual string Folder { get { return Title + "s"; } }
+        /// <summary>How many separate bodies (each its own CAD Hub feature): a planetary's sun, planets and ring.</summary>
+        internal virtual int Pieces(FeatureParams p) { return 1; }
+        internal virtual string PieceName(FeatureParams p, int piece) { return ""; }
 
         internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new SprocketTool(), new PulleyTool(), new ShaftTool(), new PlanetaryTool(),
-            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new ConnectorTool(), new RouteWireTool(), new ZipTieTool(), new HarnessTool(), new MountingPatternTool(), new BearingHoleTool() };
+            new GearRatioTool(), new LightenTool(), new BeltChainTool(), new MountingPatternTool(), new BearingHoleTool() };
         // Bearing Hole is no longer on the tab: kept so the CAD Hub bearing holes earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
@@ -515,6 +518,10 @@ namespace JocoRobos.Cad
         private static int Count(FeatureParams p) { return (int)p.Number("planets", 3); }
 
         internal override string Problem(FeatureParams p) { return Powertrain.PlanetaryProblem(Sun(p), Planet(p), Ring(p), Count(p)); }
+
+        // Sun, each planet, the ring: in the order BuildBodies makes them.
+        internal override int Pieces(FeatureParams p) { return Count(p) + 2; }
+        internal override string PieceName(FeatureParams p, int piece) { return piece == 0 ? "Sun" : piece <= Count(p) ? "Planet " + piece : "Ring"; }
 
         internal override string Result(FeatureParams p, TeamStandards standards)
         {

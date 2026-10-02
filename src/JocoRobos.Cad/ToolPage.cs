@@ -64,7 +64,7 @@ namespace JocoRobos.Cad
 
         private const string SavedKey = @"Software\JOCO ROBOS\CAD\Tools";
         // Where the student picked the selection: never remembered, it belongs to one part.
-        private static readonly string[] Placement = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz", "bore", "picks" };
+        private static readonly string[] Placement = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz", "bore", "picks", "piece", "group" };
 
         // Each tool opens with the settings it was last used with on this computer.
         private static FeatureParams Remembered(string kind)
@@ -305,15 +305,56 @@ namespace JocoRobos.Cad
                 if (body == null) throw new InvalidOperationException("Couldn't find the body to cut.");
                 editBodies = new object[] { body };
             }
-            var feature = doc.FeatureManager.InsertMacroFeature3("CAD Hub " + tool.Title, ProgId, null, new[] { ParameterName },
-                new[] { (int)swMacroFeatureParamType_e.swMacroFeatureParamTypeString }, new[] { values.Encode() }, null, null, editBodies, null,
-                (int)swMacroFeatureOptions_e.swMacroFeatureByDefault);
-            if (feature == null) throw new InvalidOperationException("SOLIDWORKS didn't accept the feature. Check the settings and the selection.");
+            // SOLIDWORKS keeps one body per CAD Hub feature: a set of parts (a planetary) is one feature per piece, sharing a group.
+            int pieces = tool.Pieces(values);
+            string group = pieces > 1 ? Guid.NewGuid().ToString("N").Substring(0, 8) : null;
+            Feature feature = null;
+            for (int piece = 0; piece < pieces; piece++)
+            {
+                var stored = FeatureParams.Decode(values.Encode());
+                if (group != null) { stored.Set("piece", piece); stored["group"] = group; }
+                feature = doc.FeatureManager.InsertMacroFeature3("CAD Hub " + tool.Title + (group != null ? " " + tool.PieceName(values, piece) : ""), ProgId, null,
+                    new[] { ParameterName }, new[] { (int)swMacroFeatureParamType_e.swMacroFeatureParamTypeString }, new[] { stored.Encode() }, null, null, editBodies, null,
+                    (int)swMacroFeatureOptions_e.swMacroFeatureByDefault);
+                if (feature == null) throw new InvalidOperationException("SOLIDWORKS didn't accept the feature. Check the settings and the selection.");
+            }
             return feature;
         }
 
         private void Update()
         {
+            string group = values["group"];
+            if (group != null)
+            {
+                // A piece of a set: change every piece of it the same way (each keeps which piece it is).
+                var members = new List<Feature>();
+                for (var f = doc.FirstFeature() as Feature; f != null; f = f.GetNextFeature() as Feature)
+                {
+                    if (f.GetTypeName2() != "MacroFeature") continue;
+                    var memberData = f.GetDefinition() as MacroFeatureData;
+                    string memberStored = "";
+                    memberData?.GetStringByName(ParameterName, out memberStored);
+                    if (FeatureParams.Decode(memberStored ?? "")["group"] == group) members.Add(f);
+                }
+                if (members.Count != tool.Pieces(values))
+                    throw new InvalidOperationException("To change how many pieces it has (the number of planets), delete its features and make a new one.");
+                foreach (var member in members)
+                {
+                    var memberData = (MacroFeatureData)member.GetDefinition();
+                    string memberStored;
+                    memberData.GetStringByName(ParameterName, out memberStored);
+                    var updated = FeatureParams.Decode(values.Encode());
+                    updated["piece"] = FeatureParams.Decode(memberStored)["piece"];
+                    memberData.AccessSelections(doc, null);
+                    memberData.SetStringByName(ParameterName, updated.Encode());
+                    if (!member.ModifyDefinition(memberData, doc, null))
+                    {
+                        memberData.ReleaseSelectionAccess();
+                        throw new InvalidOperationException("SOLIDWORKS didn't accept the new settings for " + member.Name + ".");
+                    }
+                }
+                return;
+            }
             var data = (MacroFeatureData)editing.GetDefinition();
             data.AccessSelections(doc, null);
             data.SetStringByName(ParameterName, values.Encode());
@@ -405,6 +446,9 @@ namespace JocoRobos.Cad
                 var tool = CadHubTool.Find(values["kind"]);
                 if (tool == null) return "This CAD Hub feature needs a newer CAD Hub.";
                 var bodies = tool.BuildBodies((SldWorks)app, values, false);
+                // One piece of a set (a planetary's sun, a planet, the ring): just that body.
+                int piece = (int)values.Number("piece", -1);
+                if (piece >= 0) bodies = piece < bodies.Count ? new List<Body2> { bodies[piece] } : new List<Body2>();
                 if (bodies.Count == 0) return "Nothing to build: edit the feature and check its settings.";
                 if (!tool.Cuts)
                 {

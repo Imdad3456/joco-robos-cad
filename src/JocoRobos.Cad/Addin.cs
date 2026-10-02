@@ -53,11 +53,6 @@ namespace JocoRobos.Cad
         [DispId(35)] void MakeShaft();
         [DispId(36)] void MakePlanetary();
         [DispId(37)] void GearRatio();
-        [DispId(38)] void Connector();
-        [DispId(39)] void RouteWire();
-        [DispId(40)] void ZipTie();
-        [DispId(41)] void Harness();
-        [DispId(42)] void WiringReport();
         [DispId(43)] void MountingPattern();
     }
 
@@ -76,7 +71,7 @@ namespace JocoRobos.Cad
         private const int GroupId = 591913; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
         private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591929;
+        private const int LayoutVersion = 591930;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -201,11 +196,6 @@ namespace JocoRobos.Cad
                 int shaft = Add(group, "Shaft", "A hex or round shaft, plain or with turned ends (an editable CAD Hub feature)", nameof(MakeShaft), 34, both, 27);
                 int planetary = Add(group, "Planetary", "A planetary gearset: sun, planets and ring that mesh, with its ratio (an editable CAD Hub feature)", nameof(MakePlanetary), 35, both, 28);
                 int ratio = Add(group, "Gear Ratio", "Motor, up to three stages and a wheel: the ratio, output speed and robot speed", nameof(GearRatio), 36, both, 29);
-                int connector = Add(group, "Connector", "Mark a connector on a device (CAN IN/OUT, power, PWM…): wires snap to it and the network checks use it", nameof(Connector), 37, both, 30);
-                int wire = Add(group, "Route Wire", "A wire through points you click in order: its type, ends, length and slack", nameof(RouteWire), 38, both, 31);
-                int zipTie = Add(group, "Zip Tie", "Zip ties, clips and mounts: counted in the report, usable as wire bends", nameof(ZipTie), 39, both, 32);
-                int harness = Add(group, "Harness", "Name a group of wires (a harness) or wires that run together (a bundle)", nameof(Harness), 40, both, 33);
-                int report = Add(group, "Wiring Report", "The harness table (CSV), harnesses and bundles, and the CAN and power network checks", nameof(WiringReport), 41, both, 34);
                 int mounting = Add(group, "Mounting Pattern", "Motor face (NEO, Kraken, Falcon, CIM), VersaPlanetary or REV/ThriftyBot 1/2in grid holes, centered where you click", nameof(MountingPattern), 42, both, 35);
                 int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
                 group.AddSpacer2(-1, menu);
@@ -237,7 +227,7 @@ namespace JocoRobos.Cad
                     // The tab is for modeling (Lighten Plate · Spur Gear, Belt and Chain); team work (Open Robot, Edit, Submit, Library)
                     // lives in the CAD Hub task pane and the Tools menu.
                     int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
-                    foreach (var section in new[] { new[] { lighten, mounting }, new[] { gear, sprocket, pulley, shaft, planetary }, new[] { beltChain, ratio }, new[] { connector, wire, zipTie, harness, report } })
+                    foreach (var section in new[] { new[] { lighten, mounting }, new[] { gear, sprocket, pulley, shaft, planetary }, new[] { beltChain, ratio } })
                     {
                         CommandTabBox box = tab.AddCommandTabBox();
                         int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();
