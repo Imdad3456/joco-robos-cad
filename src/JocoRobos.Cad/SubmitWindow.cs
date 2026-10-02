@@ -239,6 +239,7 @@ namespace JocoRobos.Cad
         // An error inside SOLIDWORKS' window must never escape: it would close SOLIDWORKS. It's shown here and logged instead.
         private async void Safely(string where, Func<Task> work)
         {
+            UiThread.Ensure(); // So every await below comes back to this window's thread.
             try
             {
                 await Task.Yield(); // Let the click finish before anything (like the clicked button) is rebuilt.

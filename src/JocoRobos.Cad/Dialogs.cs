@@ -10,6 +10,20 @@ using System.Windows.Forms;
 namespace JocoRobos.Cad
 {
     /// <summary>
+    /// CAD Hub's windows wait for the server with async/await, which comes back to SOLIDWORKS' window thread only if that thread has
+    /// a Windows Forms synchronization context. SOLIDWORKS doesn't always leave one in place (1.13.7: the Submit window then tried
+    /// to update itself from a background thread). Called on the window thread before awaiting.
+    /// </summary>
+    internal static class UiThread
+    {
+        internal static void Ensure()
+        {
+            if (!(System.Threading.SynchronizationContext.Current is WindowsFormsSynchronizationContext))
+                System.Threading.SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        }
+    }
+
+    /// <summary>
     /// SOLIDWORKS' main window, as the owner of every CAD Hub window: owned windows stay in front of it, also after
     /// Alt+Tab. The handle comes from SOLIDWORKS itself; Windows' guess at the process's main window can be another window
     /// (or none), which left the Submit window unowned and hidden behind SOLIDWORKS.
@@ -53,6 +67,7 @@ namespace JocoRobos.Cad
                 form.FormClosing += (s, e) => { if (!completed) e.Cancel = true; };
                 form.Shown += async (s, e) =>
                 {
+                    UiThread.Ensure();
                     try { result = await running; }
                     catch (Exception exception) { failure = exception; }
                     finally { completed = true; form.Close(); }

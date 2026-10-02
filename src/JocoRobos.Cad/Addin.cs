@@ -2055,6 +2055,7 @@ namespace JocoRobos.Cad
                 },
                 Prepare = async (paths, progress) =>
                 {
+                    UiThread.Ensure(); // The SOLIDWORKS calls below must stay on its window thread.
                     var clock = System.Diagnostics.Stopwatch.StartNew();
                     var todo = paths.Where(p => !DependenciesCached(p) || !TeamDependenciesCached(p)).ToList();
                     for (int i = 0; i < todo.Count; i++)
