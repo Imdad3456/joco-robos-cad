@@ -4,7 +4,7 @@ For the next Claude session (cloud) or anyone picking this up.
 
 ## Released and live
 - **Add-in 1.0.0** is released (tag `v1.0.0`; the same code as 0.15.0, after the release tests passed). Mentors publish it from the mentor page → Add-in → Release to students.
-- **Server v26** (deployed 2026-10-01: CAD Hub name and logo, team settings, Diagnostics tab, edit requests, Who's working; v25 kept for rollback) runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
+- **Server v27** (deployed 2026-10-01: CAD Hub name and logo, team settings, Diagnostics tab, edit requests, Who's working, Parts tab; v26 kept for rollback) runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
 - The restore drill (`server/restore-drill.sh`) passed on both the Deck backup and the off-device copy on 2026-09-30.
 
 ## New address: cad.team5919.org (0.15.0)
