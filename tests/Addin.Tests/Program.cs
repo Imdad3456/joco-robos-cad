@@ -145,6 +145,7 @@ static class Program
             RobotFileChecks(temp);
             PartsChecks(temp);
             WhereUsedChecks();
+            ToolChecks();
             HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
@@ -188,6 +189,57 @@ static class Program
             "Where used: direct users first, then up to the robot, each once");
         Check(graph.UsedBy(R("Robot.SLDASM")).Count == 0 && graph.Uses(R("Robot.SLDASM")).Count == 2, "The robot: used by nothing, uses its subsystems");
         Check(graph.UsedBy(R("LoopA.SLDASM")).Count == 1, "Circular references don't hang or repeat");
+    }
+
+    // Stock parts, belt and chain calculator, gears, and plate lightening: the math behind the SOLIDWORKS tools.
+    static void ToolChecks()
+    {
+        var tube = StockParts.Find("tube-2x1-0625");
+        Check(StockParts.ParseInches("23.75") == 23.75 && StockParts.ParseInches("23 3/4\"") == 23.75 && StockParts.ParseInches("3/4") == 0.75 &&
+            StockParts.ParseInches("abc") == null && StockParts.ParseInches("") == null, "Lengths typed as decimals, fractions, mixed numbers");
+        Check(StockParts.ConfigurationName(tube, 23.75, 0) == "23.75 in" && StockParts.ConfigurationName(StockParts.Find("plate-al-25"), 12, 6) == "6 x 12 in" &&
+            StockParts.ConfigurationName(StockParts.Find("bearing-fr8zz"), 0, 0) == "Default", "One configuration per size, named by size");
+        Check(StockParts.Problem(tube, 23.75, null) == null && StockParts.Problem(tube, 100, null) != null && StockParts.Problem(tube, null, null) != null &&
+            StockParts.Problem(StockParts.Find("plate-al-25"), 12, null) != null, "Sizes checked before anything is built");
+        var holes = StockParts.HolePositions(2.0);
+        Check(holes.SequenceEqual(new[] { 0.25, 0.75, 1.25, 1.75 }), "Tube holes every 0.5\" from 0.25\": " + String.Join(",", holes));
+        Check(tube.WideRows.SequenceEqual(new[] { -0.5, 0.5 }) && tube.NarrowRows.SequenceEqual(new[] { 0.0 }), "2x1 tube: two rows on the 2\" face, one on the 1\"");
+        Check(StockParts.Types.Select(t => t.Id).Distinct().Count() == StockParts.Types.Count && StockParts.Types.Select(t => t.FileName).Distinct().Count() == StockParts.Types.Count,
+            "Every stock type has its own id and file");
+
+        var htd = BeltChain.Kinds[0];
+        double c = BeltChain.CenterDistance(htd, 30, 30, 100);
+        Check(Math.Abs(c - (500 - 150) / 2.0 / 25.4) < 1e-6, "Equal pulleys: center = (belt − half the wrap) / 2 → " + c);
+        double c2 = BeltChain.CenterDistance(htd, 18, 36, 120);
+        Check(Math.Abs(BeltChain.Length(c2, BeltChain.PitchDiameter(htd, 18), BeltChain.PitchDiameter(htd, 36)) - 120 * htd.Pitch) < 1e-6, "Unequal pulleys: the belt fits exactly");
+        Check(double.IsNaN(BeltChain.CenterDistance(htd, 60, 60, 61)), "A belt too short to go around is refused");
+        var chain = BeltChain.Kinds.First(k => k.Name == "#25 chain");
+        var near = BeltChain.NearestLengths(chain, 16, 32, 6.0);
+        Check(near.Item1 % 2 == 0 && near.Item2 == near.Item1 + 2 && BeltChain.CenterDistance(chain, 16, 32, near.Item1) <= 6.0 &&
+            BeltChain.CenterDistance(chain, 16, 32, near.Item2) >= 6.0, "Chain: the even link counts either side of the wanted center");
+
+        var gear = SpurGear.Outline(36, 20, 20, 6);
+        double pitch = 36 / 20.0 / 2, outside = 38 / 20.0 / 2, root = pitch - 1.25 / 20;
+        var radii = gear.Select(p => Math.Sqrt(p[0] * p[0] + p[1] * p[1])).ToList();
+        Check(radii.Max() <= outside + 1e-9 && radii.Max() > outside - 1e-6 && radii.Min() >= root - 1e-9, "Gear: teeth reach the outside diameter, roots at the dedendum");
+        Check(PlateLighten.SignedArea(gear) > 0 && Math.Abs(PlateLighten.SignedArea(gear) - Math.PI * pitch * pitch) < 0.1, "Gear outline counterclockwise, about the pitch circle's area");
+        Check(SpurGear.Problem(36, 20, 20) == null && SpurGear.Problem(4, 20, 20) != null, "Gear sizes checked");
+
+        // A 6×4 plate with four corner holes and one in the middle: pockets between, clear of the edge and every hole.
+        var outline = new System.Collections.Generic.List<double[]> { new[] { 0.0, 0 }, new[] { 6.0, 0 }, new[] { 6.0, 4 }, new[] { 0.0, 4 } };
+        var plateHoles = new System.Collections.Generic.List<Circle2> { new Circle2 { X = 0.5, Y = 0.5, R = 0.1 }, new Circle2 { X = 5.5, Y = 0.5, R = 0.1 },
+            new Circle2 { X = 5.5, Y = 3.5, R = 0.1 }, new Circle2 { X = 0.5, Y = 3.5, R = 0.1 }, new Circle2 { X = 3, Y = 2, R = 0.25 } };
+        var settings = new LightenSettings();
+        var lighten = PlateLighten.Plan(outline, plateHoles, null, settings);
+        Check(lighten.Pockets.Count >= 4 && lighten.Percent > 20 && lighten.Percent < 80, "Plate: several pockets, a sensible share removed (" + lighten.Pockets.Count + ", " + lighten.Percent.ToString("0") + "%)");
+        var points = lighten.Pockets.SelectMany(p => p.Segments.SelectMany(seg => new[] { new[] { seg.X1, seg.Y1 }, new[] { seg.X2, seg.Y2 } })).ToList();
+        Check(points.All(p => p[0] >= settings.Border - 1e-6 && p[0] <= 6 - settings.Border + 1e-6 && p[1] >= settings.Border - 1e-6 && p[1] <= 4 - settings.Border + 1e-6),
+            "Pockets stay a border width from the edge");
+        Check(points.All(p => plateHoles.All(h => Math.Sqrt((p[0] - h.X) * (p[0] - h.X) + (p[1] - h.Y) * (p[1] - h.Y)) >= h.R + settings.Ring - 1e-6)), "Pockets keep a ring around every hole");
+        Check(lighten.Pockets.All(p => p.Segments.Where(seg => seg.Arc).All(seg => Math.Abs(Math.Sqrt((seg.X1 - seg.Cx) * (seg.X1 - seg.Cx) + (seg.Y1 - seg.Cy) * (seg.Y1 - seg.Cy)) -
+            Math.Sqrt((seg.X2 - seg.Cx) * (seg.X2 - seg.Cx) + (seg.Y2 - seg.Cy) * (seg.Y2 - seg.Cy))) < 1e-9)), "Every corner is a true arc");
+        Check(PlateLighten.Plan(outline, plateHoles, null, new LightenSettings { Rib = 3 }).Pockets.Count == 0, "Ribs too wide for the plate: nothing cut");
+        Check(PlateLighten.Triangulate(new System.Collections.Generic.List<double[]> { new[] { 0.0, 0 }, new[] { 1.0, 0 }, new[] { 0.0, 1 }, new[] { 1.0, 1 } }).Count == 2, "Four points: two triangles");
     }
 
     static void HealthChecks()

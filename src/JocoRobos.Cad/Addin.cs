@@ -45,6 +45,12 @@ namespace JocoRobos.Cad
         [DispId(23)] void PartsList();
         [DispId(24)] void WhereUsed();
         [DispId(25)] void CheckComputer();
+        [DispId(26)] void MakeStockPart();
+        [DispId(27)] void MakeGear();
+        [DispId(28)] void BeltChainCalculator();
+        [DispId(29)] void LightenPlate();
+        [DispId(30)] void AddHolePattern();
+        [DispId(31)] void SetUpTubeProfiles();
     }
 
     [ComVisible(true)]
@@ -52,17 +58,17 @@ namespace JocoRobos.Cad
     [ProgId("JocoRobos.Cad.Addin")]
     [ClassInterface(ClassInterfaceType.None)]
     [ComDefaultInterface(typeof(IAddinCallbacks))]
-    public sealed class Addin : ISwAddin, IAddinCallbacks
+    public sealed partial class Addin : ISwAddin, IAddinCallbacks
     {
         public const string ClassId = "E219FE9C-5919-4BE5-98B7-A518C11AD901";
         private const string Title = "CAD Hub";
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591909;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908 };
+        private const int GroupId = 591910;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591919;
+        private const int LayoutVersion = 591920;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -177,6 +183,13 @@ namespace JocoRobos.Cad
                 Add(group, "File History", "Who changed the active file, when, and why; save an older version as a copy", nameof(FileHistory), 20, menu);
                 Add(group, "Parts List", "What to buy (by vendor) and what to make, with quantities, from the robot or the open assembly", nameof(PartsList), 22, menu);
                 Add(group, "Where Used", "Which assemblies use the open file (all the way up to the robot), and what it uses", nameof(WhereUsed), 23, menu);
+                group.AddSpacer2(-1, menu);
+                Add(group, "Make Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, menu);
+                Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore", nameof(MakeGear), 26, menu);
+                Add(group, "Belt & Chain Calculator", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, menu);
+                Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, menu);
+                Add(group, "Add FRC Hole Pattern", "Holes every 0.5\" along the selected side of a tube", nameof(AddHolePattern), 29, menu);
+                Add(group, "Set Up FRC Tube Profiles", "Adds FRC box tube and shaft profiles to Insert → Structural Member", nameof(SetUpTubeProfiles), 30, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
@@ -301,6 +314,8 @@ namespace JocoRobos.Cad
                 OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path), WhereUsedOf = path => WhereUsedFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 AskForFile = AskForActiveFile, DismissRequests = DismissRequests,
+                SetCopies = count => nextCopies = Math.Max(1, Math.Min(20, count)),
+                MakeStock = MakeStockPart, MakeGear = MakeGear, BeltChain = BeltChainCalculator,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
             });
             pane.CreateControl();
@@ -2883,12 +2898,17 @@ namespace JocoRobos.Cad
             return doc;
         }
 
+        // How many copies the Library tab's next insert adds (its "×" box); back to 1 after each insert.
+        private int nextCopies = 1;
+
         private void DeliverPart(ModelDoc2 assemblyDoc, string copy, string name)
         {
+            int copies = nextCopies;
+            nextCopies = 1;
             if (assemblyDoc != null)
             {
-                AddToAssembly(assemblyDoc, copy);
-                ShowFlash("✓ Inserted " + name + ". Mate it, save, and Submit.");
+                for (int i = 0; i < copies; i++) AddToAssembly(assemblyDoc, copy, "", i * 0.05);
+                ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit.");
                 return;
             }
             int errors = 0, warnings = 0;
@@ -2909,7 +2929,7 @@ namespace JocoRobos.Cad
             return doc;
         }
 
-        private void AddToAssembly(ModelDoc2 assemblyDoc, string path)
+        private void AddToAssembly(ModelDoc2 assemblyDoc, string path, string configuration = "", double offset = 0)
         {
             bool wasOpen = OpenDocuments().Any(d => String.Equals(d.GetPathName(), path, StringComparison.OrdinalIgnoreCase));
             int errors = 0, warnings = 0;
@@ -2924,7 +2944,7 @@ namespace JocoRobos.Cad
             int activateErrors = 0;
             application.ActivateDoc3(assemblyDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);
             var added = ((AssemblyDoc)assemblyDoc).AddComponent5(path, (int)swAddComponentConfigOptions_e.swAddComponentConfigOptions_CurrentSelectedConfig,
-                "", false, "", 0, 0, 0);
+                "", false, configuration ?? "", offset, 0, 0);
             if (!wasOpen) application.CloseDoc(component.GetTitle());
             // Whatever happened above, end on the assembly the part went into.
             application.ActivateDoc3(assemblyDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref activateErrors);

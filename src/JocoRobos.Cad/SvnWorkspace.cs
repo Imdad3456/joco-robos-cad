@@ -216,6 +216,21 @@ namespace JocoRobos.Cad
             return versions;
         }
 
+        /// <summary>True when the server has this path (for example a teammate added it and this computer hasn't updated yet).</summary>
+        internal bool OnServer(string path)
+        {
+            path = WorkspacePolicy.RequireInside(Root, path);
+            using (var client = Client())
+            {
+                try
+                {
+                    Collection<SvnInfoEventArgs> info;
+                    return client.GetInfo(new SvnUriTarget(UrlFor(path)), new SvnInfoArgs { ThrowOnError = false }, out info) && info != null && info.Count > 0;
+                }
+                catch (SvnException) { return false; }
+            }
+        }
+
         /// <summary>
         /// Writes the team's version of a file as this computer last got it (SVN's own copy: no download) to target.
         /// False for a file the team doesn't have yet.

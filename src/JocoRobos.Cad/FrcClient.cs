@@ -117,6 +117,16 @@ namespace JocoRobos.Cad
         [DataMember(Name = "configurable")] public bool Configurable { get; set; }
         [DataMember(Name = "partNumber")] public string PartNumber { get; set; }
         [DataMember(Name = "choices")] public List<FrcChoice> Choices { get; set; }
+        // The team Library already has it (in at least one size): instant, no Onshape calls. How often the team used it.
+        [DataMember(Name = "inLibrary")] public bool InLibrary { get; set; }
+        [DataMember(Name = "uses")] public int Uses { get; set; }
+    }
+
+    [DataContract]
+    internal sealed class FrcBudget
+    {
+        [DataMember(Name = "used")] public int Used { get; set; }
+        [DataMember(Name = "limit")] public int Limit { get; set; }
     }
 
     [DataContract]
@@ -134,6 +144,7 @@ namespace JocoRobos.Cad
     internal sealed class FrcSearch
     {
         [DataMember(Name = "results")] public List<FrcItem> Results { get; set; }
+        [DataMember(Name = "budget")] public FrcBudget Budget { get; set; }
     }
 
     /// <summary>
@@ -152,7 +163,15 @@ namespace JocoRobos.Cad
 
         internal List<FrcItem> Search(string query)
         {
-            return Read<FrcSearch>(Send("GET", "search?q=" + Uri.EscapeDataString(query ?? ""), null)).Results ?? new List<FrcItem>();
+            return SearchWithBudget(query).Results ?? new List<FrcItem>();
+        }
+
+        /// <summary>Results (nothing typed: the team's most-used parts) and how much of the yearly Onshape allowance is used.</summary>
+        internal FrcSearch SearchWithBudget(string query)
+        {
+            var found = Read<FrcSearch>(Send("GET", "search?q=" + Uri.EscapeDataString(query ?? ""), null));
+            if (found.Results == null) found.Results = new List<FrcItem>();
+            return found;
         }
 
         internal FrcItem Details(string id)

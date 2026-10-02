@@ -109,8 +109,40 @@ def summary(item):
             'kind': 'assembly' if item.get('elementType') == 'ASSEMBLY' else 'part'}
 
 
+def team_usage():
+    """insertable id -> (in the team Library already, times used), from the import records."""
+    usage = {}
+    for entry in _registry()['imports'].values():
+        key = entry.get('insertable')
+        if not key:
+            continue
+        ready, uses = usage.get(key, (False, 0))
+        usage[key] = (ready or entry.get('status') == 'ready', uses + int(entry.get('uses', 1)))
+    return usage
+
+
+def _with_usage(item, usage):
+    result = summary(item)
+    ready, uses = usage.get(item['id'], (False, 0))
+    result.update(inLibrary=ready, uses=uses)
+    return result
+
+
+def popular(limit=12):
+    """The team's most-used FRCDesignLib parts, for the Library tab before anything is typed."""
+    usage = team_usage()
+    insertables = catalog()['insertables']
+    ranked = sorted((pair for pair in usage.items() if pair[1][0] and pair[0] in insertables), key=lambda pair: -pair[1][1])
+    return [_with_usage(insertables[key], usage) for key, _ in ranked[:limit]]
+
+
+def budget():
+    return {'used': calls_this_year(), 'limit': ANNUAL_CALLS}
+
+
 def search(query, limit=40):
     words = [w for w in re.split(r'\W+', (query or '').lower()) if w]
+    usage = team_usage()
     results = []
     for item in catalog()['insertables'].values():
         if not item.get('isVisible', True):
@@ -119,11 +151,12 @@ def search(query, limit=40):
         text = ' '.join((name, vendors, group))
         if words and not all(w in text for w in words):
             continue
-        # Name matches first, then vendor/group; shorter names are usually the base part.
-        score = sum(3 if w in name else 1 for w in words) - len(name) / 1000.0
+        # Parts the team already has come first (instant, no Onshape calls); then name matches, then vendor/group;
+        # shorter names are usually the base part.
+        score = sum(3 if w in name else 1 for w in words) - len(name) / 1000.0 + (100 if usage.get(item['id'], (False, 0))[0] else 0)
         results.append((score, item))
     results.sort(key=lambda pair: (-pair[0], pair[1]['name']))
-    return [summary(item) for _, item in results[:limit]]
+    return [_with_usage(item, usage) for _, item in results[:limit]]
 
 
 def details(insertable_id):
@@ -542,7 +575,8 @@ def claim(user, insertable_id, requested, client_id=''):
             if entry.get('status') != 'ready':
                 entry.update(status='ready', completedAt=entry.get('completedAt') or now)
                 entry.pop('token', None)
-                _save(registry)
+            entry['uses'] = int(entry.get('uses', 1)) + 1  # Most-used parts show first in the Library tab.
+            _save(registry)
             return {'status': 'ready', 'fingerprint': fp, 'libraryPath': entry['libraryPath'], 'name': entry['name']}
         fresh = entry and entry.get('status') == 'importing' and now - entry.get('at', 0) < RESERVATION_MINUTES * 60
         if fresh and (entry.get('by') != user or entry.get('client') != client_id):

@@ -79,6 +79,19 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3c.7 | A | **Tools → CAD Hub → Check This Computer** | "✓ Healthy" with each check listed. Then delete a part in Explorer and run it again: "deleted on this computer" with what to do | ☐ |
 | 3c.8 | A | After an afternoon of normal work: **Diagnostics** | "How long things took this session" lists status checks, Submit, Parts List, Where Used, Library search | ☐ |
 
+## 3d. Modeling tools
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
+| 3d.2 | A | Edit an assembly → Library → **Make a stock part** → 2×1 box tube 1/16", 23.75 in, ×2 | Two tubes inserted at once, 23.75" long, ⌀0.196" holes every 0.5" (two rows on the 2" sides, one on the 1"), starting 0.25" from the end. Measure one against a real tube | ☐ |
+| 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); A gets it on their next update. Nothing else to Submit for the tube | ☐ |
+| 3d.4 | A | Stock part: 1/2" hex shaft 7.25; spacer 0.25; aluminum plate 1/4" 6 × 12; FR8ZZ bearing | Each correct size; the Parts List shows them under Buy: Stock with their sizes | ☐ |
+| 3d.5 | A | **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore; it meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
+| 3d.6 | A | **Belt & Chain Calculator**: HTD 5 mm, 18T and 36T, 100 teeth. Then select a sketch's center dimension → **Use for selected dimension** | A center distance that matches a vendor's calculator; the dimension changes to it | ☐ |
+| 3d.7 | A | Open a flat plate with holes, Edit it, click its face → **Tools → CAD Hub → Lighten Plate** (defaults) | Triangle pockets between the holes, rounded corners, a border along the edge and rings around holes; flash with weight saved. Undo removes it | ☐ |
+| 3d.8 | A | **Set Up FRC Tube Profiles**, then Insert → Weldments → Structural Member | Standard "FRC", types Box Tube and Shaft; a sketched frame becomes tubes. Click a tube's side → **Add FRC Hole Pattern** | ☐ |
+
 ## 4. Together: nobody overwrites anybody
 
 | # | Who | Do | Expect | ✓ |

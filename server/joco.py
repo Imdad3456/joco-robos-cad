@@ -1095,7 +1095,10 @@ class Admin(BaseHTTPRequestHandler):
         try:
             parts = path[len('/admin/api/frcdesign/'):].split('/')
             if method == 'GET' and parts[0] == 'search':
-                return self.json_reply({'results': frcdesign.search(parse_qs(urlsplit(self.path).query).get('q', [''])[0])})
+                query = parse_qs(urlsplit(self.path).query).get('q', [''])[0]
+                # Nothing typed: the team's most-used parts. Always: how much of the yearly Onshape allowance is used.
+                return self.json_reply({'results': frcdesign.search(query) if query.strip() else frcdesign.popular(),
+                                        'budget': frcdesign.budget()})
             if method == 'GET' and parts[0] == 'item' and len(parts) == 2:
                 return self.json_reply(frcdesign.details(parts[1]))
             if method == 'GET' and parts[0] == 'thumb' and len(parts) == 2:

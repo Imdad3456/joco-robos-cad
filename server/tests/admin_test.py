@@ -392,6 +392,10 @@ s_, body = frc(M, 'POST', 'claim', {'id': 't-bearing', 'client': 'pc-m'}); check
 s_, body = frc(U, 'POST', 'complete', {'fingerprint': fp, 'token': tok}); check(s_ == 200 and body['status'] == 'ready', 'late complete is harmless ' + str(body))
 page = req('/admin/library', *M)[2]; check('FRCDesignLib imports' in page and 'Test Flanged Bearing' in page and 'no Onshape key' in page and 'Onshape API calls this year' in page, 'mentor sees FRCDesignLib imports')
 s_, body = frc(U, 'POST', 'abandon', {'fingerprint': 'nothing'}); check(s_ == 200, 'abandon is harmless')
+# The Library tab: parts the team has come first and say so; nothing typed shows the most-used; the Onshape allowance is reported.
+s_, body = frc(U, 'GET', 'search?q=bearing'); hit = body['results'][0]
+check(s_ == 200 and hit['inLibrary'] is True and hit['uses'] >= 2 and body['budget']['limit'] > 0 and 'used' in body['budget'], 'search marks team parts instant, reports budget ' + str(body))
+s_, body = frc(U, 'GET', 'search?q='); check(s_ == 200 and body['results'] and body['results'][0]['name'] == 'Test Flanged Bearing' and body['results'][0]['inLibrary'], 'empty search: most-used parts ' + str(body))
 # Diagnostics: a student's add-in sends a report; only mentors see it, and can delete it.
 def send_report(user, text, client='addin'):
     r = urllib.request.Request(BASE + '/admin/api/diagnostics', data=text.encode(), method='POST')

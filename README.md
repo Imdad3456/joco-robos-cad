@@ -21,6 +21,14 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
    - **Submit** when you're done: one window lists your files and fixes any problems. The panel confirms it.
 4. **The CAD Hub panel** (right side) shows what's going on and only the button you need right now: Open Robot, Edit, Submit 3, or Close & Update when teammates have new changes. Below that, **Robot Files** lists the robot's folders and parts: search by name or folder, double-click to open (✎ yours, 🔒 someone else is editing, ● new). Teammates' changes come in by themselves whenever none of your robot documents are open. The **Library** tab finds any part: the team Library and [FRCDesignLib](https://frcdesign.org/resources/frcdesignlib/) (motors, bearings, tube…) in one search, plus "Import a downloaded CAD file" for vendor downloads.
 
+**Modeling tools** (Library tab links, and Tools → CAD Hub), all built in SOLIDWORKS with no Onshape calls:
+- **Make Stock Part**: box tube with the 0.5" hole pattern, hex and round shaft, spacers, plates, bearings, in any size. Each kind is one part in the robot (`90_COTS/Stock`) with a configuration per size; a new size is added for the whole team.
+- **Spur Gear** from teeth, pitch, pressure angle, width and bore. **Belt & Chain Calculator** for center distances (and can set the selected dimension).
+- **Lighten Plate**: select a plate's face; pockets with ribs between its holes, rounded for your router bit, with the weight saved.
+- **Set Up FRC Tube Profiles** for Insert → Structural Member, and **Add FRC Hole Pattern** on a tube's side.
+
+In search, **⚡** marks FRCDesignLib parts the team Library already has (instant); with nothing typed, the Library tab shows the team's most-used parts. The **×** box next to Insert adds several at once.
+
 Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List, Where Used), your account (Sign In, Change Password, Test Connection, Check This Computer, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
 **Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or codes.

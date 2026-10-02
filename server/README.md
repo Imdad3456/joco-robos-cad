@@ -92,7 +92,7 @@ podman logs --tail 30 joco-svn
 systemctl --user list-timers joco-svn-backup.timer
 ```
 
-To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v27`; earlier tags (`v26` … `initial`) are rollback images.
+To upgrade, take a backup, copy this directory to `~/server/joco-cad/source`, build a new tag (`podman build -f Containerfile -t localhost/joco-svn:vN ~/server/joco-cad/source`), update the tag in `joco-svn.service`, then `daemon-reload` and restart. Keep the previous tag for rollback. Do not restart during a commit. Current tag: `v28`; earlier tags (`v27` … `initial`) are rollback images.
 
 ## Restore drill (prove the backups work)
 

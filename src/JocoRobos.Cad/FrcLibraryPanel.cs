@@ -34,6 +34,8 @@ namespace JocoRobos.Cad
         private readonly Button insertButton = new Button { Text = "Insert", Dock = DockStyle.Fill, Height = 36, Enabled = false, FlatStyle = FlatStyle.System,
             Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold) };
         private readonly Timer debounce = new Timer { Interval = 300 };
+        private readonly NumericUpDown copies = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 1, Width = 52 };
+        private string budgetNote = "";
         private readonly Dictionary<string, Control> inputs = new Dictionary<string, Control>();
         // Tracked separately: Control.Visible reads false whenever the tab itself isn't on screen.
         private readonly HashSet<string> hidden = new HashSet<string>();
@@ -53,6 +55,26 @@ namespace JocoRobos.Cad
             browse.LinkClicked += (s, e) => actions.BrowseTeam();
             var import = new LinkLabel { Text = "Import a downloaded CAD file (McMaster, vendor site…)…", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
             import.LinkClicked += (s, e) => actions.ImportDownloaded();
+            // Made in SOLIDWORKS by CAD Hub: instant, any size, and no Onshape calls.
+            var tools = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
+            foreach (var tool in new[] { Tuple.Create("Make a stock part (tube, shaft, spacer, plate, bearing)…", actions.MakeStock),
+                Tuple.Create("Spur gear…", actions.MakeGear), Tuple.Create("Belt & chain calculator…", actions.BeltChain) })
+            {
+                var link = new LinkLabel { Text = tool.Item1, AutoSize = true, Margin = new Padding(0, 0, 12, 2) };
+                var run = tool.Item2;
+                link.LinkClicked += (s, e) => run?.Invoke();
+                tools.Controls.Add(link);
+            }
+            // Insert and how many copies, side by side.
+            var insertRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true, Margin = new Padding(0) };
+            insertRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            insertRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            insertRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            insertRow.Controls.Add(insertButton, 0, 0);
+            insertRow.Controls.Add(new Label { Text = "×", AutoSize = true, Anchor = AnchorStyles.None, Margin = new Padding(8, 0, 2, 0) }, 1, 0);
+            copies.Anchor = AnchorStyles.None;
+            insertRow.Controls.Add(copies, 2, 0);
+            new ToolTip().SetToolTip(copies, "How many to insert");
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(8) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             foreach (var row in new[] { (Control)heading, search, status }) { grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); grid.Controls.Add(row); }
@@ -61,13 +83,15 @@ namespace JocoRobos.Cad
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
             grid.Controls.Add(details);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            grid.Controls.Add(insertButton);
+            grid.Controls.Add(insertRow);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(hint);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(browse);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(import);
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            grid.Controls.Add(tools);
             details.Controls.Add(picture);
             details.Controls.Add(title);
             details.Controls.Add(subtitle);
@@ -82,6 +106,7 @@ namespace JocoRobos.Cad
             results.SelectedIndexChanged += (s, e) => ShowSelected();
             insertButton.Click += (s, e) =>
             {
+                actions.SetCopies?.Invoke((int)copies.Value);
                 if (selectedTeam != null) { actions.InsertTeam(selectedTeam); return; }
                 if (selected == null) return;
                 // A mistyped length is caught here, next to the box, instead of after the server round trip.
@@ -99,6 +124,37 @@ namespace JocoRobos.Cad
                 insert(selected, CurrentChoices(true));
             };
             status.Text = "Search the team Library and FRCDesignLib…";
+            // Before anything is typed: the team's most-used parts, ready to insert.
+            VisibleChanged += (s, e) => { if (Visible && search.Text.Trim().Length == 0 && results.Items.Count == 0) ShowPopular(); };
+        }
+
+        private void ShowPopular()
+        {
+            int mine = ++generation;
+            Background(client => client.SearchWithBudget(""), found =>
+            {
+                if (mine != generation || search.Text.Trim().Length > 0) return;
+                NoteBudget(found.Budget);
+                results.BeginUpdate();
+                results.Items.Clear();
+                foreach (var item in found.Results) results.Items.Add(Row(item));
+                results.EndUpdate();
+                status.Text = (found.Results.Count == 0 ? "Search the team Library and FRCDesignLib…" : "⚡ The team's most-used parts (instant). Or search…") + budgetNote;
+                LoadSmallPictures(found.Results.Where(i => !pictures.Images.ContainsKey(i.Id)).ToList(), mine);
+            });
+        }
+
+        private ListViewItem Row(FrcItem item)
+        {
+            return new ListViewItem(new[] { (item.InLibrary ? "⚡ " : "") + item.Name, item.Vendor + " · " + item.Group + (item.InLibrary ? " · in the team Library" : "") })
+                { Tag = item, ImageKey = pictures.Images.ContainsKey(item.Id) ? item.Id : "placeholder" };
+        }
+
+        // Onshape allows 2,500 API calls a year on free and education plans: say so when the team gets near the end.
+        private void NoteBudget(FrcBudget budget)
+        {
+            budgetNote = budget == null || budget.Limit <= 0 || budget.Used < budget.Limit * 0.8 ? ""
+                : "\n⚠ The team has used " + budget.Used + " of " + budget.Limit + " Onshape calls this year. Prefer ⚡ parts and stock parts.";
         }
 
         internal void FocusSearch()
@@ -155,6 +211,7 @@ namespace JocoRobos.Cad
         {
             string query = search.Text.Trim();
             int mine = ++generation;
+            if (query.Length == 0) { results.Items.Clear(); ShowPopular(); return; }
             if (query.Length < 2) { results.Items.Clear(); status.Text = "Type at least 2 letters."; return; }
             status.Text = "Searching…";
             // The team Library is local files: quick, and shown even when FRCDesignLib can't be reached.
@@ -167,17 +224,18 @@ namespace JocoRobos.Cad
                 results.Items.Add(new ListViewItem(new[] { Path.GetFileNameWithoutExtension(path), "Team Library · " + Path.GetFileName(Path.GetDirectoryName(path)) })
                     { Tag = path, ImageKey = "placeholder" });
             results.EndUpdate();
-            Background(client => client.Search(query), found =>
+            Background(client => client.SearchWithBudget(query), answer =>
             {
                 if (mine != generation) return; // A newer search is on its way.
+                NoteBudget(answer.Budget);
+                var found = answer.Results;
                 results.BeginUpdate();
                 foreach (var row in results.Items.Cast<ListViewItem>().Where(r => r.Tag is FrcItem).ToList()) results.Items.Remove(row);
-                foreach (var item in found)
-                    results.Items.Add(new ListViewItem(new[] { item.Name, item.Vendor + " · " + item.Group }) { Tag = item, ImageKey = pictures.Images.ContainsKey(item.Id) ? item.Id : "placeholder" });
+                foreach (var item in found) results.Items.Add(Row(item));
                 results.EndUpdate();
                 int total = found.Count + team.Count;
                 status.Text = total == 0 ? "Nothing found." : (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
-                    (found.Count >= 40 ? " (showing 40; be more specific)" : "");
+                    (found.Count >= 40 ? " (showing 40; be more specific)" : "") + (found.Any(i => i.InLibrary) ? ". ⚡ = already in the team Library" : "") + budgetNote;
                 LoadSmallPictures(found.Where(i => !pictures.Images.ContainsKey(i.Id)).ToList(), mine);
             }, error => { if (mine == generation) status.Text = (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
         }

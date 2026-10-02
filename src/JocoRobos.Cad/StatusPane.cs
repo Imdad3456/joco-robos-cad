@@ -18,6 +18,9 @@ namespace JocoRobos.Cad
         // Robot tab file browser: open, show in Explorer, File History for a robot file.
         internal Action<string> OpenFile, RevealFile, FileHistoryOf, WhereUsedOf;
         internal Action BrowseTeam, ImportDownloaded;
+        // Library tab extras: how many copies the next insert adds, and CAD Hub's modeling tools.
+        internal Action<int> SetCopies;
+        internal Action MakeStock, MakeGear, BeltChain;
         // "Ask for it": ask the person editing the active file; tell teammates who asked you "not yet".
         internal Action AskForFile, DismissRequests;
     }
