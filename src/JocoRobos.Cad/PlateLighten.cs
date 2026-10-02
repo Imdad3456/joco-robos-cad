@@ -96,18 +96,20 @@ namespace JocoRobos.Cad
             }
             nodes.AddRange(cutouts.Where(c => c.Count > 0).Select(c => new[] { c.Average(p => p[0]), c.Average(p => p[1]) }));
             Func<double[], bool> fresh = p => nodes.All(n => Distance(n, p) > 1e-6);
-            Func<double[], bool> clear = p => holes.All(h => Distance(p, new[] { h.X, h.Y }) > h.R + settings.Ring + settings.Rib + settings.MinPocket);
-            var corners = Corners(border);
-            var edgeNodes = new List<double[]>();
-            foreach (var p in EdgePoints(border, settings.MaxPocket))
+            // Along the edge of the area that's cut (not the plate's outline): where holes line an edge, that's the top of their
+            // solid band, so ribs meet the band and no wedge or slot is left beside it. Smoothed over the bumps between holes, so
+            // only real corners (sharp or rounded) count as corners.
+            double smooth = Math.Max(0.25, settings.MinPocket);
+            var edgeLoops = new List<List<double[]>>();
+            var edgeNodes = new List<List<double[]>>();
+            foreach (var path in Clipper.InflatePaths(Clipper.InflatePaths(region, smooth, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance),
+                -smooth, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance).Where(q => Clipper.Area(q) > 0))
             {
-                if (corners.Contains(p) || clear(p)) { if (fresh(p)) { nodes.Add(p); edgeNodes.Add(p); } continue; }
-                // Too close to a hole by the edge (a row of holes along it): the ribs meet at that hole instead, so the edge
-                // still gets junctions and no long slot is left along it.
-                var near = holes.OrderBy(hole => Distance(p, new[] { hole.X, hole.Y })).First();
-                var at = new[] { near.X, near.Y };
-                // It counts as a point along the edge: no rib between it and its neighbors along the edge (the border is that rib).
-                if (fresh(at)) { nodes.Add(at); edgeNodes.Add(at); }
+                var loop = path.Select(q => new[] { q.x, q.y }).ToList();
+                var mine = new List<double[]>();
+                foreach (var p in EdgePoints(loop, settings.MaxPocket)) if (fresh(p)) { nodes.Add(p); mine.Add(p); }
+                edgeLoops.Add(loop);
+                edgeNodes.Add(mine);
             }
             foreach (var p in extraPoints ?? new List<double[]>()) if (fresh(p)) nodes.Add(new[] { p[0], p[1] });
             for (int round = 0; round < 8 && nodes.Count < 800; round++)
@@ -136,9 +138,12 @@ namespace JocoRobos.Cad
                 Func<double[], double[], string> key = (a, b) => Compare(a, b) > 0 ? b[0] + "," + b[1] + "," + a[0] + "," + a[1] : a[0] + "," + a[1] + "," + b[0] + "," + b[1];
                 // Neighbors along the plate's edge get no rib between them: the edge's border is the rib there, and a straight rib
                 // across a curved edge would flatten the pockets beside it.
-                var alongEdge = edgeNodes.OrderBy(p => AlongBorder(border, p)).ToList();
                 var chords = new HashSet<string>();
-                for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) chords.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+                for (int loop = 0; loop < edgeLoops.Count; loop++)
+                {
+                    var alongEdge = edgeNodes[loop].OrderBy(p => AlongBorder(edgeLoops[loop], p)).ToList();
+                    for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) chords.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+                }
                 skipped.UnionWith(chords);
                 var triangles = Triangulate(nodes);
                 foreach (var triangle in triangles)
@@ -409,7 +414,17 @@ namespace JocoRobos.Cad
             int n = border.Count;
             var turn = Enumerable.Range(0, n).Select(i => Turn(border[(i + n - 1) % n], border[i], border[(i + 1) % n])).ToArray();
             var corners = new List<double[]>();
-            for (int i = 0; i < n; i++) if (Math.Abs(turn[i]) > Math.PI / 6) corners.Add(border[i]);
+            // A corner changes the edge's direction for good: the way the edge runs over the 3/4" before it and the 3/4" after it
+            // differs by 30° or more. A row of bumps along holes still runs straight overall, so they aren't corners.
+            Func<int, bool> really = i =>
+            {
+                int a = i, b = i;
+                double back = 0, ahead = 0;
+                for (int k = 0; k < n && back < 0.75; k++) { int prev = (a - 1 + n) % n; back += Distance(border[prev], border[a]); a = prev; }
+                for (int k = 0; k < n && ahead < 0.75; k++) { int next = (b + 1) % n; ahead += Distance(border[b], border[next]); b = next; }
+                return Math.Abs(Turn(border[a], border[i], border[b])) >= Math.PI / 6;
+            };
+            for (int i = 0; i < n; i++) if (Math.Abs(turn[i]) > Math.PI / 6 && really(i)) corners.Add(border[i]);
             const double Bend = 0.5 * Math.PI / 180, MaxRun = 1.0;
             var inRun = new bool[n];
             for (int start = 0; start < n; start++)
@@ -433,7 +448,7 @@ namespace JocoRobos.Cad
                 double half = length / 2, walked = 0;
                 int middle = run[0];
                 for (int r = 1; r < run.Count && walked < half; r++) { walked += Distance(border[run[r - 1]], border[run[r]]); middle = run[r]; }
-                corners.Add(border[middle]);
+                if (really(middle)) corners.Add(border[middle]);
             }
             return corners;
         }
