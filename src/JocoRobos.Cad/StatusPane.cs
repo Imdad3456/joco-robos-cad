@@ -20,8 +20,7 @@ namespace JocoRobos.Cad
         internal Action BrowseTeam, ImportDownloaded;
         // Library tab extras: how many copies the next insert adds, and CAD Hub's modeling tools.
         internal Action<int> SetCopies;
-        internal Action MakeStock, MakeGear, BeltChain;
-        internal Action<StockType, double?, double?, int> InsertStock;
+        internal Action MakeGear, BeltChain;
         // "Ask for it": ask the person editing the active file; tell teammates who asked you "not yet".
         internal Action AskForFile, DismissRequests;
     }

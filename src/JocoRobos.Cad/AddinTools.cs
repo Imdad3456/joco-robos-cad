@@ -9,117 +9,14 @@ using SolidWorks.Interop.swconst;
 namespace JocoRobos.Cad
 {
     /// <summary>
-    /// CAD Hub's modeling tools: stock parts built in SOLIDWORKS (one master per kind, a configuration per size), spur gears,
-    /// the belt and chain calculator, Lighten Plate, the FRC hole pattern, and tube profiles for Structural Members.
-    /// The math lives in StockParts, SpurGear, BeltChain and PlateLighten (tested without SOLIDWORKS); this part only drives SOLIDWORKS.
+    /// CAD Hub's modeling tools: spur gears, the belt and chain calculator, Lighten Plate, the hole pattern and bearing holes.
+    /// The math lives in StockParts (hole layout), SpurGear, BeltChain and PlateLighten (tested without SOLIDWORKS); this part only drives SOLIDWORKS.
     /// </summary>
     public sealed partial class Addin
     {
         private const double Meters = 0.0254; // SOLIDWORKS' API works in meters; CAD Hub's tools in inches.
-        private const string DimensionsProperty = "CADHub.Dimensions";
 
-        // ---------- stock parts ----------
-
-        public void MakeStockPart()
-        {
-            using (var dialog = new StockDialog())
-            {
-                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                InsertStock(dialog.Type, dialog.Length, dialog.PlateWidth, dialog.Copies);
-            }
-        }
-
-        private static string StockMasterPath(WorkspaceInfo robot, StockType type)
-        {
-            return Path.Combine(robot.Root, "90_COTS", "Stock", type.Group, type.FileName + ".SLDPRT");
-        }
-
-        private void InsertStock(StockType type, double? length, double? width, int copies)
-        {
-            Execute(() =>
-            {
-                string problem = StockParts.Problem(type, length, width);
-                if (problem != null) throw new InvalidOperationException(problem);
-                var login = GetLogin(false);
-                if (login == null) return;
-                var catalog = LoadCatalog(login);
-                RequireCurrentAddin(login, catalog);
-                var robot = catalog.Robot;
-                if (robot.Archived) throw new InvalidOperationException(robot.Name + " is archived and read-only.");
-                var svn = new SvnWorkspace(login, robot);
-                if (!svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the part has a robot to go into.");
-                string configuration = StockParts.ConfigurationName(type, length ?? 0, width ?? 0);
-                bool cancelled;
-                var assembly = InsertTarget(catalog, type.Label, out cancelled);
-                if (cancelled) return;
-                string master = StockMasterPath(robot, type);
-                if (!File.Exists(master))
-                {
-                    if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(master)))
-                        throw new InvalidOperationException("A teammate already made " + type.FileName + ". Get their changes first (Close & Update in the panel), then insert again.");
-                    SaveNewFile(BuildStock(type, length ?? 0, width ?? 0, configuration), master);
-                }
-                else if (!HasConfiguration(master, configuration))
-                    AddStockSize(type, master, configuration, length ?? 0, width ?? 0, svn);
-                DeliverConfigured(assembly, master, configuration, Math.Max(1, copies), type.FileName + (configuration == "Default" ? "" : " " + configuration));
-            });
-        }
-
-        private bool HasConfiguration(string path, string configuration)
-        {
-            var names = application.GetConfigurationNames(path) as object[];
-            return names != null && names.OfType<string>().Any(n => String.Equals(n, configuration, StringComparison.OrdinalIgnoreCase));
-        }
-
-        // A teammate's size request a moment ago may hold the lock for a few seconds: wait for it instead of failing.
-        private void LockForSize(SvnWorkspace svn, string master)
-        {
-            OperationDialog.Run("Adding the size to the team's stock part…", () =>
-            {
-                for (int attempt = 0; ; attempt++)
-                {
-                    try { return SvnWorkspace.Exclusive(() => svn.Edit(master)); }
-                    catch (InvalidOperationException busy) when (attempt < 5 && busy.Message.StartsWith("Locked by", StringComparison.Ordinal))
-                    {
-                        System.Threading.Thread.Sleep(3000);
-                    }
-                }
-            });
-        }
-
-        // New size of an existing master: the same as Edit (it locks the part and checks it's the newest), then add the configuration
-        // and save. It goes to the team with this student's next Submit, like any edit.
-        private void AddStockSize(StockType type, string master, string configuration, double length, double width, SvnWorkspace svn)
-        {
-            LockForSize(svn, master);
-            File.SetAttributes(master, File.GetAttributes(master) & ~FileAttributes.ReadOnly);
-            var doc = FindOpen(master);
-            bool opened = doc == null;
-            int errors = 0, warnings = 0;
-            if (opened)
-            {
-                application.DocumentVisible(false, (int)swDocumentTypes_e.swDocPART);
-                try { doc = application.OpenDoc6(master, (int)swDocumentTypes_e.swDocPART, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, "", ref errors, ref warnings); }
-                finally { application.DocumentVisible(true, (int)swDocumentTypes_e.swDocPART); }
-                if (doc == null) throw new InvalidOperationException("SOLIDWORKS couldn't open " + Path.GetFileName(master) + " (error " + errors + ").");
-            }
-            try
-            {
-                if (doc.IsOpenedReadOnly() && !doc.SetReadOnlyState(false))
-                    throw new InvalidOperationException("SOLIDWORKS couldn't make " + Path.GetFileName(master) + " editable. Close it and try again.");
-                if (doc.AddConfiguration3(configuration, "", "", 0) == null)
-                    throw new InvalidOperationException("SOLIDWORKS couldn't add the size " + configuration + " to " + Path.GetFileName(master) + ".");
-                SetStockSize(doc, type, configuration, length, width);
-                if (!doc.Save3((int)swSaveAsOptions_e.swSaveAsOptions_Silent, ref errors, ref warnings))
-                    throw new InvalidOperationException("Couldn't save " + Path.GetFileName(master) + " (error " + errors + ").");
-            }
-            finally
-            {
-                if (opened) application.CloseDoc(doc.GetTitle());
-            }
-        }
-
-        // A new file (a stock master, a gear) saved into the robot: like any new part, it goes to the team with the student's
+        // A new file (a gear) saved into the robot: like any new part, it goes to the team with the student's
         // next Submit (where they can still uncheck it).
         private void SaveNewFile(ModelDoc2 doc, string path)
         {
@@ -146,7 +43,7 @@ namespace JocoRobos.Cad
                 return;
             }
             for (int i = 0; i < copies; i++) AddToAssembly(assemblyDoc, path, configuration, i * 0.05);
-            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit (new stock parts and sizes go with it).");
+            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit (the new part goes with it).");
         }
 
         // ---------- building stock geometry ----------
@@ -201,105 +98,6 @@ namespace JocoRobos.Cad
         {
             // Inscribed: the circle touches the flats, so its radius is half the size across flats.
             doc.SketchManager.CreatePolygon(0, 0, 0, acrossFlats / 2 * Meters, 0, 0, 6, true);
-        }
-
-        private static void Rectangle(ModelDoc2 doc, double width, double height)
-        {
-            doc.SketchManager.CreateCenterRectangle(0, 0, 0, width / 2 * Meters, height / 2 * Meters, 0);
-        }
-
-        // Builds a stock part's master at its first size, named as that size's configuration.
-        private ModelDoc2 BuildStock(StockType type, double length, double width, string configuration)
-        {
-            var doc = NewPart();
-            var dimensions = new List<string>();
-            switch (type.Shape)
-            {
-                case StockShape.BoxTube:
-                    SelectPlane(doc, Right);
-                    doc.SketchManager.InsertSketch(true);
-                    Rectangle(doc, type.Width, type.Height);
-                    Rectangle(doc, type.Width - 2 * type.Wall, type.Height - 2 * type.Wall);
-                    dimensions.Add("D1@" + Extrude(doc, length).Name);
-                    break;
-                case StockShape.HexShaft:
-                case StockShape.RoundShaft:
-                    SelectPlane(doc, Right);
-                    doc.SketchManager.InsertSketch(true);
-                    if (type.Shape == StockShape.HexShaft) Hexagon(doc, type.Size); else doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Size / 2 * Meters);
-                    dimensions.Add("D1@" + Extrude(doc, length).Name);
-                    break;
-                case StockShape.HexSpacer:
-                case StockShape.RoundSpacer:
-                    SelectPlane(doc, Front);
-                    doc.SketchManager.InsertSketch(true);
-                    doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Size / 2 * Meters);
-                    if (type.Shape == StockShape.HexSpacer) Hexagon(doc, type.Bore); else doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Bore / 2 * Meters);
-                    dimensions.Add("D1@" + Extrude(doc, length).Name);
-                    break;
-                case StockShape.Plate:
-                    SelectPlane(doc, Top);
-                    doc.SketchManager.InsertSketch(true);
-                    var sides = (doc.SketchManager.CreateCenterRectangle(0, 0, 0, width / 2 * Meters, length / 2 * Meters, 0) as object[] ?? new object[0])
-                        .OfType<SketchLine>().ToList();
-                    string sketchName = ((Feature)doc.SketchManager.ActiveSketch).Name;
-                    // Dimension one horizontal side (width) and one vertical side (length), so every size sets its own.
-                    Func<SketchLine, bool> horizontal = line => Math.Abs(((SketchPoint)line.GetStartPoint2()).Y - ((SketchPoint)line.GetEndPoint2()).Y) < 1e-9;
-                    foreach (var side in new[] { sides.FirstOrDefault(horizontal), sides.FirstOrDefault(l => !horizontal(l)) })
-                    {
-                        if (side == null) throw new InvalidOperationException("SOLIDWORKS didn't draw the plate's rectangle.");
-                        ((SketchSegment)side).Select4(false, null);
-                        var shown = doc.AddDimension2(0, 0, 0) as DisplayDimension;
-                        if (shown == null) throw new InvalidOperationException("SOLIDWORKS couldn't dimension the plate.");
-                        dimensions.Add(shown.GetDimension2(0).Name + "@" + sketchName);
-                    }
-                    Extrude(doc, type.Thickness);
-                    break;
-                case StockShape.Bearing:
-                    SelectPlane(doc, Front);
-                    doc.SketchManager.InsertSketch(true);
-                    doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Size / 2 * Meters);
-                    if (type.BoreHex) Hexagon(doc, type.Bore); else doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Bore / 2 * Meters);
-                    Extrude(doc, type.Thickness);
-                    if (type.FlangeDiameter > 0)
-                    {
-                        SelectPlane(doc, Front);
-                        doc.SketchManager.InsertSketch(true);
-                        doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.FlangeDiameter / 2 * Meters);
-                        doc.SketchManager.CreateCircleByRadius(0, 0, 0, type.Size / 2 * Meters);
-                        Extrude(doc, type.FlangeThickness);
-                    }
-                    break;
-            }
-            doc.SketchManager.AddToDB = false;
-            doc.SketchManager.DisplayWhenAdded = true;
-            doc.Extension.CustomPropertyManager[""].Add3(DimensionsProperty, (int)swCustomInfoType_e.swCustomInfoText, String.Join(";", dimensions),
-                (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-            var active = doc.ConfigurationManager.ActiveConfiguration;
-            if (active != null) active.Name = configuration;
-            SetStockSize(doc, type, configuration, length, width);
-            return doc;
-        }
-
-        // Sets one configuration's size (its own length, and width for plates), material and description.
-        private static void SetStockSize(ModelDoc2 doc, StockType type, string configuration, double length, double width)
-        {
-            string stored = doc.Extension.CustomPropertyManager[""].Get(DimensionsProperty) ?? "";
-            var names = stored.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
-            var values = type.Shape == StockShape.Plate ? new[] { width, length } : new[] { length };
-            for (int i = 0; i < names.Length && i < values.Length; i++)
-            {
-                var dimension = doc.Parameter(names[i]) as Dimension;
-                if (dimension == null) throw new InvalidOperationException("The stock part is missing its size dimension (" + names[i] + "). Ask a mentor.");
-                dimension.SetSystemValue3(values[i] * Meters, (int)swSetValueInConfiguration_e.swSetValue_InSpecificConfigurations, new[] { configuration });
-            }
-            var part = doc as PartDoc;
-            if (part != null) part.SetMaterialPropertyName2(configuration, "SOLIDWORKS Materials", type.Material);
-            var properties = doc.Extension.CustomPropertyManager[configuration];
-            properties.Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, StockParts.Description(type, configuration), (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-            properties.Add3("Vendor", (int)swCustomInfoType_e.swCustomInfoText, "Stock", (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-            doc.ShowConfiguration2(configuration);
-            doc.ForceRebuild3(false);
         }
 
         // ---------- the PropertyManager tools (framework in ToolPage and CadHubTools) ----------

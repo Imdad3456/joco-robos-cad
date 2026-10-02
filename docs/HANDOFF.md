@@ -28,7 +28,7 @@ Everything people see says **CAD Hub** (panel, menus, dialogs, installer, SOLIDW
 - **CommandManager tab** "CAD Hub" = modeling (Structure · Powertrain · Hardware); the task pane = team workflow. Icons: `tools/make-tool-icons.py` then `tools/make-icons.py`.
 - **ToolPage.cs**: one generic native PropertyManager page built from a tool's fields (`CadHubTools.cs`), with result line and live preview (temporary body). **CadHubFeature** (ProgId `JocoRobos.Cad.Feature`, a COM macro feature registered by RegAsm like the add-in) stores the settings as one string (`FeatureParams`), rebuilds the body with SOLIDWORKS' modeler, and Edit Feature reopens the page. Settings that come from presets (a bearing bore) are frozen into the feature, so team-standard changes never move existing geometry.
 - **Team standards** (bearing fits, team bearings) are set on the mentor page's Add-in tab and published in `catalog.json`.
-- Not yet run in SOLIDWORKS when written: TESTING.md 3d (1.8 tools) and 3e (this framework). Next per the plan: convert Stock Part, Lightening, Hole Pattern to pages and add Tube, Sprocket, Pulley, Belt Layout, Fastener Hole.
+- Not yet run in SOLIDWORKS when written: TESTING.md 3d and 3e. Stock parts were removed in 1.9.8 (tube and shafts come from FRCDesignLib). Lighten Plate, Hole Pattern, Bearing Hole and Belt and Chain use the PropertyManager page (ToolPage); Bearing Hole, Lighten and Hole Pattern make ordinary sketch + cut features. Possible next: Sprocket, Pulley, Belt Layout, Fastener Hole.
 
 ## After 1.0.0
 1.0.x is fixes only. New features go into 1.1 and later. `TESTING.md` stays the regression sheet: rerun the affected sections in the `2099-Robot` test season before releasing anything that touches Edit, Submit, Update or locking.

@@ -49,7 +49,7 @@ namespace JocoRobos.Cad
             insert = actions.InsertFrc;
             BackColor = SystemColors.Window;
             var heading = new Label { Text = "Find a part", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 4, 0, 2) };
-            var hint = new Label { Text = "Team Library parts come first, then FRCDesignLib (motors, bearings, gears, tube…). The first time anyone uses an FRCDesignLib part and size, it's prepared for the team, which takes a little longer. Box tube with no hole pattern and plain shafts are built by CAD Hub right away, any length.",
+            var hint = new Label { Text = "Team Library parts come first, then FRCDesignLib (motors, bearings, gears, tube…). The first time anyone uses an FRCDesignLib part and size, it's prepared for the team, which takes a little longer.",
                 AutoSize = true, ForeColor = SystemColors.GrayText, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
             var browse = new LinkLabel { Text = "Browse the team Library folder…", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
             browse.LinkClicked += (s, e) => actions.BrowseTeam();
@@ -110,10 +110,6 @@ namespace JocoRobos.Cad
                     box.SelectAll();
                     return;
                 }
-                // Something CAD Hub builds itself exactly as chosen (a box tube with no hole pattern, a plain shaft): built right
-                // here, no Onshape. Anything else comes from FRCDesignLib.
-                var built = StockParts.FromLibrary(selected.Name, ChosenAsShown());
-                if (built != null) { actions.InsertStock(built.Item1, built.Item2, null, (int)copies.Value); return; }
                 insert(selected, CurrentChoices(true));
             };
             status.Text = "Search the team Library and FRCDesignLib…";
@@ -147,7 +143,7 @@ namespace JocoRobos.Cad
         private void NoteBudget(FrcBudget budget)
         {
             budgetNote = budget == null || budget.Limit <= 0 || budget.Used < budget.Limit * 0.8 ? ""
-                : "\n⚠ The team has used " + budget.Used + " of " + budget.Limit + " Onshape calls this year. Prefer ⚡ parts, and tube without a hole pattern (CAD Hub builds that itself).";
+                : "\n⚠ The team has used " + budget.Used + " of " + budget.Limit + " Onshape calls this year. Prefer ⚡ parts (already in the team Library).";
         }
 
         internal void FocusSearch()
@@ -372,22 +368,6 @@ namespace JocoRobos.Cad
                 }
             }
             finally { updating = false; }
-        }
-
-        // Each visible setting as the student sees it: its name, the value shown, and its unit.
-        private List<Tuple<string, string, string>> ChosenAsShown()
-        {
-            var result = new List<Tuple<string, string, string>>();
-            foreach (Control holder in choices.Controls)
-            {
-                var choice = (FrcChoice)holder.Tag;
-                Control input;
-                if (hidden.Contains(choice.Id) || !inputs.TryGetValue(choice.Id, out input)) continue;
-                string shown = input is ComboBox ? (((ComboBox)input).SelectedItem as FrcOption)?.Name : input is CheckBox ? (((CheckBox)input).Checked ? "true" : "false") :
-                    input is TextBox ? input.Text : choice.Default;
-                result.Add(Tuple.Create(choice.Name, shown ?? "", choice.Unit ?? ""));
-            }
-            return result;
         }
 
         private Dictionary<string, string> CurrentChoices(bool visibleOnly)

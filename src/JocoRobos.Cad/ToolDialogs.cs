@@ -73,45 +73,6 @@ namespace JocoRobos.Cad
         }
     }
 
-    /// <summary>Make a stock part: type, size, how many.</summary>
-    internal sealed class StockDialog : ToolForm
-    {
-        private readonly ComboBox type = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
-        private readonly TextBox length = new TextBox { Text = "12" };
-        private readonly TextBox width = new TextBox { Text = "6" };
-        private readonly NumericUpDown copies = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 1 };
-        private Label lengthLabel, widthLabel;
-
-        internal StockType Type { get { return StockParts.Types[type.SelectedIndex]; } }
-        internal double? Length { get { return Number(length); } }
-        internal double? PlateWidth { get { return Number(width); } }
-        internal int Copies { get { return (int)copies.Value; } }
-
-        internal StockDialog() : base("Make a Stock Part")
-        {
-            foreach (var t in StockParts.Types) type.Items.Add(t.Group + ": " + t.Label);
-            type.SelectedIndex = 0;
-            Row("Part", type);
-            Row("Length (in)", length);
-            Row("Width (in)", width);
-            Row("How many", copies);
-            lengthLabel = (Label)Rows.GetControlFromPosition(0, 1);
-            widthLabel = (Label)Rows.GetControlFromPosition(0, 2);
-            type.SelectedIndexChanged += (s, e) => ShowFields();
-            Note.Text = "Built in SOLIDWORKS right away (no Onshape). Each kind is one part in the robot (90_COTS/Stock) with a configuration per size: " +
-                "a new size is added for the whole team. Check one against the real part before cutting.";
-            ShowFields();
-        }
-
-        private void ShowFields()
-        {
-            length.Enabled = lengthLabel.Enabled = Type.HasLength;
-            width.Enabled = widthLabel.Enabled = Type.HasWidth;
-        }
-
-        protected override string Check() { return StockParts.Problem(Type, Length, PlateWidth); }
-    }
-
     /// <summary>Spur gear: teeth, pitch, pressure angle, width, bore.</summary>
     internal sealed class GearDialog : ToolForm
     {

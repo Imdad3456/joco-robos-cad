@@ -84,9 +84,6 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
-| 3d.2 | A | Edit an assembly → Library tab → **Aluminum Box Tube (AM)** → Tube Type 2" x 1" x 0.0625", Pattern Type **None** (or the plain option), Length 23.75, ×2 → Insert | Built right away by CAD Hub (no "preparing" wait): two plain tubes in `90_COTS/Stock/Box tube`. With Pattern Type **Full**, the same Insert gets the vendor tube from FRCDesignLib instead | ☐ |
-| 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); the part is now locked by B and shows in B's Submit. Nothing was shared until B submits | ☐ |
-| 3d.4 | A | Library → a hex shaft part → 1/2", no grooves or turned ends, 7.25 → Insert. Then the same with turned ends | Plain: built by CAD Hub. Turned ends: from FRCDesignLib | ☐ |
 | 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
 | 3d.6 | A | Open a sketch with a center distance → **Belt and Chain** | Side panel: belt/chain, teeth, length; the center distance updates as you type. Click the center dimension into the box → ✓ sets it | ☐ |
 | 3d.7 | A | A plate part (Edit it) → **Lighten Plate** → click its face | Side panel; the result line says how many pockets and how much is removed, and changes as you change Pocket size. ✓ cuts them: arcs around round holes and curved edges, clusters solid, no long slot along an edge lined with holes, no big open areas | ☐ |
