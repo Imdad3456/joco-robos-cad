@@ -24,8 +24,8 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 **Modeling tools** live on the **CAD Hub tab** in SOLIDWORKS' CommandManager (Structure · Powertrain · Hardware), like SOLIDWORKS' own tools; team work (Open Robot, Edit, Submit, Library) stays in the CAD Hub panel. **Spur Gear** and **Bearing Hole** open a native PropertyManager page (preset first, Advanced folded away, the exact result shown, live preview, ✓) and make an editable **CAD Hub feature**: right-click it → Edit Feature to change it later. Bearing Hole uses the team's fits (mentor page → Add-in → Team standards). All built in SOLIDWORKS with no Onshape calls:
 - **Stock Part**: plain box tube, hex and round shaft, spacers, plates, bearings, in any size. Each kind is one part in the robot (`90_COTS/Stock`) with a configuration per size. New parts and sizes go to the team with your next Submit, like anything you make (a new size locks the part, like Edit). For a vendor's exact tube pattern, use their tube from FRCDesignLib (⚡ in the Library tab).
 - **Spur Gear** from teeth, pitch, pressure angle, width and bore. **Belt and Chain** calculator for center distances (and can set the selected dimension).
-- **Lighten Plate**: select a plate's face; pockets with ribs between its holes (close holes count as one group) and its corners, rounded for your router bit, with the weight saved.
-- **Hole Pattern**: holes along a tube's side with your spacing, size and rows (remembered).
+- **Lighten Plate**: select a plate's face; pockets with ribs between its holes (close holes count as one group) and its corners, following round holes and curved edges with arcs, rounded for your router bit, with the weight saved.
+- **Hole Pattern**: holes along a tube's side with your spacing and size; rows fill the side on the grid (3 on a 2" side) or a number you pick (remembered).
 
 In search, **⚡** marks FRCDesignLib parts the team Library already has (instant); with nothing typed, the Library tab shows the team's most-used parts. The **×** box next to Insert adds several at once.
 

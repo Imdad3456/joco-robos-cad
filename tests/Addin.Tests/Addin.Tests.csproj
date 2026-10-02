@@ -28,4 +28,7 @@
     <Compile Include="../../src/JocoRobos.Cad/PlateLighten.cs" Link="PlateLighten.cs" />
     <Compile Include="../../src/JocoRobos.Cad/FeatureParams.cs" Link="FeatureParams.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="1.5.4" />
+  </ItemGroup>
 </Project>

@@ -13,8 +13,10 @@ namespace JocoRobos.Cad
     /// with the exact result, a live preview, and the green check / red X. New: inserts a CAD Hub feature. Edit: updates it.
     /// SOLIDWORKS calls this over COM, so nothing may throw out of a callback.
     /// </summary>
+    // SOLIDWORKS takes the handler as IDispatch: it needs the automatic dispatch interface (ClassInterfaceType.None has none, and
+    // CreatePropertyManagerPage then fails to marshal it).
     [ComVisible(true)]
-    [ClassInterface(ClassInterfaceType.None)]
+    [ClassInterface(ClassInterfaceType.AutoDispatch)]
     public sealed class ToolPage : IPropertyManagerPage2Handler9
     {
         internal const string ProgId = "JocoRobos.Cad.Feature";

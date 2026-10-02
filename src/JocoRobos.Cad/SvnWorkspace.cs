@@ -152,9 +152,20 @@ namespace JocoRobos.Cad
                 {
                     RequireWorkspace(client);
                     ReconcilePendingSubmit(client);
-                    RemoveEmptyNewFolders(client);
+                    PrepareNewFolders(client);
                     foreach (var item in Status(client, Root, false, SvnDepth.Infinity))
-                        if (!WorkspacePolicy.IsOwnerFile(item.FullPath) || item.Versioned) RequireClean(item);
+                    {
+                        // Files and folders that are only on this computer stay as they are: Update never touches them. Only when
+                        // the server now has something at the same place does it stop, so nothing of yours is overwritten.
+                        if (!item.Versioned)
+                        {
+                            if (!WorkspacePolicy.IsOwnerFile(item.FullPath) && OnServer(Path.GetFullPath(item.FullPath)))
+                                throw new InvalidOperationException("A teammate submitted something with the same name as your new, not-yet-submitted:\n" + item.FullPath +
+                                    "\nRename or move yours out of the robot folder (keep a copy), then Open Robot again.");
+                            continue;
+                        }
+                        RequireClean(item);
+                    }
                     client.Update(Root, new SvnUpdateArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
                 }
                 RequireWorkspace(client);
@@ -163,21 +174,30 @@ namespace JocoRobos.Cad
             }
         }
 
-        // New folders left with nothing in them (for example after a Submit failed and the new file was then deleted) hold no work,
-        // but would stop every update. Unmark and remove them; a folder with any file anywhere inside is left alone.
-        private void RemoveEmptyNewFolders(SvnClient client)
+        // Folders marked new by a Submit that didn't finish, with no part in them any more, would stop every update: unmark them
+        // (whatever is inside stays on disk), and remove new folders that have no files at all. A folder with a part inside is left
+        // for Submit.
+        private void PrepareNewFolders(SvnClient client)
         {
-            var leftovers = Status(client, Root, false, SvnDepth.Infinity)
-                .Where(x => x.NodeKind == SvnNodeKind.Directory || Directory.Exists(x.FullPath))
-                .Where(x => x.LocalNodeStatus == SvnStatus.Added || x.LocalNodeStatus == SvnStatus.NotVersioned)
-                .Select(x => Path.GetFullPath(x.FullPath))
-                .Where(dir => Directory.Exists(dir) && !Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any())
-                .OrderByDescending(dir => dir.Length).ToList();
-            foreach (string dir in leftovers)
+            Func<string, bool> holdsParts = dir => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any(WorkspacePolicy.IsSubmittableCad);
+            var statuses = Status(client, Root, false, SvnDepth.Infinity);
+            foreach (string dir in statuses
+                .Where(x => x.LocalNodeStatus == SvnStatus.Added && (x.NodeKind == SvnNodeKind.Directory || Directory.Exists(x.FullPath)))
+                .Select(x => Path.GetFullPath(x.FullPath)).Where(Directory.Exists).OrderBy(dir => dir.Length).ToList())
             {
                 WorkspacePolicy.RequireInside(Root, dir);
-                try { client.Revert(dir, new SvnRevertArgs { Depth = SvnDepth.Infinity }); } catch (SvnException) { } // Wasn't marked: just remove it.
-                if (Directory.Exists(dir) && !Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any()) Directory.Delete(dir, true);
+                if (!Directory.Exists(dir) || holdsParts(dir)) continue;
+                var still = Status(client, dir, false, SvnDepth.Empty).FirstOrDefault();
+                if (still != null && still.LocalNodeStatus == SvnStatus.Added) client.Revert(dir, new SvnRevertArgs { Depth = SvnDepth.Infinity });
+            }
+            foreach (string dir in Status(client, Root, false, SvnDepth.Infinity)
+                .Where(x => !x.Versioned && Directory.Exists(x.FullPath))
+                .Select(x => Path.GetFullPath(x.FullPath))
+                .Where(dir => !Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any())
+                .OrderByDescending(dir => dir.Length).ToList())
+            {
+                WorkspacePolicy.RequireInside(Root, dir);
+                Directory.Delete(dir, true);
             }
         }
 
@@ -378,6 +398,9 @@ namespace JocoRobos.Cad
                     if (item.LocalNodeStatus == SvnStatus.Modified) snapshot.Changed.Add(path);
                     else if ((item.LocalNodeStatus == SvnStatus.Added || item.LocalNodeStatus == SvnStatus.NotVersioned) && WorkspacePolicy.IsSubmittableCad(path))
                         snapshot.New.Add(path);
+                    // A new folder shows up as one item: the parts inside it are new too.
+                    else if (item.LocalNodeStatus == SvnStatus.NotVersioned && Directory.Exists(path))
+                        snapshot.New.UnionWith(Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Where(WorkspacePolicy.IsSubmittableCad).Select(Path.GetFullPath));
                 }
                 return snapshot;
             }

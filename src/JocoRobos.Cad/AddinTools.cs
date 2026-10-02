@@ -423,18 +423,20 @@ namespace JocoRobos.Cad
                 var frame = PlaneFrame(surface, face);
                 var outline = new List<double[]>();
                 var holes = new List<Circle2>();
-                ReadFace(face, frame, outline, holes);
+                var cutouts = new List<List<double[]>>();
+                ReadFace(face, frame, outline, holes, cutouts);
                 if (outline.Count < 3) throw new InvalidOperationException("Couldn't read the outline of that face.");
                 using (var dialog = new LightenDialog())
                 {
                     if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                    var plan = PlateLighten.Plan(outline, holes, null, dialog.Settings);
+                    var plan = PlateLighten.Plan(outline, holes, null, dialog.Settings, cutouts);
                     if (plan.Pockets.Count == 0)
                         throw new InvalidOperationException("No pockets fit with these settings. Try narrower ribs, a smaller border or ring, or a smaller minimum pocket.");
                     double before = doc.Extension.CreateMassProperty().Mass;
                     ((Entity)face).Select4(false, null);
                     doc.SketchManager.InsertSketch(true);
                     var sketch = doc.SketchManager.ActiveSketch;
+                    if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Click the face once more, then try again.");
                     var toSketch = sketch.ModelToSketchTransform;
                     var math = application.GetMathUtility() as MathUtility;
                     Func<double, double, double[]> map = (x, y) =>
@@ -459,7 +461,7 @@ namespace JocoRobos.Cad
                                 else
                                 {
                                     var c = map(segment.Cx * Meters, segment.Cy * Meters);
-                                    doc.SketchManager.CreateArc(c[0], c[1], 0, a[0], a[1], 0, b[0], b[1], 0, direction);
+                                    doc.SketchManager.CreateArc(c[0], c[1], 0, a[0], a[1], 0, b[0], b[1], 0, (short)(segment.Clockwise ? -direction : direction));
                                 }
                             }
                     }
@@ -471,7 +473,7 @@ namespace JocoRobos.Cad
                     if (dialog.Depth <= 0) CutThroughBoth(doc); else Extrude(doc, dialog.Depth, true);
                     double after = doc.Extension.CreateMassProperty().Mass;
                     double saved = (before - after) * 2.20462;
-                    ShowFlash("✓ Lightened " + doc.GetTitle() + ": " + plan.Pockets.Count + " pockets, −" + saved.ToString("0.00") + " lb (" +
+                    ShowFlash("✓ Lightened " + doc.GetTitle() + ": " + plan.Count + " pockets, −" + saved.ToString("0.00") + " lb (" +
                         (before > 0 ? (100 * (before - after) / before).ToString("0") : "?") + "%). It's an ordinary cut: edit or delete it like any feature.");
                 }
             });
@@ -497,8 +499,8 @@ namespace JocoRobos.Cad
             return new[] { origin[0], origin[1], origin[2], u[0], u[1], u[2], v[0], v[1], v[2] };
         }
 
-        // The face's outline (as points in inches, in the frame) and its holes; a non-round cutout counts as a hole around it.
-        private static void ReadFace(Face2 face, double[] frame, List<double[]> outline, List<Circle2> holes)
+        // The face's outline (as points in inches, in the frame), its round holes, and any other cutouts (slots, shapes) as outlines.
+        private static void ReadFace(Face2 face, double[] frame, List<double[]> outline, List<Circle2> holes, List<List<double[]>> cutouts = null)
         {
             Func<double[], double[]> flat = p =>
             {
@@ -517,9 +519,7 @@ namespace JocoRobos.Cad
                 }
                 var points = ChainEdges(edges).Select(flat).ToList();
                 if (loop.IsOuter()) { outline.AddRange(points); continue; }
-                if (points.Count == 0) continue;
-                double cx = points.Average(p => p[0]), cy = points.Average(p => p[1]);
-                holes.Add(new Circle2 { X = cx, Y = cy, R = points.Max(p => Math.Sqrt((p[0] - cx) * (p[0] - cx) + (p[1] - cy) * (p[1] - cy))) });
+                if (points.Count >= 3 && cutouts != null) cutouts.Add(points);
             }
         }
 
@@ -537,7 +537,7 @@ namespace JocoRobos.Cad
                 if (curve.IsLine()) { piece.Add(start); piece.Add(end); }
                 else
                 {
-                    var tess = curve.GetTessPts(0.0005, 0.005, start, end) as double[];
+                    var tess = curve.GetTessPts(0.00001, 0.002, start, end) as double[];
                     if (tess == null || tess.Length < 6) { piece.Add(start); piece.Add(end); }
                     else for (int i = 0; i + 2 < tess.Length; i += 3) piece.Add(new[] { tess[i], tess[i + 1], tess[i + 2] });
                 }
@@ -595,7 +595,7 @@ namespace JocoRobos.Cad
                 double minX = outline.Min(p => p[0]), maxX = outline.Max(p => p[0]), minY = outline.Min(p => p[1]), maxY = outline.Max(p => p[1]);
                 double length = maxX - minX, width = maxY - minY, middle = (minY + maxY) / 2;
                 if (width > length) throw new InvalidOperationException("Select a long side of the tube.");
-                var rows = StockParts.RowOffsets(pattern.Rows, pattern.RowSpacing);
+                var rows = pattern.Rows == 0 ? StockParts.FillRows(width, pattern.RowSpacing, pattern.Diameter) : StockParts.RowOffsets(pattern.Rows, pattern.RowSpacing);
                 if (rows.Max() + pattern.Diameter / 2 > width / 2) throw new InvalidOperationException("Those rows don't fit across a " + StockParts.Inches(width) + "\" face.");
                 // How deep: the body's size across the face, so the holes go through both walls but nothing behind the tube.
                 var box = (double[])((Body2)face.GetBody()).GetBodyBox();
@@ -603,7 +603,9 @@ namespace JocoRobos.Cad
                 double depth = (Math.Abs(normal[0]) * (box[3] - box[0]) + Math.Abs(normal[1]) * (box[4] - box[1]) + Math.Abs(normal[2]) * (box[5] - box[2])) / Meters;
                 ((Entity)face).Select4(false, null);
                 doc.SketchManager.InsertSketch(true);
-                var toSketch = doc.SketchManager.ActiveSketch.ModelToSketchTransform;
+                var sketch = doc.SketchManager.ActiveSketch;
+                if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Click the face once more, then try again.");
+                var toSketch = sketch.ModelToSketchTransform;
                 var math = application.GetMathUtility() as MathUtility;
                 doc.SketchManager.AddToDB = true;
                 doc.SketchManager.DisplayWhenAdded = false;
@@ -626,7 +628,7 @@ namespace JocoRobos.Cad
                     doc.SketchManager.DisplayWhenAdded = true;
                 }
                 Extrude(doc, depth + 0.01, true);
-                ShowFlash("✓ Added " + count + " holes (⌀" + StockParts.Inches(pattern.Diameter) + "\" every " + StockParts.Inches(pattern.Spacing) + "\"). It's an ordinary cut: edit or delete it like any feature.");
+                ShowFlash("✓ Added " + count + " holes in " + rows.Length + (rows.Length == 1 ? " row" : " rows") + " (⌀" + StockParts.Inches(pattern.Diameter) + "\" every " + StockParts.Inches(pattern.Spacing) + "\"). It's an ordinary cut: edit or delete it like any feature.");
             });
         }
     }

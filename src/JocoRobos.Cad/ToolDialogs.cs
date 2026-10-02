@@ -154,11 +154,12 @@ namespace JocoRobos.Cad
     {
         private const string Key = @"Software\JOCO ROBOS\CAD\HolePattern";
         private readonly TextBox spacing = new TextBox(), diameter = new TextBox(), rowSpacing = new TextBox(), start = new TextBox();
-        private readonly NumericUpDown rows = new NumericUpDown { Minimum = 1, Maximum = 5 };
+        private readonly ComboBox rows = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
 
         internal double Spacing { get { return Number(spacing) ?? 0; } }
         internal double Diameter { get { return Number(diameter) ?? 0; } }
-        internal int Rows { get { return (int)rows.Value; } }
+        /// <summary>0: fill the side with as many rows as fit.</summary>
+        internal int Rows { get { return Math.Max(0, rows.SelectedIndex); } }
         internal double RowSpacing { get { return Number(rowSpacing) ?? 0; } }
         internal double Start { get { return Number(start) ?? 0; } }
 
@@ -168,16 +169,18 @@ namespace JocoRobos.Cad
             {
                 spacing.Text = saved?.GetValue("Spacing") as string ?? "0.5";
                 diameter.Text = saved?.GetValue("Diameter") as string ?? "0.196";
-                rows.Value = Math.Max(1, Math.Min(5, Convert.ToInt32(saved?.GetValue("Rows") ?? 1)));
+                rows.Items.AddRange(new object[] { "Fill the side", "1", "2", "3", "4", "5" });
+                rows.SelectedIndex = Math.Max(0, Math.Min(5, Convert.ToInt32(saved?.GetValue("RowCount") ?? 0)));
                 rowSpacing.Text = saved?.GetValue("RowSpacing") as string ?? "0.5";
                 start.Text = saved?.GetValue("Start") as string ?? "0.25";
             }
             Row("Spacing along the tube (in)", spacing);
             Row("Hole diameter (in)", diameter);
-            Row("Rows across the face", rows);
+            Row("Rows across the side", rows);
             Row("Row spacing (in)", rowSpacing);
             Row("First hole from the end (in)", start);
-            Note.Text = "Holes go through both walls of the side you selected, rows centered on it. Vendors' patterns differ: match your tube's " +
+            Note.Text = "Holes go through both walls of the side you selected, rows centered on it. Fill the side: as many rows as fit on the " +
+                "row spacing (0.5\": 3 rows on a 2\" side, 1 on a 1\" side). Vendors' patterns differ: match your tube's " +
                 "(or use the vendor's tube from FRCDesignLib in the Library tab for its exact pattern). Your last settings are remembered.";
         }
 
@@ -185,7 +188,7 @@ namespace JocoRobos.Cad
         {
             if (Spacing < 0.1 || Spacing > 12) return "Spacing from 0.1 to 12 in.";
             if (Diameter < 0.05 || Diameter > 2 || Diameter >= Spacing) return "Hole diameter from 0.05 in, smaller than the spacing.";
-            if (Rows > 1 && (RowSpacing <= Diameter || RowSpacing > 6)) return "Row spacing larger than the hole diameter.";
+            if (Rows != 1 && (RowSpacing <= Diameter || RowSpacing > 6)) return "Row spacing larger than the hole diameter.";
             if (Start < 0 || Start > 12) return "First hole from 0 to 12 in from the end.";
             try
             {
@@ -193,7 +196,7 @@ namespace JocoRobos.Cad
                 {
                     saved.SetValue("Spacing", spacing.Text.Trim());
                     saved.SetValue("Diameter", diameter.Text.Trim());
-                    saved.SetValue("Rows", Rows);
+                    saved.SetValue("RowCount", Rows);
                     saved.SetValue("RowSpacing", rowSpacing.Text.Trim());
                     saved.SetValue("Start", start.Text.Trim());
                 }

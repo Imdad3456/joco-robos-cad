@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Clipper2Lib;
 
 namespace JocoRobos.Cad
 {
@@ -10,7 +11,7 @@ namespace JocoRobos.Cad
         internal double Border = 0.25;       // solid material kept along the plate's edge
         internal double Ring = 0.15;         // solid material kept around every hole, beyond its edge
         internal double CornerRadius = 0.0625; // the router bit's radius: pockets get rounded corners at least this big
-        internal double MinPocket = 0.35;    // pockets narrower than this (inscribed diameter) are left solid
+        internal double MinPocket = 0.35;    // pockets narrower than this are left solid
         internal double MaxPocket = 3;     // pockets bigger across than about this are split by another rib junction
     }
 
@@ -19,13 +20,14 @@ namespace JocoRobos.Cad
         internal double X, Y, R;
     }
 
-    /// <summary>One piece of a pocket's outline: a line, or a counterclockwise arc around (Cx, Cy).</summary>
+    /// <summary>One piece of a pocket's outline: a line, or an arc around (Cx, Cy), counterclockwise unless Clockwise.</summary>
     internal sealed class PocketSegment
     {
-        internal bool Arc;
+        internal bool Arc, Clockwise;
         internal double X1, Y1, X2, Y2, Cx, Cy;
     }
 
+    /// <summary>One closed loop of a pocket. A loop inside another (an island left around a hole) has negative Area.</summary>
     internal sealed class Pocket
     {
         internal readonly List<PocketSegment> Segments = new List<PocketSegment>();
@@ -37,132 +39,158 @@ namespace JocoRobos.Cad
         internal readonly List<Pocket> Pockets = new List<Pocket>();
         internal double PlateArea, RemovedArea;
         internal double Percent { get { return PlateArea <= 0 ? 0 : 100 * RemovedArea / PlateArea; } }
+        internal int Count { get { return Pockets.Count(p => p.Area > 0); } }
     }
 
     /// <summary>
-    /// "Lighten Plate", 2D: ribs connect the holes (and the plate's corners and any points the student adds) in triangles,
-    /// and each triangle between ribs becomes a pocket with rounded corners, kept clear of the edge and of every hole.
-    /// Pure geometry in the plate's plane, inches; the add-in reads the face and sketches the result.
+    /// "Lighten Plate", 2D, the way the Onshape lightening scripts do it: the area that may be cut is the plate shrunk by the
+    /// border, minus a ring around every hole and cutout (true offsets, so it follows arcs and curved edges). Ribs join the holes,
+    /// the plate's corners and points along its edge in triangles; what's left between the ribs are the pockets, with rounded
+    /// corners, and anything narrower than the smallest pocket left solid. Pure geometry in the plate's plane, inches; the add-in
+    /// reads the face and sketches the result as lines and arcs.
     /// </summary>
     internal static class PlateLighten
     {
-        private const double MinAngle = 22 * Math.PI / 180;
+        private const int Precision = 5;          // Clipper works to 0.00001"
+        private const double ArcTolerance = 0.0002; // how closely offsets follow a curve
+        private const double FitTolerance = 0.001;  // how far a sketched line or arc may stray from the computed outline
+        private const double MinAngle = 22 * Math.PI / 180; // triangles sharper than this don't get their longest rib
 
-        internal static LightenPlan Plan(IList<double[]> outline, IList<Circle2> holes, IList<double[]> extraPoints, LightenSettings settings)
+        internal static LightenPlan Plan(IList<double[]> outline, IList<Circle2> holes, IList<double[]> extraPoints, LightenSettings settings,
+            IList<List<double[]>> cutouts = null)
         {
             var plan = new LightenPlan();
             var border = outline.Select(p => new[] { p[0], p[1] }).ToList();
             if (SignedArea(border) < 0) border.Reverse();
-            plan.PlateArea = SignedArea(border) - holes.Sum(h => Math.PI * h.R * h.R);
-            // Where ribs meet: every hole; the plate's corners and points along its edge about a pocket apart; points the student
-            // added; then more points inside wherever a pocket would be too big, so pockets come out even-sized.
-            var group = HoleGroups(holes, settings);
+            cutouts = cutouts ?? new List<List<double[]>>();
+            plan.PlateArea = SignedArea(border) - holes.Sum(h => Math.PI * h.R * h.R) - cutouts.Sum(c => Math.Abs(SignedArea(c)));
+
+            // Where pockets may go: inside the border, outside every hole's and cutout's ring.
+            var keepOut = new PathsD();
+            foreach (var h in holes) keepOut.Add(CirclePath(h.X, h.Y, h.R + settings.Ring));
+            if (cutouts.Count > 0)
+                keepOut.AddRange(Clipper.InflatePaths(new PathsD(cutouts.Select(Path)), settings.Ring, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance));
+            var region = Clipper.InflatePaths(new PathsD { Path(border) }, -settings.Border, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance);
+            region = Clipper.Difference(region, keepOut, FillRule.NonZero, Precision);
+            // Gaps too narrow for a pocket (between close holes, or a hole and the edge) stay solid: shrink, then grow back.
+            region = Clipper.InflatePaths(Clipper.InflatePaths(region, -settings.MinPocket / 2, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance),
+                settings.MinPocket / 2, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance);
+            if (region.Count == 0) return plan;
+
+            // Where ribs meet: each hole, or one point for a cluster of holes too close for pockets between them (a bolt pattern,
+            // a bearing and its screws), unless it's right at the edge; each cutout; the plate's corners and points along its edge
+            // about a pocket apart; points the student added; then more points inside wherever a pocket would be too big, so
+            // pockets come out even-sized.
             var nodes = new List<double[]>();
-            var groupOf = new Dictionary<double[], int>();
-            for (int i = 0; i < holes.Count; i++) { var c = new[] { holes[i].X, holes[i].Y }; nodes.Add(c); groupOf[c] = group[i]; }
-            Func<double[], double, bool> clear = (p, margin) => holes.All(h => Distance(p, new[] { h.X, h.Y }) > h.R + settings.Ring + margin) &&
-                nodes.All(n => Distance(n, p) > 1e-6);
-            foreach (var p in EdgePoints(border, settings.MaxPocket))
-                if (clear(p, settings.Rib + settings.MinPocket)) nodes.Add(p);
-            foreach (var p in extraPoints ?? new List<double[]>()) if (clear(p, 0)) nodes.Add(new[] { p[0], p[1] });
+            var spokes = new PathsD(); // a rib from each hole of a cluster to the cluster's junction, so no hole's ring hangs loose
+            var group = HoleGroups(holes, settings);
+            foreach (var members in Enumerable.Range(0, holes.Count).GroupBy(i => group[i]))
+            {
+                double weight = members.Sum(i => holes[i].R * holes[i].R);
+                var center = new[] { members.Sum(i => holes[i].X * holes[i].R * holes[i].R) / weight, members.Sum(i => holes[i].Y * holes[i].R * holes[i].R) / weight };
+                bool atEdge = members.All(i => DistanceToPolygon(new[] { holes[i].X, holes[i].Y }, border) < holes[i].R + settings.Ring + settings.Border + settings.MinPocket);
+                if (atEdge) continue;
+                nodes.Add(center);
+                foreach (int i in members)
+                    if (Distance(center, new[] { holes[i].X, holes[i].Y }) > 1e-6) spokes.Add(Path(new List<double[]> { center, new[] { holes[i].X, holes[i].Y } }));
+            }
+            nodes.AddRange(cutouts.Where(c => c.Count > 0).Select(c => new[] { c.Average(p => p[0]), c.Average(p => p[1]) }));
+            Func<double[], bool> fresh = p => nodes.All(n => Distance(n, p) > 1e-6);
+            Func<double[], bool> clear = p => holes.All(h => Distance(p, new[] { h.X, h.Y }) > h.R + settings.Ring + settings.Rib + settings.MinPocket);
+            var corners = Corners(border);
+            var edgeNodes = new List<double[]>();
+            foreach (var p in EdgePoints(border, settings.MaxPocket)) if (fresh(p) && (corners.Contains(p) || clear(p))) { nodes.Add(p); edgeNodes.Add(p); }
+            foreach (var p in extraPoints ?? new List<double[]>()) if (fresh(p)) nodes.Add(new[] { p[0], p[1] });
             for (int round = 0; round < 8 && nodes.Count < 800; round++)
             {
                 var added = new List<double[]>();
                 foreach (var triangle in Triangulate(nodes))
                 {
-                    if (!Useful(triangle, border, holes, groupOf, settings)) continue;
                     double longest = Enumerable.Range(0, 3).Max(k => Distance(triangle[k], triangle[(k + 1) % 3]));
                     if (longest <= settings.MaxPocket * 1.5) continue;
                     var middle = new[] { triangle.Average(q => q[0]), triangle.Average(q => q[1]) };
-                    bool inside = Inside(border, middle) && border.Select((q, i) => SegmentDistance(middle, q, border[(i + 1) % border.Count])).Min() > settings.Border + settings.MinPocket;
-                    if (inside && clear(middle, settings.MinPocket) && nodes.Concat(added).All(n => Distance(n, middle) > settings.MaxPocket * 0.45)) added.Add(middle);
+                    // Only inside the area that's cut, comfortably clear of its edge, and not crowding another junction.
+                    if (Depth(region, middle) < settings.MinPocket) continue;
+                    if (nodes.Concat(added).All(n => Distance(n, middle) > settings.MaxPocket * 0.45)) added.Add(middle);
                 }
                 if (added.Count == 0) break;
                 nodes.AddRange(added);
             }
-            foreach (var triangle in Triangulate(nodes))
+
+            // Ribs along the edges of the triangles; what's left of the region between them are the pockets. A thin triangle would
+            // only make a sliver: its longest side gets no rib, so it joins its neighbor in one pocket.
+            var edges = new PathsD(spokes);
+            var seen = new HashSet<string>();
+            var skipped = new HashSet<string>();
+            Func<double[], double[], string> key = (a, b) => Compare(a, b) > 0 ? b[0] + "," + b[1] + "," + a[0] + "," + a[1] : a[0] + "," + a[1] + "," + b[0] + "," + b[1];
+            // Neighbors along the plate's edge get no rib between them: the edge's border is the rib there, and a straight rib
+            // across a curved edge would flatten the pockets beside it.
+            var alongEdge = edgeNodes.OrderBy(p => AlongBorder(border, p)).ToList();
+            for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) skipped.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+            var triangles = Triangulate(nodes);
+            foreach (var triangle in triangles)
             {
-                if (!Useful(triangle, border, holes, groupOf, settings)) continue;
-                var pocket = Shape(triangle, border, holes, settings);
-                if (pocket == null) continue;
-                var rounded = Round(pocket, settings.CornerRadius);
-                if (rounded == null) continue;
-                plan.Pockets.Add(rounded);
-                plan.RemovedArea += rounded.Area;
+                double smallestAngle = Enumerable.Range(0, 3).Min(k => Math.PI - Math.Abs(Turn(triangle[(k + 2) % 3], triangle[k], triangle[(k + 1) % 3])));
+                if (smallestAngle >= MinAngle) continue;
+                int longest = Enumerable.Range(0, 3).OrderByDescending(k => Distance(triangle[k], triangle[(k + 1) % 3])).First();
+                skipped.Add(key(triangle[longest], triangle[(longest + 1) % 3]));
+            }
+            foreach (var triangle in triangles)
+                for (int k = 0; k < 3; k++)
+                {
+                    double[] a = triangle[k], b = triangle[(k + 1) % 3];
+                    string id = key(a, b);
+                    if (!skipped.Contains(id) && seen.Add(id)) edges.Add(Path(new List<double[]> { a, b }));
+                }
+            var ribs = Clipper.InflatePaths(edges, settings.Rib / 2, JoinType.Round, EndType.Round, 2, Precision, ArcTolerance);
+            var pieces = Clipper.Difference(region, ribs, FillRule.NonZero, Precision);
+
+            // Too narrow anywhere for the smallest pocket: left solid. Then rounded corners for the router bit (shrink, then grow
+            // back by the corner radius), which also trims thin tails off pockets.
+            var kept = new PathsD();
+            foreach (var piece in Pieces(pieces))
+            {
+                if (Clipper.InflatePaths(piece, -settings.MinPocket / 2, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance).Count == 0) continue;
+                kept.AddRange(piece);
+            }
+            double radius = Math.Max(settings.CornerRadius, 0.001);
+            var rounded = Clipper.InflatePaths(Clipper.InflatePaths(kept, -radius, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance),
+                radius, JoinType.Round, EndType.Polygon, 2, Precision, ArcTolerance);
+            double smallest = Math.PI * settings.MinPocket * settings.MinPocket / 4;
+            foreach (var piece in Pieces(rounded))
+            {
+                if (Clipper.Area(piece) < smallest) continue;
+                foreach (var loop in piece)
+                {
+                    var pocket = new Pocket { Area = Clipper.Area(loop) };
+                    pocket.Segments.AddRange(Fit(loop.Select(p => new[] { p.x, p.y }).ToList(), FitTolerance));
+                    if (pocket.Segments.Count == 0) continue;
+                    plan.Pockets.Add(pocket);
+                    plan.RemovedArea += pocket.Area;
+                }
             }
             return plan;
         }
 
-        // A triangle shrunk by half a rib on each side, then kept off the plate edge and away from holes. Null if too small.
-        private static List<double[]> Shape(List<double[]> triangle, List<double[]> border, IList<Circle2> holes, LightenSettings s)
+        // How far along the outline (from its first point) the point nearest p is.
+        private static double AlongBorder(List<double[]> border, double[] p)
         {
-            var polygon = triangle.ToList();
-            if (SignedArea(polygon) < 0) polygon.Reverse();
-            var corners = polygon.ToList();
-            for (int i = 0; i < corners.Count; i++)
-                polygon = Clip(polygon, corners[i], corners[(i + 1) % corners.Count], s.Rib / 2);
-            // Plate edges near the pocket: keep the border width clear.
-            for (int i = 0; i < border.Count && polygon.Count >= 3; i++)
+            double best = double.MaxValue, at = 0, result = 0;
+            for (int i = 0; i < border.Count; i++)
             {
-                var a = border[i]; var b = border[(i + 1) % border.Count];
-                if (polygon.Any(p => SegmentDistance(p, a, b) < s.Border - 1e-9)) polygon = Clip(polygon, a, b, s.Border);
+                double[] a = border[i], b = border[(i + 1) % border.Count];
+                double length = Distance(a, b), d = SegmentDistance(p, a, b);
+                if (d < best)
+                {
+                    best = d;
+                    result = at + (length < 1e-12 ? 0 : Math.Max(0, Math.Min(length, ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / length)));
+                }
+                at += length;
             }
-            // Holes: cut the pocket back by a line facing away from each hole that's too close.
-            foreach (var hole in holes)
-            {
-                if (polygon.Count < 3) break;
-                var center = new[] { hole.X, hole.Y };
-                double keep = hole.R + s.Ring;
-                if (DistanceToPolygon(center, polygon) >= keep - 1e-9 && !Inside(polygon, center)) continue;
-                var middle = new[] { polygon.Average(p => p[0]), polygon.Average(p => p[1]) };
-                double dx = middle[0] - hole.X, dy = middle[1] - hole.Y, length = Math.Sqrt(dx * dx + dy * dy);
-                if (length < 1e-9) return null;
-                dx /= length; dy /= length;
-                polygon = ClipHalfPlane(polygon, p => (p[0] - hole.X) * dx + (p[1] - hole.Y) * dy - keep);
-            }
-            if (polygon.Count < 3) return null;
-            double area = SignedArea(polygon);
-            // Too narrow anywhere (a sliver) or too small: leave it solid.
-            if (area <= 0 || MinimumWidth(polygon) < s.MinPocket) return null;
-            if (polygon.Any(p => !Inside(border, p) || border.Select((q, i) => SegmentDistance(p, q, border[(i + 1) % border.Count])).Min() < s.Border - 1e-6)) return null;
-            if (holes.Any(h => DistanceToPolygon(new[] { h.X, h.Y }, polygon) < h.R + s.Ring - 1e-6)) return null;
-            return polygon;
+            return result;
         }
 
-        // Rounded corners: each corner gets a tangent arc (smaller where the corner is too tight for the full radius).
-        private static Pocket Round(List<double[]> polygon, double radius)
-        {
-            int n = polygon.Count;
-            var t1 = new double[n][]; var t2 = new double[n][]; var centers = new double[n][];
-            double loss = 0;
-            for (int i = 0; i < n; i++)
-            {
-                double[] v = polygon[i], prev = polygon[(i + n - 1) % n], next = polygon[(i + 1) % n];
-                double[] u1 = Unit(prev[0] - v[0], prev[1] - v[1]), u2 = Unit(next[0] - v[0], next[1] - v[1]);
-                if (u1 == null || u2 == null) return null;
-                double theta = Math.Acos(Math.Max(-1, Math.Min(1, u1[0] * u2[0] + u1[1] * u2[1])));
-                if (theta < 1e-3 || theta > Math.PI - 1e-3) return null;
-                double room = 0.45 * Math.Min(Distance(prev, v), Distance(next, v));
-                double r = Math.Min(radius, room * Math.Tan(theta / 2));
-                double t = r / Math.Tan(theta / 2);
-                t1[i] = new[] { v[0] + u1[0] * t, v[1] + u1[1] * t };
-                t2[i] = new[] { v[0] + u2[0] * t, v[1] + u2[1] * t };
-                var bisector = Unit(u1[0] + u2[0], u1[1] + u2[1]);
-                double toCenter = r / Math.Sin(theta / 2);
-                centers[i] = new[] { v[0] + bisector[0] * toCenter, v[1] + bisector[1] * toCenter };
-                loss += r * t - 0.5 * r * r * (Math.PI - theta);
-            }
-            var pocket = new Pocket { Area = SignedArea(polygon) - loss };
-            for (int i = 0; i < n; i++)
-            {
-                pocket.Segments.Add(new PocketSegment { Arc = true, X1 = t1[i][0], Y1 = t1[i][1], X2 = t2[i][0], Y2 = t2[i][1], Cx = centers[i][0], Cy = centers[i][1] });
-                var nextStart = t1[(i + 1) % n];
-                pocket.Segments.Add(new PocketSegment { X1 = t2[i][0], Y1 = t2[i][1], X2 = nextStart[0], Y2 = nextStart[1] });
-            }
-            return pocket;
-        }
-
-        // Holes close enough that no pocket fits between them share a group id: no pocket is cut between holes of one group.
+        // Holes close enough that no pocket fits between them share a group id.
         private static int[] HoleGroups(IList<Circle2> holes, LightenSettings s)
         {
             var group = Enumerable.Range(0, holes.Count).ToArray();
@@ -177,23 +205,135 @@ namespace JocoRobos.Cad
             return Enumerable.Range(0, holes.Count).Select(find).ToArray();
         }
 
-        // A triangle worth pocketing: inside the plate, not inside a hole's ring, and not spanning only holes of one tight group.
-        private static bool Useful(List<double[]> triangle, List<double[]> border, IList<Circle2> holes, Dictionary<double[], int> groupOf, LightenSettings s)
+        // Splits a boolean result into separate pockets: each outer loop with the islands inside it.
+        private static List<PathsD> Pieces(PathsD paths)
         {
-            var centroid = new[] { triangle.Average(p => p[0]), triangle.Average(p => p[1]) };
-            if (!Inside(border, centroid) || holes.Any(h => Distance(centroid, new[] { h.X, h.Y }) < h.R + s.Ring)) return false;
-            // Slivers: a triangle with a very sharp corner only makes a thin wedge of a pocket.
-            for (int k = 0; k < 3; k++)
+            var outers = paths.Where(p => Clipper.Area(p) > 0).Select(p => new PathsD { p }).ToList();
+            foreach (var island in paths.Where(p => Clipper.Area(p) < 0))
             {
-                var u = Unit(triangle[(k + 1) % 3][0] - triangle[k][0], triangle[(k + 1) % 3][1] - triangle[k][1]);
-                var w = Unit(triangle[(k + 2) % 3][0] - triangle[k][0], triangle[(k + 2) % 3][1] - triangle[k][1]);
-                if (u == null || w == null || Math.Acos(Math.Max(-1, Math.Min(1, u[0] * w[0] + u[1] * w[1]))) < MinAngle) return false;
+                var at = new[] { island[0].x, island[0].y };
+                var owner = outers.Where(o => Inside(o[0].Select(q => new[] { q.x, q.y }).ToList(), at)).OrderBy(o => Clipper.Area(o[0])).FirstOrDefault();
+                if (owner != null) owner.Add(island);
             }
-            int g0, g1, g2;
-            return !(groupOf.TryGetValue(triangle[0], out g0) && groupOf.TryGetValue(triangle[1], out g1) && groupOf.TryGetValue(triangle[2], out g2) && g0 == g1 && g1 == g2);
+            return outers;
         }
 
-        // The plate's corners, plus points along its edges about `spacing` apart (arcs are followed, not sampled point by point).
+        // How far a point is inside the region (0 outside it).
+        private static double Depth(PathsD region, double[] p)
+        {
+            bool inside = false;
+            double nearest = double.MaxValue;
+            foreach (var path in region)
+            {
+                var points = path.Select(q => new[] { q.x, q.y }).ToList();
+                if (Inside(points, p)) inside = !inside;
+                nearest = Math.Min(nearest, DistanceToPolygon(p, points));
+            }
+            return inside ? nearest : 0;
+        }
+
+        // ---------- turning a computed outline back into lines and arcs ----------
+
+        /// <summary>
+        /// A closed outline (many short pieces) as the fewest lines and arcs that stay within `tolerance` of it. Arcs go exactly
+        /// through their end points, and neighbors share end points, so the sketch closes.
+        /// </summary>
+        internal static List<PocketSegment> Fit(List<double[]> points, double tolerance)
+        {
+            var result = new List<PocketSegment>();
+            var p = new List<double[]>();
+            foreach (var q in points) if (p.Count == 0 || Distance(p[p.Count - 1], q) > 1e-7) p.Add(q);
+            while (p.Count > 1 && Distance(p[0], p[p.Count - 1]) < 1e-7) p.RemoveAt(p.Count - 1);
+            int n = p.Count;
+            if (n < 3) return result;
+            // Start at the sharpest corner, so an arc isn't split where the loop happens to begin.
+            int start = 0;
+            double sharpest = -1;
+            for (int i = 0; i < n; i++)
+            {
+                double turn = Turn(p[(i + n - 1) % n], p[i], p[(i + 1) % n]);
+                if (Math.Abs(turn) > sharpest) { sharpest = Math.Abs(turn); start = i; }
+            }
+            var loop = Enumerable.Range(0, n + 1).Select(i => p[(start + i) % n]).ToList(); // closed: the last point is the first
+            int at = 0;
+            while (at < n)
+            {
+                int line = at + 1;
+                while (line < n && LineFits(loop, at, line + 1, tolerance)) line++;
+                int arc = at;
+                double[] center = null, best = null;
+                for (int j = at + 3; j <= n; j++)
+                {
+                    center = ArcFits(loop, at, j, tolerance);
+                    if (center == null) break;
+                    arc = j; best = center;
+                }
+                if (best != null && arc > line)
+                {
+                    double[] a = loop[at], b = loop[arc], m = loop[(at + arc) / 2];
+                    bool clockwise = (m[0] - a[0]) * (b[1] - m[1]) - (m[1] - a[1]) * (b[0] - m[0]) < 0;
+                    result.Add(new PocketSegment { Arc = true, Clockwise = clockwise, X1 = a[0], Y1 = a[1], X2 = b[0], Y2 = b[1], Cx = best[0], Cy = best[1] });
+                    at = arc;
+                }
+                else
+                {
+                    result.Add(new PocketSegment { X1 = loop[at][0], Y1 = loop[at][1], X2 = loop[line][0], Y2 = loop[line][1] });
+                    at = line;
+                }
+            }
+            return result;
+        }
+
+        private static bool LineFits(List<double[]> loop, int from, int to, double tolerance)
+        {
+            for (int k = from + 1; k < to; k++) if (SegmentDistance(loop[k], loop[from], loop[to]) > tolerance) return false;
+            return true;
+        }
+
+        // The center of a circle through loop[from], the middle point and loop[to] that every point between follows
+        // (turning one way, less than a full circle), or null.
+        private static double[] ArcFits(List<double[]> loop, int from, int to, double tolerance)
+        {
+            double[] a = loop[from], m = loop[(from + to) / 2], b = loop[to];
+            var center = Circumcenter(a, m, b);
+            if (center == null) return null;
+            double r = Distance(center, a);
+            if (r > 100 || r < 0.005) return null;
+            double sign = 0, sweep = 0;
+            for (int k = from; k < to; k++)
+            {
+                double[] p = loop[k], q = loop[k + 1];
+                if (Math.Abs(Distance(center, q) - r) > tolerance) return null;
+                var mid = new[] { (p[0] + q[0]) / 2, (p[1] + q[1]) / 2 };
+                if (Math.Abs(Distance(center, mid) - r) > tolerance) return null;
+                double step = Math.Atan2((p[0] - center[0]) * (q[1] - center[1]) - (p[1] - center[1]) * (q[0] - center[0]),
+                    (p[0] - center[0]) * (q[0] - center[0]) + (p[1] - center[1]) * (q[1] - center[1]));
+                if (Math.Abs(step) > Math.PI / 4) return null;
+                if (sign == 0) sign = Math.Sign(step);
+                else if (step * sign < -1e-9) return null;
+                sweep += Math.Abs(step);
+            }
+            return sweep < 2 * Math.PI - 0.1 ? center : null;
+        }
+
+        private static double[] Circumcenter(double[] a, double[] b, double[] c)
+        {
+            double d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+            if (Math.Abs(d) < 1e-12) return null;
+            double a2 = a[0] * a[0] + a[1] * a[1], b2 = b[0] * b[0] + b[1] * b[1], c2 = c[0] * c[0] + c[1] * c[1];
+            return new[] { (a2 * (b[1] - c[1]) + b2 * (c[1] - a[1]) + c2 * (a[1] - b[1])) / d, (a2 * (c[0] - b[0]) + b2 * (a[0] - c[0]) + c2 * (b[0] - a[0])) / d };
+        }
+
+        // Signed turning angle at b going a → b → c.
+        private static double Turn(double[] a, double[] b, double[] c)
+        {
+            double ux = b[0] - a[0], uy = b[1] - a[1], vx = c[0] - b[0], vy = c[1] - b[1];
+            return Math.Atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+        }
+
+        // ---------- where ribs meet along the edge ----------
+
+        // The plate's corners, plus points along its edges about `spacing` apart (curves are followed, not sampled point by point).
         private static List<double[]> EdgePoints(List<double[]> border, double spacing)
         {
             var corners = Corners(border);
@@ -222,15 +362,29 @@ namespace JocoRobos.Cad
         {
             var corners = new List<double[]>();
             for (int i = 0; i < border.Count; i++)
-            {
-                double[] prev = border[(i + border.Count - 1) % border.Count], v = border[i], next = border[(i + 1) % border.Count];
-                var a = Unit(v[0] - prev[0], v[1] - prev[1]); var b = Unit(next[0] - v[0], next[1] - v[1]);
-                if (a == null || b == null) continue;
-                double turn = Math.Acos(Math.Max(-1, Math.Min(1, a[0] * b[0] + a[1] * b[1])));
-                if (turn > Math.PI / 6) corners.Add(v);
-            }
+                if (Math.Abs(Turn(border[(i + border.Count - 1) % border.Count], border[i], border[(i + 1) % border.Count])) > Math.PI / 6) corners.Add(border[i]);
             return corners;
         }
+
+        // ---------- geometry ----------
+
+        private static PathD Path(IEnumerable<double[]> points)
+        {
+            var path = new PathD();
+            foreach (var p in points) path.Add(new PointD(p[0], p[1]));
+            return path;
+        }
+
+        private static PathD CirclePath(double x, double y, double r)
+        {
+            // Enough sides that no side strays more than ArcTolerance from the true circle.
+            int sides = (int)Math.Max(24, Math.Ceiling(Math.PI / Math.Acos(Math.Max(-1, 1 - ArcTolerance / r))));
+            var path = new PathD();
+            for (int i = 0; i < sides; i++) path.Add(new PointD(x + r * Math.Cos(2 * Math.PI * i / sides), y + r * Math.Sin(2 * Math.PI * i / sides)));
+            return path;
+        }
+
+        private static int Compare(double[] a, double[] b) { return a[0] != b[0] ? a[0].CompareTo(b[0]) : a[1].CompareTo(b[1]); }
 
         /// <summary>The narrowest width of a convex polygon: for each side, how far the farthest corner is from it; the smallest of those.</summary>
         internal static double MinimumWidth(IList<double[]> polygon)
@@ -246,8 +400,6 @@ namespace JocoRobos.Cad
             }
             return best;
         }
-
-        // ---------- geometry ----------
 
         // Bowyer–Watson Delaunay triangulation (fine for the few hundred points a plate has).
         internal static List<List<double[]>> Triangulate(List<double[]> points)
@@ -289,32 +441,6 @@ namespace JocoRobos.Cad
             return (ax * ax + ay * ay) * (bx * cy - cx * by) - (bx * bx + by * by) * (ax * cy - cx * ay) + (cx * cx + cy * cy) * (ax * by - bx * ay) > 1e-12;
         }
 
-        // Keeps the part of a convex polygon at least `distance` to the left of the line a→b.
-        private static List<double[]> Clip(List<double[]> polygon, double[] a, double[] b, double distance)
-        {
-            double dx = b[0] - a[0], dy = b[1] - a[1], length = Math.Sqrt(dx * dx + dy * dy);
-            if (length < 1e-12) return polygon;
-            return ClipHalfPlane(polygon, p => (dx * (p[1] - a[1]) - dy * (p[0] - a[0])) / length - distance);
-        }
-
-        // Sutherland–Hodgman against one half-plane: keeps points where side(p) >= 0.
-        private static List<double[]> ClipHalfPlane(List<double[]> polygon, Func<double[], double> side)
-        {
-            var result = new List<double[]>();
-            for (int i = 0; i < polygon.Count; i++)
-            {
-                double[] p = polygon[i], q = polygon[(i + 1) % polygon.Count];
-                double sp = side(p), sq = side(q);
-                if (sp >= 0) result.Add(p);
-                if ((sp >= 0) != (sq >= 0))
-                {
-                    double t = sp / (sp - sq);
-                    result.Add(new[] { p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t });
-                }
-            }
-            return result;
-        }
-
         internal static double SignedArea(IList<double[]> polygon)
         {
             double sum = 0;
@@ -324,13 +450,6 @@ namespace JocoRobos.Cad
                 sum += p[0] * q[1] - q[0] * p[1];
             }
             return sum / 2;
-        }
-
-        private static double Perimeter(IList<double[]> polygon)
-        {
-            double sum = 0;
-            for (int i = 0; i < polygon.Count; i++) sum += Distance(polygon[i], polygon[(i + 1) % polygon.Count]);
-            return sum;
         }
 
         internal static bool Inside(IList<double[]> polygon, double[] p)
@@ -359,11 +478,5 @@ namespace JocoRobos.Cad
         }
 
         private static double Distance(double[] a, double[] b) { return Math.Sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1])); }
-
-        private static double[] Unit(double x, double y)
-        {
-            double length = Math.Sqrt(x * x + y * y);
-            return length < 1e-12 ? null : new[] { x / length, y / length };
-        }
     }
 }

@@ -89,13 +89,14 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3d.4 | A | Stock part: 1/2" hex shaft 7.25; spacer 0.25; aluminum plate 1/4" 6 × 12; FR8ZZ bearing | Each correct size; the Parts List shows them under Buy: Stock with their sizes | ☐ |
 | 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
 | 3d.6 | A | **Belt & Chain Calculator**: HTD 5 mm, 18T and 36T, 100 teeth. Then select a sketch's center dimension → **Use for selected dimension** | A center distance that matches a vendor's calculator; the dimension changes to it | ☐ |
-| 3d.7 | A | Open a flat plate with holes, Edit it, click its face → **Lighten Plate** (defaults) | Triangle pockets with ribs meeting at hole groups and the plate's corners (none at points along curved edges); no thin slivers; bolt clusters stay solid; rounded corners, a border along the edge; flash with weight saved. Undo removes it | ☐ |
-| 3d.8 | A | Click a tube's side → **Hole Pattern** → your tube's spacing, hole size, rows | Holes through both walls of that side, rows centered; the dialog remembers the settings next time | ☐ |
+| 3d.7 | A | Open a flat plate with holes (try one with a curved edge and a bearing hole), Edit it, click its face → **Lighten Plate** (defaults) | Pockets between ribs; next to round holes and curved edges the pocket edge is an arc that follows them (no flat cuts); bolt clusters stay solid; no slivers; rounded corners, a border along the edge; flash with weight saved. Undo removes it | ☐ |
+| 3d.8 | A | Click the 2" side of a 2×1 tube → **Hole Pattern** → Rows: **Fill the side** (the default) | 3 rows of holes on the 0.5" grid, through both walls; on the 1" side, 1 row. A number of rows instead works too; the dialog remembers it | ☐ |
 
 ## 3e. CAD Hub tab and editable features
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
+| 3e.0 | A | With a part open, **Spur Gear** (or Bearing Hole) on the CAD Hub tab | The CAD Hub page opens in the PropertyManager (no error) | ☐ |
 | 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Stock Part, Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
 | 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
 | 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |

@@ -149,5 +149,16 @@ namespace JocoRobos.Cad
         {
             return Enumerable.Range(0, Math.Max(1, rows)).Select(i => Math.Round((i - (rows - 1) / 2.0) * rowSpacing, 6)).ToArray();
         }
+
+        /// <summary>
+        /// As many rows as fit across a face on the row spacing, centered, each hole's edge at least `edge` from the face's sides:
+        /// on a 0.5" grid, 3 rows on a 2" face, 2 on 1.5", 1 on 1".
+        /// </summary>
+        internal static double[] FillRows(double faceWidth, double rowSpacing, double diameter, double edge = 0.25)
+        {
+            int rows = 1;
+            while (rowSpacing > 0 && rows < 20 && rows * rowSpacing / 2 + diameter / 2 <= faceWidth / 2 - edge + 1e-9) rows++;
+            return RowOffsets(rows, rowSpacing);
+        }
     }
 }

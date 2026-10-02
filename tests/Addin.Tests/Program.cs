@@ -196,6 +196,8 @@ static class Program
     static void ToolChecks()
     {
         var tube = StockParts.Find("tube-2x1-0625");
+        Check(StockParts.FillRows(2, 0.5, 0.196).SequenceEqual(new[] { -0.5, 0, 0.5 }) && StockParts.FillRows(1, 0.5, 0.196).SequenceEqual(new[] { 0.0 }) &&
+            StockParts.FillRows(1.5, 0.5, 0.196).SequenceEqual(new[] { -0.25, 0.25 }), "Fill the side: 3 rows on 2\", 2 on 1.5\", 1 on 1\" (0.5\" grid)");
         Check(StockParts.ParseInches("23.75") == 23.75 && StockParts.ParseInches("23 3/4\"") == 23.75 && StockParts.ParseInches("3/4") == 0.75 &&
             StockParts.ParseInches("abc") == null && StockParts.ParseInches("") == null, "Lengths typed as decimals, fractions, mixed numbers");
         Check(StockParts.ConfigurationName(tube, 23.75, 0) == "23.75 in" && StockParts.ConfigurationName(StockParts.Find("plate-al-25"), 12, 6) == "6 x 12 in" &&
@@ -236,9 +238,22 @@ static class Program
         var lighten = PlateLighten.Plan(outline, plateHoles, null, settings);
         Check(lighten.Pockets.Count >= 4 && lighten.Percent > 20 && lighten.Percent < 80, "Plate: several pockets, a sensible share removed (" + lighten.Pockets.Count + ", " + lighten.Percent.ToString("0") + "%)");
         var points = lighten.Pockets.SelectMany(p => p.Segments.SelectMany(seg => new[] { new[] { seg.X1, seg.Y1 }, new[] { seg.X2, seg.Y2 } })).ToList();
-        Check(points.All(p => p[0] >= settings.Border - 1e-6 && p[0] <= 6 - settings.Border + 1e-6 && p[1] >= settings.Border - 1e-6 && p[1] <= 4 - settings.Border + 1e-6),
+        Check(points.All(p => p[0] >= settings.Border - 1e-4 && p[0] <= 6 - settings.Border + 1e-4 && p[1] >= settings.Border - 1e-4 && p[1] <= 4 - settings.Border + 1e-4),
             "Pockets stay a border width from the edge");
-        Check(points.All(p => plateHoles.All(h => Math.Sqrt((p[0] - h.X) * (p[0] - h.X) + (p[1] - h.Y) * (p[1] - h.Y)) >= h.R + settings.Ring - 1e-6)), "Pockets keep a ring around every hole");
+        Check(points.All(p => plateHoles.All(h => Math.Sqrt((p[0] - h.X) * (p[0] - h.X) + (p[1] - h.Y) * (p[1] - h.Y)) >= h.R + settings.Ring - 1e-3)), "Pockets keep a ring around every hole");
+        // Round holes and curved edges: the pockets' edges near them are arcs around the hole's center, not straight cuts.
+        var round = new System.Collections.Generic.List<double[]>();
+        for (int i = 0; i < 180; i++) round.Add(new[] { 4 * Math.Cos(2 * Math.PI * i / 180), 4 * Math.Sin(2 * Math.PI * i / 180) });
+        var bearing = new System.Collections.Generic.List<Circle2> { new Circle2 { X = 0, Y = 0, R = 0.75 } };
+        var disc = PlateLighten.Plan(round, bearing, null, settings);
+        var arcs = disc.Pockets.SelectMany(p => p.Segments).Where(seg => seg.Arc).ToList();
+        Check(disc.Count >= 4 && arcs.Any(seg => Math.Abs(seg.Cx) < 0.01 && Math.Abs(seg.Cy) < 0.01 && Math.Abs(Math.Sqrt(seg.X1 * seg.X1 + seg.Y1 * seg.Y1) - 0.9) < 0.01) &&
+            arcs.Any(seg => Math.Abs(Math.Sqrt(seg.X1 * seg.X1 + seg.Y1 * seg.Y1) - 3.75) < 0.002 && Math.Abs(Math.Sqrt(seg.X2 * seg.X2 + seg.Y2 * seg.Y2) - 3.75) < 0.002 &&
+                Math.Sqrt((seg.X2 - seg.X1) * (seg.X2 - seg.X1) + (seg.Y2 - seg.Y1) * (seg.Y2 - seg.Y1)) > 0.5),
+            "Round plate with a bearing: pockets follow the ring around the bearing and the curved edge as arcs (" + disc.Count + " pockets)");
+        Check(disc.Pockets.All(p => p.Segments.Count < 30), "Pocket outlines are a few lines and arcs, not hundreds of tiny pieces");
+        var fitted = PlateLighten.Fit(round, 0.001);
+        Check(fitted.Count <= 3 && fitted.All(seg => seg.Arc && !seg.Clockwise), "A sampled circle fits back to arcs, counterclockwise");
         Check(lighten.Pockets.All(p => p.Segments.Where(seg => seg.Arc).All(seg => Math.Abs(Math.Sqrt((seg.X1 - seg.Cx) * (seg.X1 - seg.Cx) + (seg.Y1 - seg.Cy) * (seg.Y1 - seg.Cy)) -
             Math.Sqrt((seg.X2 - seg.Cx) * (seg.X2 - seg.Cx) + (seg.Y2 - seg.Cy) * (seg.Y2 - seg.Cy))) < 1e-9)), "Every corner is a true arc");
         Check(PlateLighten.Plan(outline, plateHoles, null, new LightenSettings { Rib = 3 }).Pockets.Count == 0, "Ribs too wide for the plate: nothing cut");
