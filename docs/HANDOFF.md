@@ -4,7 +4,7 @@ For the next Claude session (cloud) or anyone picking this up.
 
 ## Released and live
 - **Add-in 1.0.0** is released (tag `v1.0.0`; the same code as 0.15.0, after the release tests passed). Mentors publish it from the mentor page → Add-in → Release to students.
-- **Server v28** (deployed 2026-10-02: CAD Hub name and logo, team settings, Diagnostics tab, edit requests, Who's working, Parts tab, Library tab ⚡ instant/most-used/budget; v27 kept for rollback) runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
+- **Server v29** (deployed 2026-10-02: CAD Hub name and logo, team settings, Diagnostics tab, edit requests, Who's working, Parts tab, Library tab ⚡ instant/most-used/budget, Team standards; v28 kept for rollback) runs on the Steam Deck, reached through a Cloudflare Tunnel at `cad.team5919.org` (and the old `cad.imdad.stream`). It has a public front page; everything else needs a sign-in.
 - The restore drill (`server/restore-drill.sh`) passed on both the Deck backup and the off-device copy on 2026-09-30.
 
 ## New address: cad.team5919.org (0.15.0)
@@ -23,6 +23,12 @@ A student at Johnston Community College (JCC) can't connect from the add-in. Ser
 
 ## Renamed to CAD Hub (1.4.0)
 Everything people see says **CAD Hub** (panel, menus, dialogs, installer, SOLIDWORKS add-in list, server pages, docs). Kept on purpose so existing installs keep working and updating: the install folder `C:\Program Files\JOCO ROBOS CAD`, registry `Software\JOCO ROBOS\CAD`, the robot folder `C:\JOCO-ROBOS`, the installer file name `JOCO-ROBOS-CAD-Setup-x.y.z.exe` (older add-ins only accept that name), the saved-password key, the server's sign-in name `AuthName "JOCO ROBOS CAD"` (new add-ins recognize team servers by it), the add-in's COM GUID, the C# namespace, and the repository name.
+
+## Modeling tools framework (1.9.0, Phase 1 of the CAD Hub tools spec)
+- **CommandManager tab** "CAD Hub" = modeling (Structure · Powertrain · Hardware); the task pane = team workflow. Icons: `tools/make-tool-icons.py` then `tools/make-icons.py`.
+- **ToolPage.cs**: one generic native PropertyManager page built from a tool's fields (`CadHubTools.cs`), with result line and live preview (temporary body). **CadHubFeature** (ProgId `JocoRobos.Cad.Feature`, a COM macro feature registered by RegAsm like the add-in) stores the settings as one string (`FeatureParams`), rebuilds the body with SOLIDWORKS' modeler, and Edit Feature reopens the page. Settings that come from presets (a bearing bore) are frozen into the feature, so team-standard changes never move existing geometry.
+- **Team standards** (bearing fits, team bearings) are set on the mentor page's Add-in tab and published in `catalog.json`.
+- Not yet run in SOLIDWORKS when written: TESTING.md 3d (1.8 tools) and 3e (this framework). Next per the plan: convert Stock Part, Lightening, Hole Pattern to pages and add Tube, Sprocket, Pulley, Belt Layout, Fastener Hole.
 
 ## After 1.0.0
 1.0.x is fixes only. New features go into 1.1 and later. `TESTING.md` stays the regression sheet: rerun the affected sections in the `2099-Robot` test season before releasing anything that touches Edit, Submit, Update or locking.
