@@ -146,6 +146,7 @@ static class Program
             PartsChecks(temp);
             WhereUsedChecks();
             ToolChecks();
+            FeatureChecks();
             HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
@@ -240,6 +241,30 @@ static class Program
             Math.Sqrt((seg.X2 - seg.Cx) * (seg.X2 - seg.Cx) + (seg.Y2 - seg.Cy) * (seg.Y2 - seg.Cy))) < 1e-9)), "Every corner is a true arc");
         Check(PlateLighten.Plan(outline, plateHoles, null, new LightenSettings { Rib = 3 }).Pockets.Count == 0, "Ribs too wide for the plate: nothing cut");
         Check(PlateLighten.Triangulate(new System.Collections.Generic.List<double[]> { new[] { 0.0, 0 }, new[] { 1.0, 0 }, new[] { 0.0, 1 }, new[] { 1.0, 1 } }).Count == 2, "Four points: two triangles");
+    }
+
+    // Phase 1 framework: stored feature settings, team standards from the catalog, bearing hole sizes.
+    static void FeatureChecks()
+    {
+        var p = new FeatureParams();
+        p["kind"] = "gear";
+        p.Set("teeth", 36);
+        p["name"] = "a;b=c%d";
+        var back = FeatureParams.Decode(p.Encode());
+        Check(back["kind"] == "gear" && back.Number("teeth", 0) == 36 && back["name"] == "a;b=c%d" && back["missing"] == null && back.Number("missing", 7) == 7,
+            "Feature settings survive storing, even with ; = % in them");
+        string json = "{\"version\": 1, \"active\": \"2028-Robot\", \"robots\": [{\"name\": \"2028-Robot\", \"uuid\": \"a4daad86-5e49-4ac4-9daf-de98891b87c4\"}]," +
+            "\"standards\": {\"fits\": {\"easy\": 0.004, \"normal\": 0.002, \"press\": 0.0005}, \"bearings\": [{\"name\": \"Swerve bearing\", \"od\": 1.375}, {\"name\": \"\", \"od\": 1}]}}";
+        var catalog = Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json)));
+        Check(catalog.Standards.Normal == 0.002 && catalog.Standards.Easy == 0.004 && catalog.Standards.Bearings.Count == 1 &&
+            catalog.Standards.Bearings[0].Name == "Swerve bearing", "Team standards read from the catalog; blank bearings dropped");
+        var old = Catalog.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"version\": 1, \"active\": \"x\", \"robots\": []}")));
+        Check(old.Standards.Normal == 0.0015 && old.Standards.Bearings.Count == 0, "A server without standards: defaults");
+        var presets = BearingHoles.Presets(catalog.Standards);
+        Check(presets[0].Team && presets[0].Name.Contains("Swerve") && presets.Count > 5, "Team bearings listed first");
+        Check(BearingHoles.Bore(1.125, "Normal fit", TeamStandards.Defaults) == 1.1265 && BearingHoles.Bore(1.125, "Press fit", TeamStandards.Defaults) == 1.1255 &&
+            BearingHoles.Bore(1.125, "Easy fit", TeamStandards.Defaults) == 1.1285 && BearingHoles.Bore(1.125, "Normal fit", catalog.Standards) == 1.127,
+            "Bearing bores: outside diameter plus the team's clearance for the fit");
     }
 
     static void HealthChecks()

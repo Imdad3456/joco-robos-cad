@@ -151,6 +151,30 @@ namespace JocoRobos.Cad
             [DataMember(Name = "library")] public Entry Library { get; set; }
             [DataMember(Name = "addin")] public AddinRelease Addin { get; set; }
             [DataMember(Name = "solidworks")] public string SolidWorks { get; set; }
+            [DataMember(Name = "standards")] public StandardsEntry Standards { get; set; }
+        }
+
+        [DataContract]
+        private sealed class StandardsEntry
+        {
+            [DataMember(Name = "fits")] public FitsEntry Fits { get; set; }
+            [DataMember(Name = "bearings")] public List<BearingEntry> Bearings { get; set; }
+        }
+
+        // Named fields: the JSON reader used here can't read an object into a dictionary (it would fail the whole catalog).
+        [DataContract]
+        private sealed class FitsEntry
+        {
+            [DataMember(Name = "easy")] public double? Easy { get; set; }
+            [DataMember(Name = "normal")] public double? Normal { get; set; }
+            [DataMember(Name = "press")] public double? Press { get; set; }
+        }
+
+        [DataContract]
+        private sealed class BearingEntry
+        {
+            [DataMember(Name = "name")] public string Name { get; set; }
+            [DataMember(Name = "od")] public double Od { get; set; }
         }
 
         private const string SettingsKey = @"Software\JOCO ROBOS\CAD";
@@ -160,6 +184,8 @@ namespace JocoRobos.Cad
         internal AddinRelease Addin;
         // The team's approved SOLIDWORKS version as a year ("2026"), or null when mentors haven't set one.
         internal string SolidWorks;
+        // Team standards for the modeling tools (defaults when mentors haven't set any).
+        internal TeamStandards Standards = new TeamStandards();
 
         internal static Catalog Fetch(NetworkCredential login)
         {
@@ -194,6 +220,16 @@ namespace JocoRobos.Cad
             if (document == null || document.Version != 1 || document.Robots == null)
                 throw new InvalidOperationException("The server's robot list is not readable. Ask a mentor, or update the add-in.");
             var catalog = new Catalog { Active = document.Active, Addin = document.Addin, SolidWorks = document.SolidWorks };
+            if (document.Standards != null)
+            {
+                var fits = document.Standards.Fits ?? new FitsEntry();
+                catalog.Standards.Easy = fits.Easy ?? catalog.Standards.Easy;
+                catalog.Standards.Normal = fits.Normal ?? catalog.Standards.Normal;
+                catalog.Standards.Press = fits.Press ?? catalog.Standards.Press;
+                foreach (var bearing in document.Standards.Bearings ?? new List<BearingEntry>())
+                    if (!String.IsNullOrWhiteSpace(bearing.Name) && bearing.Od > 0.1 && bearing.Od < 6)
+                        catalog.Standards.Bearings.Add(new BearingPreset { Name = bearing.Name.Trim(), OutsideDiameter = bearing.Od, Team = true });
+            }
             foreach (var entry in document.Robots)
                 catalog.Robots.Add(new WorkspaceInfo(entry.Name, new Guid(entry.Uuid), entry.Archived, false, entry.Master));
             if (document.Library != null)

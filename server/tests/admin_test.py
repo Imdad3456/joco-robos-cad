@@ -462,4 +462,14 @@ check('No longer in the robot' in page and 'Old Bracket' in page and '=cmd|x' in
 s_, _, text = req('/admin/parts.csv?season=2027-Robot', *M)
 check(s_ == 200 and "'=cmd|x" in text and 'removed' in text and 'am-1635' in text, 'CSV download, formulas neutralized ' + text[:200])
 check(req('/admin/parts.csv?season=2027-Robot', *U)[0] == 403, 'students cannot download it')
+# Team standards: mentors set bearing fits and team bearings on the Add-in tab; the add-in reads them from the catalog.
+s_, _, body = req('/catalog.json', *U); std = _json.loads(body)['standards']
+check(std['fits'] == {'easy': 0.0035, 'normal': 0.0015, 'press': 0.0005} and std['bearings'] == [], 'default standards in the catalog ' + str(std))
+s_, loc = post('/admin/addin', {'action': 'set-standards', 'fit-easy': '0.004', 'fit-normal': '0.002', 'fit-press': '0.0005', 'bearings': 'Swerve bearing, 1.375\nR6, 0.875"'})
+check('saved' in loc, 'mentor saves standards ' + loc)
+std = _json.loads(req('/catalog.json', *U)[2])['standards']
+check(std['fits']['normal'] == 0.002 and std['bearings'] == [{'name': 'Swerve bearing', 'od': 1.375}, {'name': 'R6', 'od': 0.875}], 'standards published ' + str(std))
+check('Press fit should be tightest' in post('/admin/addin', {'action': 'set-standards', 'fit-easy': '0.001', 'fit-normal': '0.002', 'fit-press': '0.0005', 'bearings': ''})[1], 'fits must be in order')
+check('One bearing per line' in post('/admin/addin', {'action': 'set-standards', 'fit-easy': '0.004', 'fit-normal': '0.002', 'fit-press': '0.0005', 'bearings': 'no diameter'})[1], 'bad bearing line refused')
+check('Swerve bearing, 1.375' in req('/admin/addin', *M)[2], 'standards form shows saved bearings')
 print(f'PASS: {n} server/admin checks')

@@ -92,6 +92,18 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3d.7 | A | Open a flat plate with holes, Edit it, click its face → **Tools → CAD Hub → Lighten Plate** (defaults) | Triangle pockets between the holes, rounded corners, a border along the edge and rings around holes; flash with weight saved. Undo removes it | ☐ |
 | 3d.8 | A | **Set Up FRC Tube Profiles**, then Insert → Weldments → Structural Member | Standard "FRC", types Box Tube and Shaft; a sketched frame becomes tubes. Click a tube's side → **Add FRC Hole Pattern** | ☐ |
 
+## 3e. CAD Hub tab and editable features
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Stock Part, Tube Profiles, Hole Pattern, Lighten Plate · Spur Gear, Belt & Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
+| 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |
+| 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit | "Resulting bore 1.1265 in". A preview cylinder at the click point. ✓ → a through hole; "CAD Hub Bearing Hole1" in the tree | ☐ |
+| 3e.5 | A | Bearing Hole on an existing round edge | The hole is resized around the same center | ☐ |
+| 3e.6 | A | Mentor page → Add-in → **Team standards**: Normal 0.002, add `Swerve bearing, 1.375` → Save. In SOLIDWORKS: Check now, then Bearing Hole | "★ Swerve bearing" listed first; Normal fit on a 1.125 bearing shows 1.1270. The earlier hole keeps its size (fits are frozen per hole) | ☐ |
+| 3e.7 | B | Open the plate and gear parts A submitted | Both open and rebuild with no errors on B's computer | ☐ |
+
 ## 4. Together: nobody overwrites anybody
 
 | # | Who | Do | Expect | ✓ |

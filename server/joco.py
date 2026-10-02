@@ -149,8 +149,48 @@ def publish(state):
         # The team's SOLIDWORKS version (a year). A newer SOLIDWORKS would save files older ones can't open, so the add-in
         # won't edit or submit team CAD from it.
         'solidworks': state.get('solidworks'),
+        # Team standards for CAD Hub's modeling tools (bearing fits, the team's bearings); students see them before generic choices.
+        'standards': standards(state),
     }
     write_atomic(CATALOG, json.dumps(catalog, indent=2) + '\n', 0o644)
+
+
+DEFAULT_FITS = {'easy': 0.0035, 'normal': 0.0015, 'press': 0.0005}
+
+
+def standards(state):
+    saved = state.get('standards') or {}
+    return {'fits': dict(DEFAULT_FITS, **(saved.get('fits') or {})), 'bearings': saved.get('bearings') or []}
+
+
+def parse_standards(form):
+    """The Team Standards form: three fit clearances (inches over the bearing's outside diameter) and one bearing per line."""
+    fits = {}
+    for fit in ('easy', 'normal', 'press'):
+        try:
+            value = float(form.get('fit-' + fit, ''))
+        except ValueError:
+            raise Refused('Each fit is a clearance in inches, like 0.0015.')
+        if not -0.005 <= value <= 0.02:
+            raise Refused('Fit clearances go from -0.005 to 0.02 in.')
+        fits[fit] = value
+    if not fits['press'] <= fits['normal'] <= fits['easy']:
+        raise Refused('Press fit should be tightest and easy fit loosest.')
+    bearings = []
+    for line in form.get('bearings', '').splitlines():
+        if not line.strip():
+            continue
+        name, _, od = line.rpartition(',')
+        try:
+            diameter = float(od.strip().rstrip('"'))
+        except ValueError:
+            raise Refused('One bearing per line, as: name, outside diameter in inches (for example: Swerve bearing, 1.375).')
+        if not name.strip() or not 0.1 <= diameter <= 6 or len(name) > 60:
+            raise Refused('Bearing "%s": a name and an outside diameter from 0.1 to 6 in.' % line.strip()[:40])
+        bearings.append({'name': name.strip(), 'od': diameter})
+    if len(bearings) > 40:
+        raise Refused('Up to 40 team bearings.')
+    return {'fits': fits, 'bearings': bearings}
 
 
 def install_hooks(name):
@@ -848,6 +888,10 @@ def act(user, form):
             state['archived'] = [n for n in state['archived'] if n != name]
         save_state(state)
         return {'activate': 'Students now open ' + name + '.' + note, 'archive': name + ' is read-only.', 'unarchive': name + ' is editable again.'}[action]
+    if action == 'set-standards':
+        state['standards'] = parse_standards(form)
+        save_state(state)
+        return 'Team standards saved. Students get them on their next status check.'
     if action == 'set-solidworks':
         year = form.get('year', '').strip()
         if year and not re.match(r'^20\d\d$', year):
@@ -1543,8 +1587,19 @@ class Admin(BaseHTTPRequestHandler):
                    'so the add-in lets it look but not edit or submit team CAD. Change this only when everyone has upgraded; then a mentor runs '
                    'Tools → CAD Hub → Upgrade Robot Files once. Each student\'s version is on the Accounts tab.</p>') % (
                        self.token(), esc(approved or ''), ('Approved: <b>SOLIDWORKS %s</b>.' % esc(approved)) if approved else '<span class="bad">Not set: any version can edit.</span>')
-        return ('<section><h2>Student add-in</h2>%s</section><section><h2>Team SOLIDWORKS version</h2>%s</section><section><h2>Waiting from GitHub</h2>%s</section>'
-                '<section><h2>Upload manually</h2>%s</section>') % (info, sw_form, staged_html, upload_form)
+        team = standards(state)
+        standards_form = ('<form method="post"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="set-standards">'
+                          '<p><b>Bearing hole fits</b> (clearance over the bearing\'s outside diameter, inches)</p><p class="row">'
+                          '<label>Easy <input name="fit-easy" value="%s" size="7"></label> <label>Normal <input name="fit-normal" value="%s" size="7"></label> '
+                          '<label>Press <input name="fit-press" value="%s" size="7"></label></p>'
+                          '<p><b>Team bearings</b>, listed first in Bearing Hole: one per line, <code>name, outside diameter</code></p>'
+                          '<textarea name="bearings" rows="5" cols="50" placeholder="Swerve module bearing, 1.375">%s</textarea>'
+                          '<p><button class="primary">Save standards</button></p></form>'
+                          '<p class="muted">Students see these before generic choices in CAD Hub\'s modeling tools, with the exact resulting size shown.</p>') % (
+            self.token(), team['fits']['easy'], team['fits']['normal'], team['fits']['press'],
+            esc('\n'.join('%s, %s' % (b['name'], b['od']) for b in team['bearings'])))
+        return ('<section><h2>Student add-in</h2>%s</section><section><h2>Team SOLIDWORKS version</h2>%s</section><section><h2>Team standards</h2>%s</section>'
+                '<section><h2>Waiting from GitHub</h2>%s</section><section><h2>Upload manually</h2>%s</section>') % (info, sw_form, standards_form, staged_html, upload_form)
 
     def library_page(self, state):
         parts = files(LIBRARY) if LIBRARY in repositories() else []

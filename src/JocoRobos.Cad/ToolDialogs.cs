@@ -84,7 +84,7 @@ namespace JocoRobos.Cad
 
         internal StockType Type { get { return StockParts.Types[type.SelectedIndex]; } }
         internal double? Length { get { return Number(length); } }
-        internal double? Width { get { return Number(width); } }
+        internal double? PlateWidth { get { return Number(width); } }
         internal int Copies { get { return (int)copies.Value; } }
 
         internal StockDialog() : base("Make a Stock Part")
@@ -109,7 +109,7 @@ namespace JocoRobos.Cad
             width.Enabled = widthLabel.Enabled = Type.HasWidth;
         }
 
-        protected override string Check() { return StockParts.Problem(Type, Length, Width); }
+        protected override string Check() { return StockParts.Problem(Type, Length, PlateWidth); }
     }
 
     /// <summary>Spur gear: teeth, pitch, pressure angle, width, bore.</summary>

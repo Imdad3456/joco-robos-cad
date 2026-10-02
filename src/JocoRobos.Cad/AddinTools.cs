@@ -25,7 +25,7 @@ namespace JocoRobos.Cad
             using (var dialog = new StockDialog())
             {
                 if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                InsertStock(dialog.Type, dialog.Length, dialog.Width, dialog.Copies);
+                InsertStock(dialog.Type, dialog.Length, dialog.PlateWidth, dialog.Copies);
             }
         }
 
@@ -323,10 +323,48 @@ namespace JocoRobos.Cad
             doc.ForceRebuild3(false);
         }
 
+        // ---------- the PropertyManager tools (framework in ToolPage and CadHubTools) ----------
+
+        // The add-in that's running, for CAD Hub features' Edit Feature (SOLIDWORKS creates those objects itself).
+        internal static Addin Instance;
+
+        private TeamStandards Standards { get { return paneCatalog?.Standards ?? TeamStandards.Defaults; } }
+
+        internal static void EditFeature(SldWorks app, ModelDoc2 doc, Feature feature, CadHubTool tool, FeatureParams values)
+        {
+            var addin = Instance;
+            Action<string> report = text => { if (addin != null) addin.ShowFlash(text); };
+            new ToolPage(app, doc, tool, addin?.Standards ?? TeamStandards.Defaults, values, feature, report).Show();
+        }
+
+        // Opens a tool's page on the active part (a new part when nothing is open). A read-only team part needs Edit first.
+        private void ShowTool(CadHubTool tool)
+        {
+            try
+            {
+                var doc = application.ActiveDoc as ModelDoc2;
+                if (doc == null) doc = NewPart();
+                if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
+                    throw new InvalidOperationException(tool.Title + " works in a part. Open the part (or start a new one), then try again.");
+                if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
+                new ToolPage(application, doc, tool, Standards, null, null, text => ShowFlash(text)).Show();
+            }
+            catch (Exception exception)
+            {
+                ErrorLog.Write(tool.Title, exception);
+                Message(exception.Message, MessageBoxIcon.Warning);
+            }
+        }
+
+        public void BearingHole() { ShowTool(CadHubTool.Find("bearing-hole")); }
+
         // ---------- spur gears ----------
 
         public void MakeGear()
         {
+            // In a part: the native page and an editable feature. In an assembly: a gear part made for the robot and inserted.
+            var active = application.ActiveDoc as ModelDoc2;
+            if (active == null || active.GetType() == (int)swDocumentTypes_e.swDocPART) { ShowTool(CadHubTool.Find("gear")); return; }
             using (var dialog = new GearDialog())
             {
                 if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;

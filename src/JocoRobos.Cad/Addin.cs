@@ -51,6 +51,7 @@ namespace JocoRobos.Cad
         [DispId(29)] void LightenPlate();
         [DispId(30)] void AddHolePattern();
         [DispId(31)] void SetUpTubeProfiles();
+        [DispId(32)] void BearingHole();
     }
 
     [ComVisible(true)]
@@ -65,10 +66,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591910;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909 };
+        private const int GroupId = 591911;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591920;
+        private const int LayoutVersion = 591921;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -129,6 +130,7 @@ namespace JocoRobos.Cad
             try
             {
                 application = (SldWorks)ThisSW;
+                Instance = this;
                 // Can't stop SOLIDWORKS from closing on an escaped error, but leaves a record of why.
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => ErrorLog.Write("unhandled", e.ExceptionObject as Exception ?? new Exception(Convert.ToString(e.ExceptionObject)));
                 if (!application.SetAddinCallbackInfo2(0, this, Cookie))
@@ -184,12 +186,14 @@ namespace JocoRobos.Cad
                 Add(group, "Parts List", "What to buy (by vendor) and what to make, with quantities, from the robot or the open assembly", nameof(PartsList), 22, menu);
                 Add(group, "Where Used", "Which assemblies use the open file (all the way up to the robot), and what it uses", nameof(WhereUsed), 23, menu);
                 group.AddSpacer2(-1, menu);
-                Add(group, "Make Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, menu);
-                Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore", nameof(MakeGear), 26, menu);
-                Add(group, "Belt & Chain Calculator", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, menu);
-                Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, menu);
-                Add(group, "Add FRC Hole Pattern", "Holes every 0.5\" along the selected side of a tube", nameof(AddHolePattern), 29, menu);
-                Add(group, "Set Up FRC Tube Profiles", "Adds FRC box tube and shaft profiles to Insert → Structural Member", nameof(SetUpTubeProfiles), 30, menu);
+                // Modeling tools: on the CAD Hub tab (below), grouped like SOLIDWORKS' own.
+                int stock = Add(group, "Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, both, 20);
+                int gear = Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore (an editable CAD Hub feature in a part)", nameof(MakeGear), 26, both, 18);
+                int bearingHole = Add(group, "Bearing Hole", "Click a face: a bore sized for the bearing you pick, with the team's fit (an editable CAD Hub feature)", nameof(BearingHole), 31, both, 19);
+                int beltChain = Add(group, "Belt & Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
+                int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
+                int holes = Add(group, "Hole Pattern", "Holes every 0.5\" along the selected side of a tube", nameof(AddHolePattern), 29, both, 22);
+                int profiles = Add(group, "Tube Profiles", "Adds FRC box tube and shaft profiles to Insert → Structural Member", nameof(SetUpTubeProfiles), 30, both, 24);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
@@ -216,13 +220,18 @@ namespace JocoRobos.Cad
                     if (existing != null) continue;
                     CommandTab tab = commands.AddCommandTab(type, Title);
                     if (tab == null) throw new InvalidOperationException("Could not create CommandManager tab.");
-                    CommandTabBox box = tab.AddCommandTabBox();
-                    int text = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextHorizontal;
-                    int[] ids = new[] { open, edit, submit, library }.Select(x => group.get_CommandID(x)).ToArray();
-                    if (box == null || !box.AddCommands(ids, ids.Select(x => text).ToArray()))
+                    // The tab is for modeling (Structure, Powertrain, Hardware); team work (Open Robot, Edit, Submit, Library)
+                    // lives in the CAD Hub task pane and the Tools menu.
+                    int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
+                    foreach (var section in new[] { new[] { stock, profiles, holes, lighten }, new[] { gear, beltChain }, new[] { bearingHole } })
                     {
-                        commands.RemoveCommandTab(tab);
-                        throw new InvalidOperationException("Could not add CommandManager buttons.");
+                        CommandTabBox box = tab.AddCommandTabBox();
+                        int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();
+                        if (box == null || !box.AddCommands(ids, ids.Select(x => below).ToArray()))
+                        {
+                            commands.RemoveCommandTab(tab);
+                            throw new InvalidOperationException("Could not add CommandManager buttons.");
+                        }
                     }
                 }
                 settings.SetValue("CommandLayout", LayoutVersion, RegistryValueKind.DWord);
