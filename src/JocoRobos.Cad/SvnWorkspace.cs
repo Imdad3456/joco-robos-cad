@@ -152,6 +152,7 @@ namespace JocoRobos.Cad
                 {
                     RequireWorkspace(client);
                     ReconcilePendingSubmit(client);
+                    RemoveEmptyNewFolders(client);
                     foreach (var item in Status(client, Root, false, SvnDepth.Infinity))
                         if (!WorkspacePolicy.IsOwnerFile(item.FullPath) || item.Versioned) RequireClean(item);
                     client.Update(Root, new SvnUpdateArgs { Depth = SvnDepth.Infinity, IgnoreExternals = true, AllowObstructions = false });
@@ -159,6 +160,24 @@ namespace JocoRobos.Cad
                 RequireWorkspace(client);
                 ReconcileReadOnly(client);
                 return GetInfo(client, new SvnPathTarget(Root)).Revision;
+            }
+        }
+
+        // New folders left with nothing in them (for example after a Submit failed and the new file was then deleted) hold no work,
+        // but would stop every update. Unmark and remove them; a folder with any file anywhere inside is left alone.
+        private void RemoveEmptyNewFolders(SvnClient client)
+        {
+            var leftovers = Status(client, Root, false, SvnDepth.Infinity)
+                .Where(x => x.NodeKind == SvnNodeKind.Directory || Directory.Exists(x.FullPath))
+                .Where(x => x.LocalNodeStatus == SvnStatus.Added || x.LocalNodeStatus == SvnStatus.NotVersioned)
+                .Select(x => Path.GetFullPath(x.FullPath))
+                .Where(dir => Directory.Exists(dir) && !Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any())
+                .OrderByDescending(dir => dir.Length).ToList();
+            foreach (string dir in leftovers)
+            {
+                WorkspacePolicy.RequireInside(Root, dir);
+                try { client.Revert(dir, new SvnRevertArgs { Depth = SvnDepth.Infinity }); } catch (SvnException) { } // Wasn't marked: just remove it.
+                if (Directory.Exists(dir) && !Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any()) Directory.Delete(dir, true);
             }
         }
 

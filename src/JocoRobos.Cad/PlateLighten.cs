@@ -11,6 +11,7 @@ namespace JocoRobos.Cad
         internal double Ring = 0.15;         // solid material kept around every hole, beyond its edge
         internal double CornerRadius = 0.0625; // the router bit's radius: pockets get rounded corners at least this big
         internal double MinPocket = 0.35;    // pockets narrower than this (inscribed diameter) are left solid
+        internal double MaxPocket = 3;     // pockets bigger across than about this are split by another rib junction
     }
 
     internal sealed class Circle2
@@ -45,25 +46,43 @@ namespace JocoRobos.Cad
     /// </summary>
     internal static class PlateLighten
     {
+        private const double MinAngle = 22 * Math.PI / 180;
+
         internal static LightenPlan Plan(IList<double[]> outline, IList<Circle2> holes, IList<double[]> extraPoints, LightenSettings settings)
         {
             var plan = new LightenPlan();
             var border = outline.Select(p => new[] { p[0], p[1] }).ToList();
             if (SignedArea(border) < 0) border.Reverse();
             plan.PlateArea = SignedArea(border) - holes.Sum(h => Math.PI * h.R * h.R);
-            // Where ribs meet: the plate's real corners (not points along its arcs), one point per group of close holes (a bolt
-            // circle or a row of edge holes is one junction, not a dozen), and any points the student added.
-            var groups = HoleGroups(holes, settings);
+            // Where ribs meet: every hole; the plate's corners and points along its edge about a pocket apart; points the student
+            // added; then more points inside wherever a pocket would be too big, so pockets come out even-sized.
+            var group = HoleGroups(holes, settings);
             var nodes = new List<double[]>();
-            foreach (var group in groups) nodes.Add(new[] { group.Average(h => h.X), group.Average(h => h.Y) });
-            foreach (var corner in Corners(border))
-                if (groups.All(g => g.All(h => Distance(corner, new[] { h.X, h.Y }) > h.R + settings.Ring + settings.Rib + settings.MinPocket))) nodes.Add(corner);
-            foreach (var p in extraPoints ?? new List<double[]>()) nodes.Add(new[] { p[0], p[1] });
-            nodes = nodes.Where((p, i) => !nodes.Take(i).Any(n => Distance(n, p) < 1e-6)).ToList();
+            var groupOf = new Dictionary<double[], int>();
+            for (int i = 0; i < holes.Count; i++) { var c = new[] { holes[i].X, holes[i].Y }; nodes.Add(c); groupOf[c] = group[i]; }
+            Func<double[], double, bool> clear = (p, margin) => holes.All(h => Distance(p, new[] { h.X, h.Y }) > h.R + settings.Ring + margin) &&
+                nodes.All(n => Distance(n, p) > 1e-6);
+            foreach (var p in EdgePoints(border, settings.MaxPocket))
+                if (clear(p, settings.Rib + settings.MinPocket)) nodes.Add(p);
+            foreach (var p in extraPoints ?? new List<double[]>()) if (clear(p, 0)) nodes.Add(new[] { p[0], p[1] });
+            for (int round = 0; round < 8 && nodes.Count < 800; round++)
+            {
+                var added = new List<double[]>();
+                foreach (var triangle in Triangulate(nodes))
+                {
+                    if (!Useful(triangle, border, holes, groupOf, settings)) continue;
+                    double longest = Enumerable.Range(0, 3).Max(k => Distance(triangle[k], triangle[(k + 1) % 3]));
+                    if (longest <= settings.MaxPocket * 1.5) continue;
+                    var middle = new[] { triangle.Average(q => q[0]), triangle.Average(q => q[1]) };
+                    bool inside = Inside(border, middle) && border.Select((q, i) => SegmentDistance(middle, q, border[(i + 1) % border.Count])).Min() > settings.Border + settings.MinPocket;
+                    if (inside && clear(middle, settings.MinPocket) && nodes.Concat(added).All(n => Distance(n, middle) > settings.MaxPocket * 0.45)) added.Add(middle);
+                }
+                if (added.Count == 0) break;
+                nodes.AddRange(added);
+            }
             foreach (var triangle in Triangulate(nodes))
             {
-                var centroid = new[] { triangle.Average(p => p[0]), triangle.Average(p => p[1]) };
-                if (!Inside(border, centroid) || holes.Any(h => Distance(centroid, new[] { h.X, h.Y }) < h.R + settings.Ring)) continue;
+                if (!Useful(triangle, border, holes, groupOf, settings)) continue;
                 var pocket = Shape(triangle, border, holes, settings);
                 if (pocket == null) continue;
                 var rounded = Round(pocket, settings.CornerRadius);
@@ -143,8 +162,8 @@ namespace JocoRobos.Cad
             return pocket;
         }
 
-        // Holes close enough that no pocket fits between them form one group.
-        private static List<List<Circle2>> HoleGroups(IList<Circle2> holes, LightenSettings s)
+        // Holes close enough that no pocket fits between them share a group id: no pocket is cut between holes of one group.
+        private static int[] HoleGroups(IList<Circle2> holes, LightenSettings s)
         {
             var group = Enumerable.Range(0, holes.Count).ToArray();
             Func<int, int> find = null;
@@ -153,9 +172,49 @@ namespace JocoRobos.Cad
                 for (int j = i + 1; j < holes.Count; j++)
                 {
                     double gap = Distance(new[] { holes[i].X, holes[i].Y }, new[] { holes[j].X, holes[j].Y }) - holes[i].R - holes[j].R - 2 * s.Ring;
-                    if (gap < s.Rib + 2 * s.MinPocket) group[find(i)] = find(j);
+                    if (gap < s.Rib + s.MinPocket) group[find(i)] = find(j);
                 }
-            return Enumerable.Range(0, holes.Count).GroupBy(find).Select(g => g.Select(i => holes[i]).ToList()).ToList();
+            return Enumerable.Range(0, holes.Count).Select(find).ToArray();
+        }
+
+        // A triangle worth pocketing: inside the plate, not inside a hole's ring, and not spanning only holes of one tight group.
+        private static bool Useful(List<double[]> triangle, List<double[]> border, IList<Circle2> holes, Dictionary<double[], int> groupOf, LightenSettings s)
+        {
+            var centroid = new[] { triangle.Average(p => p[0]), triangle.Average(p => p[1]) };
+            if (!Inside(border, centroid) || holes.Any(h => Distance(centroid, new[] { h.X, h.Y }) < h.R + s.Ring)) return false;
+            // Slivers: a triangle with a very sharp corner only makes a thin wedge of a pocket.
+            for (int k = 0; k < 3; k++)
+            {
+                var u = Unit(triangle[(k + 1) % 3][0] - triangle[k][0], triangle[(k + 1) % 3][1] - triangle[k][1]);
+                var w = Unit(triangle[(k + 2) % 3][0] - triangle[k][0], triangle[(k + 2) % 3][1] - triangle[k][1]);
+                if (u == null || w == null || Math.Acos(Math.Max(-1, Math.Min(1, u[0] * w[0] + u[1] * w[1]))) < MinAngle) return false;
+            }
+            int g0, g1, g2;
+            return !(groupOf.TryGetValue(triangle[0], out g0) && groupOf.TryGetValue(triangle[1], out g1) && groupOf.TryGetValue(triangle[2], out g2) && g0 == g1 && g1 == g2);
+        }
+
+        // The plate's corners, plus points along its edges about `spacing` apart (arcs are followed, not sampled point by point).
+        private static List<double[]> EdgePoints(List<double[]> border, double spacing)
+        {
+            var corners = Corners(border);
+            var points = new List<double[]>(corners);
+            if (spacing <= 0) return points;
+            double since = 0;
+            for (int i = 0; i < border.Count; i++)
+            {
+                double[] v = border[i], next = border[(i + 1) % border.Count];
+                if (corners.Contains(v)) since = 0;
+                double length = Distance(v, next), at = 0;
+                while (since + (length - at) >= spacing)
+                {
+                    at += spacing - since;
+                    points.Add(new[] { v[0] + (next[0] - v[0]) * at / length, v[1] + (next[1] - v[1]) * at / length });
+                    since = 0;
+                }
+                since += length - at;
+            }
+            // A point just before a corner would make a sliver: drop points crowding a corner.
+            return points.Where(p => corners.Contains(p) || corners.All(c => Distance(c, p) > spacing * 0.4)).ToList();
         }
 
         // Real corners: where the outline turns by more than 30° (points along an arc turn a little at a time and don't count).

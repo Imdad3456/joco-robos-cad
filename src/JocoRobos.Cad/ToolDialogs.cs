@@ -211,6 +211,7 @@ namespace JocoRobos.Cad
         private readonly TextBox ring = new TextBox { Text = "0.15" };
         private readonly TextBox corner = new TextBox { Text = "0.0625" };
         private readonly TextBox smallest = new TextBox { Text = "0.35" };
+        private readonly TextBox size = new TextBox { Text = "3" };
         private readonly TextBox depth = new TextBox { Text = "through" };
 
         internal LightenSettings Settings
@@ -218,7 +219,7 @@ namespace JocoRobos.Cad
             get
             {
                 return new LightenSettings { Rib = Number(rib) ?? 0.15, Border = Number(border) ?? 0.25, Ring = Number(ring) ?? 0.15,
-                    CornerRadius = Number(corner) ?? 0.0625, MinPocket = Number(smallest) ?? 0.35 };
+                    CornerRadius = Number(corner) ?? 0.0625, MinPocket = Number(smallest) ?? 0.35, MaxPocket = Number(size) ?? 3 };
             }
         }
 
@@ -227,18 +228,21 @@ namespace JocoRobos.Cad
 
         internal LightenDialog() : base("Lighten Plate", "Lighten")
         {
+            Row("Pocket size (in)", size);
             Row("Rib width (in)", rib);
             Row("Edge border (in)", border);
             Row("Ring around holes (in)", ring);
             Row("Corner radius (in)", corner);
             Row("Smallest pocket (in)", smallest);
             Row("Depth (in, or \"through\")", depth);
-            Note.Text = "Ribs connect the plate's holes and corners in triangles; each triangle becomes a pocket with rounded corners (use your router bit's radius). " +
+            Note.Text = "Ribs connect the holes, the plate's corners and points along its edges, splitting anything bigger than the pocket size; each triangle becomes a pocket with rounded corners (use your router bit's radius). " +
                 "It's an ordinary sketch and cut: undo, edit, or delete it like any feature. Add holes or sketch points first where you want ribs to meet.";
         }
 
         protected override string Check()
         {
+            var pocketSize = Number(size);
+            if (pocketSize == null || pocketSize < 0.75 || pocketSize > 12) return "Pocket size from 0.75 to 12 in (smaller: a finer web).";
             foreach (var box in new[] { rib, border, ring, corner, smallest })
             {
                 var value = Number(box);
