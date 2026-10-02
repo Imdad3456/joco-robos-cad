@@ -272,16 +272,12 @@ namespace JocoRobos.Cad
         public void MountingPattern() { ShowTool(CadHubTool.Find("mounting")); }
 
         // The holes (model points, meters) and the center hole, sketched on the face and cut through.
-        internal static string CutMountingPattern(SldWorks app, ModelDoc2 doc, object selection, List<double[]> holes, double[] center, double hole, double centerHole, string name)
+        internal static string CutMountingPattern(SldWorks app, ModelDoc2 doc, object selection, double[] onFace, List<double[]> holes, double[] center, double hole, double centerHole, string name)
         {
             var face = selection as Face2 ?? ((selection as Edge)?.GetTwoAdjacentFaces2() as object[] ?? new object[0]).OfType<Face2>()
                 .FirstOrDefault(f => (f.GetSurface() as Surface)?.IsPlane() == true);
-            if (face == null) throw new InvalidOperationException("Click the flat face where the pattern goes.");
-            doc.ClearSelection2(true);
-            ((Entity)face).Select4(false, null);
-            doc.SketchManager.InsertSketch(true);
-            var sketch = doc.SketchManager.ActiveSketch;
-            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
+            if (face == null && onFace == null) throw new InvalidOperationException("Click the flat face where the pattern goes.");
+            var sketch = SketchOnFace(doc, face, onFace);
             var math = (MathUtility)app.GetMathUtility();
             Func<double[], double[]> at = model => (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(sketch.ModelToSketchTransform)).ArrayData;
             doc.SketchManager.AddToDB = true;
@@ -306,6 +302,26 @@ namespace JocoRobos.Cad
         {
             try { feature.Name = name; return feature.Name == name; }
             catch (Exception) { return false; }
+        }
+
+        /// <summary>
+        /// Starts a sketch on a face picked in a side panel. After the panel closes, the face picked there may no longer select
+        /// (and a sketch may still be open): close any open sketch, select the face, or else select it again at a point on it.
+        /// </summary>
+        private static Sketch SketchOnFace(ModelDoc2 doc, Face2 face, double[] onFace)
+        {
+            if (doc.SketchManager.ActiveSketch != null) doc.SketchManager.InsertSketch(true);
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                doc.ClearSelection2(true);
+                bool selected = attempt == 0 && face != null && ((Entity)face).Select4(false, null);
+                if (!selected && onFace != null)
+                    selected = doc.Extension.SelectByID2("", "FACE", onFace[0], onFace[1], onFace[2], false, 0, null, (int)swSelectOption_e.swSelectOptionDefault);
+                if (!selected) continue;
+                doc.SketchManager.InsertSketch(true);
+                if (doc.SketchManager.ActiveSketch != null) return doc.SketchManager.ActiveSketch;
+            }
+            throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Click the face once (outside the side panel), then try again.");
         }
 
         // ---------- lighten plate ----------

@@ -783,8 +783,12 @@ namespace JocoRobos.Cad
                 double offset = (pickPoint[0] - plane[3]) * plane[0] + (pickPoint[1] - plane[4]) * plane[1] + (pickPoint[2] - plane[5]) * plane[2];
                 center = new[] { pickPoint[0] - offset * plane[0], pickPoint[1] - offset * plane[1], pickPoint[2] - offset * plane[2] };
             }
-            string[] names = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz" };
-            var values = center.Concat(new[] { plane[0], plane[1], plane[2] }).Concat(new[] { frame[3], frame[4], frame[5] }).ToArray();
+            // A point on the face itself, to find it again when the cut is made (the click, moved onto the face's plane).
+            var on = pickPoint ?? center;
+            double lift = (on[0] - plane[3]) * plane[0] + (on[1] - plane[4]) * plane[1] + (on[2] - plane[5]) * plane[2];
+            string[] names = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz", "fx", "fy", "fz" };
+            var values = center.Concat(new[] { plane[0], plane[1], plane[2] }).Concat(new[] { frame[3], frame[4], frame[5] })
+                .Concat(new[] { on[0] - lift * plane[0], on[1] - lift * plane[1], on[2] - lift * plane[2] }).ToArray();
             for (int i = 0; i < names.Length; i++) p.Set(names[i], values[i]);
             return null;
         }
@@ -821,8 +825,8 @@ namespace JocoRobos.Cad
 
         internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
         {
-            return Addin.CutMountingPattern(application, doc, selection, ModelPoints(p), new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) },
-                Hole(p), Center(p), Pattern(p).Name);
+            return Addin.CutMountingPattern(application, doc, selection, p["fx"] == null ? null : new[] { p.Number("fx", 0), p.Number("fy", 0), p.Number("fz", 0) },
+                ModelPoints(p), new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) }, Hole(p), Center(p), Pattern(p).Name);
         }
     }
 }

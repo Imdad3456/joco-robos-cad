@@ -64,7 +64,7 @@ namespace JocoRobos.Cad
 
         private const string SavedKey = @"Software\JOCO ROBOS\CAD\Tools";
         // Where the student picked the selection: never remembered, it belongs to one part.
-        private static readonly string[] Placement = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz", "bore", "picks" };
+        private static readonly string[] Placement = { "cx", "cy", "cz", "ax", "ay", "az", "ux", "uy", "uz", "fx", "fy", "fz", "bore", "picks" };
 
         // Each tool opens with the settings it was last used with on this computer.
         private static FeatureParams Remembered(string kind)
