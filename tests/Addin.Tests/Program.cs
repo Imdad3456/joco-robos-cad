@@ -144,6 +144,8 @@ static class Program
             PaneChecks();
             RobotFileChecks(temp);
             PartsChecks(temp);
+            WhereUsedChecks();
+            HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
 
@@ -166,6 +168,40 @@ static class Program
             "https://cad.example.org/svn/2026-Robot/", "Another team's server: its own address, nothing moved from 5919's old one");
         TeamServer.Use(new Uri(TeamServer.Original));
         Check(WorkspaceInfo.OldServerHosts.Length == 1, "Team 5919 keeps moving copies from its old address");
+    }
+
+    // Where used: every assembly above a file, nearest first; what an assembly uses; loops can't hang it.
+    static void WhereUsedChecks()
+    {
+        string R(string name) { return Path.Combine(Path.GetTempPath(), "wu", name); }
+        var graph = new ReferenceGraph(new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>
+        {
+            [R("Robot.SLDASM")] = new System.Collections.Generic.List<string> { R("Shooter.SLDASM"), R("Drive.SLDASM") },
+            [R("Shooter.SLDASM")] = new System.Collections.Generic.List<string> { R("Plate.SLDPRT"), R("Flywheel.SLDASM") },
+            [R("Flywheel.SLDASM")] = new System.Collections.Generic.List<string> { R("Plate.SLDPRT"), R("Wheel.SLDPRT") },
+            [R("Drive.SLDASM")] = new System.Collections.Generic.List<string> { R("Wheel.SLDPRT") },
+            [R("LoopA.SLDASM")] = new System.Collections.Generic.List<string> { R("LoopB.SLDASM") },
+            [R("LoopB.SLDASM")] = new System.Collections.Generic.List<string> { R("LoopA.SLDASM") },
+        });
+        var plate = graph.UsedBy(R("Plate.SLDPRT"));
+        Check(plate.Count == 3 && plate[0].Item2 == 1 && plate.Count(x => x.Item2 == 1) == 2 && plate.Any(x => x.Item1 == R("Robot.SLDASM") && x.Item2 == 2),
+            "Where used: direct users first, then up to the robot, each once");
+        Check(graph.UsedBy(R("Robot.SLDASM")).Count == 0 && graph.Uses(R("Robot.SLDASM")).Count == 2, "The robot: used by nothing, uses its subsystems");
+        Check(graph.UsedBy(R("LoopA.SLDASM")).Count == 1, "Circular references don't hang or repeat");
+    }
+
+    static void HealthChecks()
+    {
+        var healthy = HealthCheck.Evaluate(new HealthFacts { RobotDownloaded = true });
+        Check(healthy.All(f => !f.Problem), "Nothing wrong: Healthy");
+        var sick = HealthCheck.Evaluate(new HealthFacts { RobotDownloaded = true, UpdateAvailable = "9.0.0 (required)", FreeBytes = 100 * 1024 * 1024,
+            WorkspaceProblems = { "30_Shooter/Plate.SLDPRT: deleted on this computer" }, MissingReferences = { @"C:\Users\x\Part1.SLDPRT" } });
+        Check(sick.Count(f => f.Problem) == 4 && sick.TakeWhile(f => f.Problem).Count() == 4 && sick.Any(f => f.Text.Contains("Part1.SLDPRT")) &&
+            sick.Any(f => f.Text.Contains("100 MB")), "Problems listed first, each with what to do");
+        Check(HealthCheck.Evaluate(new HealthFacts { ServerProblem = "unreachable" }).Count(f => f.Problem) == 2, "Not downloaded: robot checks skipped");
+        Timings.Record("Test op", 1500);
+        Timings.Record("Test op", 500);
+        Check(Timings.Report().Contains("Test op: last 0.5 s, slowest 1.5 s, average 1.0 s (2×)"), "Timings report " + Timings.Report());
     }
 
     // Parts list: buy (by vendor, part number) vs make, quantities, configurations, bought assemblies counted once.
@@ -197,6 +233,14 @@ static class Program
         Check(rows.TakeWhile(r => r.Buy).Count() == rows.Count(r => r.Buy), "Buy lines first");
         Check(PartsSheet.IsBoughtAssembly(root, Path.Combine(root, "90_COTS", "AndyMark", "Gearbox.SLDASM")) &&
             !PartsSheet.IsBoughtAssembly(root, Path.Combine(root, "30_Shooter", "Shooter.SLDASM")), "COTS assemblies counted once, team assemblies opened up");
+        // Duplicates: the same item in two files, but not numbered pieces of one item.
+        var dupUses = new System.Collections.Generic.List<PartUse> { use("90_COTS/AndyMark/am-1635 Collar.SLDPRT", null), use("90_COTS/AndyMark/am-1635 Collar (1).SLDPRT", null),
+            use("30_Shooter/am-1635 Collar.SLDPRT", null), use("90_COTS/WCP/WCP-0940_1.SLDPRT", null), use("90_COTS/WCP/WCP-0940_2.SLDPRT", null),
+            use("90_COTS/REV/Copy of NEO.SLDPRT", null), use("90_COTS/REV/NEO.SLDPRT", null) };
+        var dups = PartsSheet.Duplicates(PartsSheet.Build(root, dupUses));
+        Check(dups.Count == 2 && dups.Any(d => d.Count == 3 && d.All(r => r.Name.StartsWith("am-1635"))) && dups.Any(d => d.Any(r => r.Name == "Copy of NEO")) &&
+            !dups.Any(d => d.Any(r => r.Name.StartsWith("WCP-0940"))), "Duplicates: copies and same name in two folders, not numbered pieces");
+        Check(PartsSheet.Build(root, uses).Single(r => r.Name == "Plate").Uses.Count == 2, "Each line keeps its component instances (to select them)");
         string csv = PartsSheet.Csv(new[] { new PartsRow { Name = "=HYPERLINK(1)", Vendor = "A, B", Quantity = 1 } });
         Check(csv.Contains("'=HYPERLINK(1)") && csv.Contains("\"A, B\""), "CSV: no formulas, commas quoted");
     }

@@ -73,6 +73,11 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3c.1 | A | Open the robot → **Tools → CAD Hub → Parts List** | A spreadsheet opens: Buy lines by vendor (AndyMark, WCP, REV…) with part numbers, then Make lines; a flash with the counts. Suppressed parts aren't in it; a COTS gearbox is one line | ☐ |
 | 3c.2 | A | Mentor page → **Parts** | The same list, sent by A, with **Download spreadsheet** | ☐ |
 | 3c.3 | A | Add two of any COTS part to the robot, save, **Parts List** again, reload **Parts** | That part shows **+2** (or **new**) | ☐ |
+| 3c.4 | A | In the Parts List window, double-click a line | SOLIDWORKS selects every copy of that part in the assembly | ☐ |
+| 3c.5 | A | Copy a COTS part's file to `Collar (1).SLDPRT`, use it in the robot, **Parts List** | "⚠ Possible duplicates" lists both files | ☐ |
+| 3c.6 | A | Robot Files → right-click a part → **Where Used…** (first time on the full robot: note how long) | Its assemblies, nearest first, up to Robot.SLDASM; double-click opens one. A second time is near-instant | ☐ |
+| 3c.7 | A | **Tools → CAD Hub → Check This Computer** | "✓ Healthy" with each check listed. Then delete a part in Explorer and run it again: "deleted on this computer" with what to do | ☐ |
+| 3c.8 | A | After an afternoon of normal work: **Diagnostics** | "How long things took this session" lists status checks, Submit, Parts List, Where Used, Library search | ☐ |
 
 ## 4. Together: nobody overwrites anybody
 

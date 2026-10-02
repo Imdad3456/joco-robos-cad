@@ -16,7 +16,7 @@ namespace JocoRobos.Cad
     /// </summary>
     internal sealed class RobotFilesPanel : UserControl
     {
-        private readonly Action<string> open, reveal, history;
+        private readonly Action<string> open, reveal, history, whereUsed;
         private readonly Label empty = new Label { Dock = DockStyle.Fill, ForeColor = SystemColors.GrayText, Padding = new Padding(2, 8, 2, 0),
             Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f), Text = "Open Robot to download the robot files." };
         private readonly SearchBox search = new SearchBox("Search robot files…") { Dock = DockStyle.Fill, Margin = new Padding(0, 6, 0, 6) };
@@ -33,8 +33,9 @@ namespace JocoRobos.Cad
         private bool filling;
         private const string Placeholder = "\u0001";
 
-        internal RobotFilesPanel(Action<string> open, Action<string> reveal, Action<string> history)
+        internal RobotFilesPanel(Action<string> open, Action<string> reveal, Action<string> history, Action<string> whereUsed)
         {
+            this.whereUsed = whereUsed;
             this.open = open;
             this.reveal = reveal;
             this.history = history;
@@ -91,6 +92,7 @@ namespace JocoRobos.Cad
             menu.Items.Add("Open", null, (s, e) => WithSelected(open));
             menu.Items.Add("Show in Explorer", null, (s, e) => WithSelected(reveal));
             menu.Items.Add("File History", null, (s, e) => WithSelected(history));
+            menu.Items.Add("Where Used…", null, (s, e) => WithSelected(whereUsed));
             menu.Opening += (s, e) => e.Cancel = tree.SelectedNode == null || tree.SelectedNode.Name != "file";
             tree.ContextMenuStrip = menu;
             ShowEmpty(true);

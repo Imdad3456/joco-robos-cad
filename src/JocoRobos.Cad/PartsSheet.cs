@@ -12,6 +12,8 @@ namespace JocoRobos.Cad
     {
         internal string Path;
         internal string Configuration;
+        // The SOLIDWORKS component this use came from (to select it from the Parts List window); null in tests.
+        internal object Component;
     }
 
     internal sealed class PartsRow
@@ -25,6 +27,8 @@ namespace JocoRobos.Cad
         internal string Folder = "";
 
         internal string Key { get { return (Folder + "/" + Name + "|" + Configuration).ToLowerInvariant(); } }
+        // Every component instance counted in this line.
+        internal readonly List<PartUse> Uses = new List<PartUse>();
     }
 
     /// <summary>
@@ -66,8 +70,8 @@ namespace JocoRobos.Cad
             {
                 var row = Describe(robotRoot, use);
                 PartsRow existing;
-                if (rows.TryGetValue(row.Key, out existing)) existing.Quantity++;
-                else { row.Quantity = 1; rows[row.Key] = row; }
+                if (rows.TryGetValue(row.Key, out existing)) { existing.Quantity++; existing.Uses.Add(use); }
+                else { row.Quantity = 1; row.Uses.Add(use); rows[row.Key] = row; }
             }
             return rows.Values.OrderBy(r => r.Buy ? 0 : 1).ThenBy(r => r.Vendor, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Configuration, StringComparer.OrdinalIgnoreCase).ToList();
@@ -107,6 +111,26 @@ namespace JocoRobos.Cad
             }
             else row.Vendor = "Team-made";
             return row;
+        }
+
+        /// <summary>
+        /// Bought items that look like the same thing in two files: the same name in two folders, or a copy ("Copy of …",
+        /// "… (1)"). Distinct numbered pieces like WCP-0940_1 and _2 are different parts and aren't flagged.
+        /// </summary>
+        internal static List<List<PartsRow>> Duplicates(IEnumerable<PartsRow> rows)
+        {
+            return rows.Where(r => r.Buy && r.Folder.IndexOf("inside its assembly", StringComparison.Ordinal) < 0)
+                .GroupBy(r => Normalize(r.Name) + "|" + r.Configuration.ToLowerInvariant())
+                .Select(g => g.ToList())
+                .Where(g => g.Select(r => (r.Folder + "/" + r.Name).ToLowerInvariant()).Distinct().Count() > 1)
+                .OrderBy(g => g[0].Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static string Normalize(string name)
+        {
+            string text = Regex.Replace(name.ToLowerInvariant(), @"^copy of\s+", "");
+            text = Regex.Replace(text, @"(\s*\(\d+\)|\s+-\s+copy(\s*\(\d+\))?)$", "");
+            return Regex.Replace(text, @"\s+", " ").Trim();
         }
 
         internal static string Csv(IEnumerable<PartsRow> rows)

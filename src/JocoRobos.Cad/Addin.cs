@@ -43,6 +43,8 @@ namespace JocoRobos.Cad
         [DispId(21)] void FileHistory();
         [DispId(22)] void CopyDiagnostics();
         [DispId(23)] void PartsList();
+        [DispId(24)] void WhereUsed();
+        [DispId(25)] void CheckComputer();
     }
 
     [ComVisible(true)]
@@ -57,10 +59,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591908;
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907 };
+        private const int GroupId = 591909;
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591918;
+        private const int LayoutVersion = 591919;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -174,10 +176,12 @@ namespace JocoRobos.Cad
                 Add(group, "Open Old Robot", "Open a previous season read-only for reference", nameof(OpenOldRobot), 11, menu, 10);
                 Add(group, "File History", "Who changed the active file, when, and why; save an older version as a copy", nameof(FileHistory), 20, menu);
                 Add(group, "Parts List", "What to buy (by vendor) and what to make, with quantities, from the robot or the open assembly", nameof(PartsList), 22, menu);
+                Add(group, "Where Used", "Which assemblies use the open file (all the way up to the robot), and what it uses", nameof(WhereUsed), 23, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
                 Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
                 Add(group, "Test Connection", "Check your CAD account and connection", nameof(TestConnection), 5, menu, 6);
+                Add(group, "Check This Computer", "Checks the server, versions, the robot folder, your edits and the robot's references; says Healthy unless something needs fixing", nameof(CheckComputer), 24, menu);
                 Add(group, "Copy Diagnostics", "Copy a report (no passwords) to send a mentor when something's wrong", nameof(CopyDiagnostics), 21, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Set Aside My Changes", "Recovery: keep your version of changed files as a copy and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
@@ -257,6 +261,7 @@ namespace JocoRobos.Cad
                 OfferPendingLocks();
                 // Includes dialogs the student had open, so only very long commands are worth noting.
                 ErrorLog.Slow("command " + name, clock.ElapsedMilliseconds, 60000);
+                Timings.Record(name + " (including any dialogs)", clock.ElapsedMilliseconds);
                 RefreshStatus();
             }
         }
@@ -293,7 +298,7 @@ namespace JocoRobos.Cad
                     catch (Exception) { return null; }
                 },
                 History = FileHistory, Diagnostics = CopyDiagnostics,
-                OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path),
+                OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path), WhereUsedOf = path => WhereUsedFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 AskForFile = AskForActiveFile, DismissRequests = DismissRequests,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
@@ -433,6 +438,7 @@ namespace JocoRobos.Cad
                 List<EditRequests.Request> waiting = null;
                 try { waiting = EditRequests.ForMe(login); } catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO requests: " + exception.Message); }
                 ErrorLog.Slow("status check (background)", clock.ElapsedMilliseconds, 20000);
+                Timings.Record("Status check (background)", clock.ElapsedMilliseconds);
                 return Tuple.Create(catalog, robot, library, waiting);
             }).ContinueWith(task =>
             {
@@ -516,9 +522,11 @@ namespace JocoRobos.Cad
                 }
                 if (doc == null)
                     throw new InvalidOperationException("Open the robot (Open Robot), or the assembly you want a parts list of, then try again.");
+                var clock = System.Diagnostics.Stopwatch.StartNew();
                 var uses = new List<PartUse>();
                 CollectParts(robot.Root, ((AssemblyDoc)doc).GetComponents(true) as object[], uses, 0);
                 var rows = PartsSheet.Build(robot.Root, uses);
+                Timings.Record("Parts List (" + uses.Count + " components)", clock.ElapsedMilliseconds);
                 if (rows.Count == 0) throw new InvalidOperationException(Path.GetFileName(path) + " has no parts to list.");
                 string folder = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments), "CAD Hub");
                 Directory.CreateDirectory(folder);
@@ -527,11 +535,186 @@ namespace JocoRobos.Cad
                 bool sent = false;
                 try { OperationDialog.Run("Sending to the mentor page…", () => Accounts.Post("admin/api/parts", login, PartsSheet.Json(robot.Name, Path.GetFileName(path), rows))); sent = true; }
                 catch (Exception exception) { ErrorLog.Write("send parts list", exception); }
-                int buy = rows.Where(r => r.Buy).Sum(r => r.Quantity), make = rows.Where(r => !r.Buy).Sum(r => r.Quantity);
-                ShowFlash("✓ Parts list of " + Path.GetFileName(path) + ": " + buy + " to buy (" + rows.Where(r => r.Buy).Select(r => r.Vendor).Distinct().Count() +
-                    " vendors), " + make + " team-made" + (sent ? ". Also on the mentor page's Parts tab." : "."));
-                try { System.Diagnostics.Process.Start(file); }
-                catch (Exception) { System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + file + "\""); }
+                var duplicates = PartsSheet.Duplicates(rows);
+                var assemblyDoc = doc;
+                if (partsWindow != null && !partsWindow.IsDisposed) partsWindow.Close();
+                partsWindow = new PartsWindow(Path.GetFileName(path), rows, duplicates, row => SelectInAssembly(assemblyDoc, row), file, sent);
+                partsWindow.Show(new SolidWorksWindow());
+                if (duplicates.Count > 0) ShowFlash("⚠ The parts list found " + duplicates.Count + " item(s) that may be in the robot twice under different files.");
+            });
+        }
+
+        private PartsWindow partsWindow;
+
+        // Parts List → CAD: selects every copy of a line's part in the assembly it came from.
+        private void SelectInAssembly(ModelDoc2 doc, PartsRow row)
+        {
+            int errors = 0;
+            application.ActivateDoc3(doc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref errors);
+            doc.ClearSelection2(true);
+            int selected = 0;
+            foreach (var use in row.Uses)
+            {
+                var component = use.Component as Component2;
+                try { if (component != null && component.Select4(true, null, false)) selected++; }
+                catch (System.Runtime.InteropServices.COMException) { } // Closed or rebuilt meanwhile.
+            }
+            if (selected == 0) Message("Couldn't select " + row.Name + " in " + doc.GetTitle() + ". Make the Parts List again if the assembly changed.", MessageBoxIcon.Information);
+        }
+
+        // ---------- where used ----------
+
+        // Each robot assembly's direct references, kept by save time (and on disk), so only changed assemblies are read again.
+        private readonly Dictionary<string, Tuple<DateTime, List<string>>> referenceCache = LoadReferenceCache();
+
+        private static string ReferenceCacheFile
+        {
+            get { return Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData), "JocoRobos.Cad", "references.cache"); }
+        }
+
+        private static Dictionary<string, Tuple<DateTime, List<string>>> LoadReferenceCache()
+        {
+            var cache = new Dictionary<string, Tuple<DateTime, List<string>>>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                if (!File.Exists(ReferenceCacheFile)) return cache;
+                foreach (string line in File.ReadAllLines(ReferenceCacheFile))
+                {
+                    var parts = line.Split('\t');
+                    long ticks;
+                    if (parts.Length >= 2 && long.TryParse(parts[1], out ticks))
+                        cache[parts[0]] = Tuple.Create(new DateTime(ticks, DateTimeKind.Utc), parts.Skip(2).Where(x => x.Length > 0).ToList());
+                }
+            }
+            catch (Exception exception) { ErrorLog.Write("reference cache", exception); }
+            return cache;
+        }
+
+        private void SaveReferenceCache()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(ReferenceCacheFile));
+                File.WriteAllLines(ReferenceCacheFile, referenceCache.Select(p => p.Key + "\t" + p.Value.Item1.Ticks + "\t" + String.Join("\t", p.Value.Item2)));
+            }
+            catch (Exception exception) { ErrorLog.Write("reference cache", exception); }
+        }
+
+        // The robot's assemblies and what each uses directly. The first time reads every assembly (SOLIDWORKS reads only file
+        // headers, nothing opens); after that only ones saved since.
+        private ReferenceGraph RobotReferences(WorkspaceInfo robot)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var assemblies = RobotFileIndex.Build(robot.Root).Files.Where(f => f.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase))
+                .Select(f => Path.Combine(robot.Root, f)).ToList();
+            var direct = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            int read = 0;
+            for (int i = 0; i < assemblies.Count; i++)
+            {
+                string path = assemblies[i];
+                DateTime written = File.GetLastWriteTimeUtc(path);
+                Tuple<DateTime, List<string>> cached;
+                if (!referenceCache.TryGetValue(path, out cached) || cached.Item1 != written)
+                {
+                    if (read++ % 5 == 0) { working = "Reading assembly references (" + (i + 1) + " of " + assemblies.Count + ")…"; RenderStatus(); pane?.Update(); }
+                    var list = new List<string>();
+                    var raw = application.GetDocumentDependencies2(path, false, false, false) as object[];
+                    for (int j = 1; raw != null && j < raw.Length; j += 2)
+                    {
+                        string reference = raw[j] as string;
+                        if (String.IsNullOrEmpty(reference) || WorkspacePolicy.IsVirtualComponent(reference)) continue;
+                        try { list.Add(Path.GetFullPath(reference)); } catch (ArgumentException) { }
+                    }
+                    referenceCache[path] = cached = Tuple.Create(written, list);
+                }
+                direct[path] = cached.Item2;
+            }
+            working = null;
+            if (read > 0) SaveReferenceCache();
+            Timings.Record("Where Used index (" + assemblies.Count + " assemblies, " + read + " read)", clock.ElapsedMilliseconds);
+            return new ReferenceGraph(direct);
+        }
+
+        public void WhereUsed()
+        {
+            var doc = application.ActiveDoc as ModelDoc2;
+            string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
+            // A component selected in an assembly: that part, not the assembly.
+            try
+            {
+                var selected = doc?.SelectionManager is SelectionMgr manager && manager.GetSelectedObjectCount2(-1) > 0
+                    ? manager.GetSelectedObjectsComponent4(1, -1) as Component2 : null;
+                if (selected != null && !String.IsNullOrEmpty(selected.GetPathName())) path = Path.GetFullPath(selected.GetPathName());
+            }
+            catch (Exception) { }
+            if (path == null) { Message("Open (or select) a robot file first."); return; }
+            WhereUsedFor(path);
+        }
+
+        private void WhereUsedFor(string path)
+        {
+            Execute(() =>
+            {
+                var robot = robotSnapshot?.Info ?? robotInfo;
+                if (robot == null || !robot.Contains(path)) throw new InvalidOperationException(Path.GetFileName(path) + " isn't in the robot folder.");
+                var graph = RobotReferences(robot);
+                using (var dialog = new WhereUsedDialog(path, graph.UsedBy(path), graph.Uses(path), file => BeginInvokeOpen(file)))
+                    dialog.ShowDialog(new SolidWorksWindow());
+            });
+        }
+
+        // Opening from a dialog's double-click: after the click, never inside it.
+        private void BeginInvokeOpen(string file)
+        {
+            OnUi("open from where used", () => OpenRobotFile(file));
+        }
+
+        // ---------- check this computer ----------
+
+        public void CheckComputer()
+        {
+            Execute(() =>
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var facts = new HealthFacts();
+                NetworkCredential login = null;
+                Catalog catalog = null;
+                try
+                {
+                    login = CredentialStore.Read();
+                    if (!TeamServer.IsSet) facts.ServerProblem = "not set up yet. Click Open Robot.";
+                    else if (login == null) facts.ServerProblem = "you're not signed in. Click Open Robot.";
+                    else catalog = OperationDialog.Run("Checking the server…", () => Catalog.Fetch(login));
+                }
+                catch (Exception exception) { facts.ServerProblem = exception.Message; }
+                if (catalog != null)
+                {
+                    var offer = Updater.Offer(catalog.Addin, Updater.Current);
+                    if (offer != null) facts.UpdateAvailable = offer.Version + (offer.Required ? " (required)" : "");
+                    facts.SolidWorksProblem = WorkspacePolicy.SolidWorksProblem(SolidWorksYear, catalog.SolidWorks);
+                    var svn = new SvnWorkspace(login, catalog.Robot);
+                    facts.RobotDownloaded = svn.IsCheckedOut;
+                    if (facts.RobotDownloaded)
+                    {
+                        try
+                        {
+                            var found = OperationDialog.Run("Checking the robot folder…", () => Tuple.Create(svn.Problems(), svn.Snapshot()));
+                            facts.WorkspaceProblems = found.Item1;
+                            facts.InterruptedSubmit = found.Item2.PendingSubmit;
+                            facts.UnsubmittedChanges = found.Item2.Changed.Count + found.Item2.New.Count;
+                            facts.IncomingChanges = found.Item2.Incoming.Count;
+                        }
+                        catch (Exception exception) { facts.WorkspaceProblems.Add("couldn't check it: " + exception.Message); }
+                        string master = FindMaster(catalog.Robot);
+                        if (master != null)
+                            facts.MissingReferences = Dependencies(master).Where(r => !WorkspacePolicy.IsVirtualComponent(r) && WorkspacePolicy.IsCad(r) && !File.Exists(r))
+                                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                        try { facts.FreeBytes = new DriveInfo(Path.GetPathRoot(catalog.Robot.Root)).AvailableFreeSpace; } catch (Exception) { }
+                    }
+                }
+                Timings.Record("Check This Computer", clock.ElapsedMilliseconds);
+                using (var dialog = new HealthDialog(HealthCheck.Evaluate(facts)))
+                    dialog.ShowDialog(new SolidWorksWindow());
             });
         }
 
@@ -551,7 +734,7 @@ namespace JocoRobos.Cad
                     if (String.IsNullOrEmpty(file)) continue;
                     if (file.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase) && !PartsSheet.IsBoughtAssembly(robotRoot, file))
                         CollectParts(robotRoot, component.GetChildren() as object[], uses, depth + 1);
-                    else uses.Add(new PartUse { Path = file, Configuration = component.ReferencedConfiguration });
+                    else uses.Add(new PartUse { Path = file, Configuration = component.ReferencedConfiguration, Component = component });
                 }
                 catch (System.Runtime.InteropServices.COMException) { } // A component SOLIDWORKS can't describe: skip it, never fail the list.
             }
@@ -1365,11 +1548,25 @@ namespace JocoRobos.Cad
             if (library == null || !Directory.Exists(library.Root)) return new List<string>();
             string frc = Path.Combine(library.Root, "FRCDesignLib") + "\\"; // FRCDesignLib parts come from its own search.
             var words = query.ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            return SubmitCheck.CadByName(library.Root).SelectMany(g => g)
-                .Where(p => !p.StartsWith(frc, StringComparison.OrdinalIgnoreCase) && !p.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase))
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            // The Library's file list, read once a minute instead of on every keystroke.
+            if (libraryFiles == null || libraryFilesRoot != library.Root || DateTime.UtcNow - libraryFilesAt > TimeSpan.FromMinutes(1))
+            {
+                libraryFiles = SubmitCheck.CadByName(library.Root).SelectMany(g => g)
+                    .Where(p => !p.StartsWith(frc, StringComparison.OrdinalIgnoreCase) && !p.EndsWith(".slddrw", StringComparison.OrdinalIgnoreCase)).ToList();
+                libraryFilesRoot = library.Root;
+                libraryFilesAt = DateTime.UtcNow;
+            }
+            var found = libraryFiles
                 .Where(p => { string relative = p.Substring(library.Root.Length + 1).ToLowerInvariant(); return words.All(relative.Contains); })
                 .OrderBy(p => Path.GetFileName(p), StringComparer.OrdinalIgnoreCase).Take(20).ToList();
+            Timings.Record("Library search (team Library)", clock.ElapsedMilliseconds);
+            return found;
         }
+
+        private List<string> libraryFiles;
+        private string libraryFilesRoot;
+        private DateTime libraryFilesAt;
 
         // ---------- file history and diagnostics ----------
 
@@ -1475,6 +1672,7 @@ namespace JocoRobos.Cad
                     text.Append("\r\nOpen windows (").Append(docs.Count).Append("): ").Append(String.Join(", ", docs.Take(15))).Append("\r\n");
                 }
                 catch (Exception exception) { line("Open windows", "unreadable: " + exception.Message); }
+                text.Append("\r\nHow long things took this session:\r\n").Append(Timings.Report());
                 foreach (var log in new[] { ErrorLog.FilePath, Path.Combine(Path.GetDirectoryName(ErrorLog.FilePath), "upgrade.log") })
                 {
                     text.Append("\r\n--- ").Append(Path.GetFileName(log)).Append(" (latest) ---\r\n");
@@ -1810,8 +2008,10 @@ namespace JocoRobos.Cad
                 Target = catalog.Robot.Name,
                 Scan = () => Task.Run(() => SvnWorkspace.Exclusive(() =>
                 {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
                     var plan = new SubmitPlan();
                     foreach (var svn in workspaces) plan.Add(svn.PrepareSubmit());
+                    Timings.Record("Submit: finding your changes", clock.ElapsedMilliseconds);
                     return plan;
                 })),
                 Check = (plan, selected, acknowledged) =>
@@ -1829,6 +2029,7 @@ namespace JocoRobos.Cad
                 },
                 Prepare = async (paths, progress) =>
                 {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
                     var todo = paths.Where(p => !DependenciesCached(p) || !TeamDependenciesCached(p)).ToList();
                     for (int i = 0; i < todo.Count; i++)
                     {
@@ -1837,6 +2038,7 @@ namespace JocoRobos.Cad
                         CachedTeamDependencies(todo[i], workspaces.FirstOrDefault(w => w.Info.Contains(todo[i])));
                         await Task.Yield(); // Let SOLIDWORKS repaint and handle clicks between files.
                     }
+                    if (todo.Count > 0) Timings.Record("Submit: reading references (" + todo.Count + " files)", clock.ElapsedMilliseconds);
                 },
                 Fix = (issue, action) => FixSubmitIssue(issue, action, catalog, workspaces),
                 Commit = (selected, comment) => CommitSubmit(selected, comment, workspaces),

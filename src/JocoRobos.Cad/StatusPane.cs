@@ -16,7 +16,7 @@ namespace JocoRobos.Cad
         internal Func<string, List<string>> SearchTeam;
         internal Action<string> InsertTeam;
         // Robot tab file browser: open, show in Explorer, File History for a robot file.
-        internal Action<string> OpenFile, RevealFile, FileHistoryOf;
+        internal Action<string> OpenFile, RevealFile, FileHistoryOf, WhereUsedOf;
         internal Action BrowseTeam, ImportDownloaded;
         // "Ask for it": ask the person editing the active file; tell teammates who asked you "not yet".
         internal Action AskForFile, DismissRequests;
@@ -93,7 +93,7 @@ namespace JocoRobos.Cad
                 layout.Controls.Add(control);
 
             // 3. What do I want to work on: the robot's files fill the rest. Then a small footer for support actions.
-            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 160) };
+            files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf, actions.WhereUsedOf) { Dock = DockStyle.Fill, MinimumSize = new Size(0, 160) };
             var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true, BackColor = SystemColors.Window };
             robotGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));

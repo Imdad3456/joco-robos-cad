@@ -349,6 +349,30 @@ namespace JocoRobos.Cad
             }
         }
 
+        /// <summary>
+        /// What's wrong in this robot folder, for "Check This Computer": conflicts, files deleted or blocked here, unfinished SVN work,
+        /// and edits whose lock the server no longer has (a mentor released it). Reads the server's locks; changes nothing.
+        /// </summary>
+        internal List<string> Problems()
+        {
+            var problems = new List<string>();
+            if (!IsCheckedOut) return problems;
+            using (var client = Client())
+            {
+                foreach (var item in Status(client, Root, true, SvnDepth.Infinity))
+                {
+                    string name = item.FullPath.Length > Root.Length ? item.FullPath.Substring(Root.Length + 1) : Info.Name;
+                    if (item.Conflicted) problems.Add(name + ": conflict");
+                    else if (item.Wedged) problems.Add(name + ": an SVN operation didn't finish (needs cleanup)");
+                    else if (item.LocalNodeStatus == SvnStatus.Missing) problems.Add(name + ": deleted on this computer");
+                    else if (item.LocalNodeStatus == SvnStatus.Obstructed) problems.Add(name + ": replaced by something of a different kind");
+                    else if (item.LocalLock != null && (item.RemoteLock == null || item.RemoteLock.Token != item.LocalLock.Token))
+                        problems.Add(name + ": your edit lock is gone from the server (a mentor released it" + (item.RemoteLock != null ? " and " + item.RemoteLock.Owner + " has it now" : "") + ")");
+                }
+            }
+            return problems;
+        }
+
         /// <summary>Files whose latest version came from a conversion submit, so Upgrade Robot Files can resume where it stopped.</summary>
         internal HashSet<string> ConvertedFiles()
         {
