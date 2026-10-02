@@ -51,8 +51,8 @@ namespace JocoRobos.Cad
         /// <summary>The body to add, or the tool to cut with, in meters.</summary>
         internal abstract Body2 Build(SldWorks application, FeatureParams p, bool preview);
 
-        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new LightenTool(), new BeltChainTool(), new SpurGearTool(), new BearingHoleTool() };
-        // Spur Gear and Bearing Hole are no longer on the tab: kept so the CAD Hub features earlier versions made still rebuild and edit.
+        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new LightenTool(), new BeltChainTool(), new BearingHoleTool() };
+        // Bearing Hole is no longer on the tab: kept so the CAD Hub bearing holes earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
         // ---------- shared geometry ----------

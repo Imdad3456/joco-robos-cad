@@ -9,12 +9,69 @@ using SolidWorks.Interop.swconst;
 namespace JocoRobos.Cad
 {
     /// <summary>
-    /// CAD Hub's modeling tools: Lighten Plate and the belt and chain calculator (and rebuilding CAD Hub gear and bearing hole
-    /// features made by earlier versions). The math lives in PlateLighten and BeltChain (tested without SOLIDWORKS).
+    /// CAD Hub's modeling tools: spur gears, Lighten Plate and the belt and chain calculator (and rebuilding CAD Hub bearing hole
+    /// features made by earlier versions). The math lives in SpurGear, PlateLighten and BeltChain (tested without SOLIDWORKS).
     /// </summary>
     public sealed partial class Addin
     {
         private const double Meters = 0.0254; // SOLIDWORKS' API works in meters; CAD Hub's tools in inches.
+
+        // A new file (a gear) saved into the robot: like any new part, it goes to the team with the student's
+        // next Submit (where they can still uncheck it).
+        private void SaveNewFile(ModelDoc2 doc, string path)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            int errors = 0, warnings = 0;
+            try
+            {
+                if (!doc.Extension.SaveAs3(path, (int)swSaveAsVersion_e.swSaveAsCurrentVersion, (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, null, ref errors, ref warnings) || !File.Exists(path))
+                    throw new InvalidOperationException("Couldn't save " + Path.GetFileName(path) + " (error " + errors + ").");
+            }
+            finally { application.CloseDoc(doc.GetTitle()); }
+        }
+
+        // Inserts a configuration of a part, as many times as asked; without an assembly, opens it in that configuration.
+        private void DeliverConfigured(ModelDoc2 assemblyDoc, string path, string configuration, int copies, string name)
+        {
+            if (assemblyDoc == null)
+            {
+                int errors = 0, warnings = 0;
+                var doc = application.OpenDoc6(path, (int)swDocumentTypes_e.swDocPART, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, configuration, ref errors, ref warnings);
+                if (doc == null) throw new InvalidOperationException(name + " is in the robot at\n" + path + "\nbut SOLIDWORKS couldn't open it (error " + errors + ").");
+                doc.ShowConfiguration2(configuration);
+                ShowFlash("✓ " + name + " is open (90_COTS/Stock). Drag it into any assembly; it goes to the team with your next Submit.");
+                return;
+            }
+            for (int i = 0; i < copies; i++) AddToAssembly(assemblyDoc, path, configuration, i * 0.05);
+            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit (the new part goes with it).");
+        }
+
+        // ---------- building stock geometry ----------
+
+        private ModelDoc2 NewPart()
+        {
+            string template = application.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplatePart);
+            var doc = application.NewDocument(template, 0, 0, 0) as ModelDoc2;
+            if (doc == null) throw new InvalidOperationException("SOLIDWORKS couldn't start a new part. Check Tools → Options → Default Templates.");
+            doc.Extension.SetUserPreferenceInteger((int)swUserPreferenceIntegerValue_e.swUnitSystem, 0, (int)swUnitSystem_e.swUnitSystem_IPS);
+            doc.SketchManager.AddToDB = true;
+            doc.SketchManager.DisplayWhenAdded = false;
+            return doc;
+        }
+
+        // The standard planes by position (Front, Top, Right), so it works in every SOLIDWORKS language.
+        private static void SelectPlane(ModelDoc2 doc, int which)
+        {
+            int seen = 0;
+            for (var feature = doc.FirstFeature() as Feature; feature != null; feature = feature.GetNextFeature() as Feature)
+            {
+                if (feature.GetTypeName2() != "RefPlane") continue;
+                if (seen++ == which) { doc.ClearSelection2(true); feature.Select2(false, 0); return; }
+            }
+            throw new InvalidOperationException("The part template has no standard planes.");
+        }
+
+        private const int Front = 0, Top = 1, Right = 2;
 
         private static Feature Extrude(ModelDoc2 doc, double inches, bool cut = false)
         {
@@ -37,6 +94,12 @@ namespace JocoRobos.Cad
             return feature;
         }
 
+        private static void Hexagon(ModelDoc2 doc, double acrossFlats)
+        {
+            // Inscribed: the circle touches the flats, so its radius is half the size across flats.
+            doc.SketchManager.CreatePolygon(0, 0, 0, acrossFlats / 2 * Meters, 0, 0, 6, true);
+        }
+
         // ---------- the PropertyManager tools (framework in ToolPage and CadHubTools) ----------
 
         // The add-in that's running, for CAD Hub features' Edit Feature (SOLIDWORKS creates those objects itself).
@@ -52,13 +115,14 @@ namespace JocoRobos.Cad
             catch (InvalidOperationException busy) { report("✗ " + busy.Message); }
         }
 
-        // Opens a tool's page in the PropertyManager (the left side panel): Lighten Plate on the open part, Belt and Chain on any
-        // document. A read-only team part needs Edit first.
+        // Opens a tool's page in the PropertyManager (the left side panel): the gear in the open part (a new one when nothing is
+        // open), Lighten Plate on the open part, Belt and Chain on any document. A read-only team part needs Edit first.
         private void ShowTool(CadHubTool tool)
         {
             try
             {
                 var doc = application.ActiveDoc as ModelDoc2;
+                if (doc == null && tool.Kind == "gear") doc = NewPart();
                 if (doc == null && tool.AnyDocument)
                 {
                     // Nothing open to show a side panel in: the calculator in its own window.
@@ -78,6 +142,58 @@ namespace JocoRobos.Cad
             {
                 ErrorLog.Write(tool.Title, exception);
                 Message(exception.Message, MessageBoxIcon.Warning);
+            }
+        }
+
+        // ---------- spur gears ----------
+
+        public void MakeGear()
+        {
+            // In a part: the native page and an editable feature. In an assembly: a gear part made for the robot and inserted.
+            var active = application.ActiveDoc as ModelDoc2;
+            if (active == null || active.GetType() == (int)swDocumentTypes_e.swDocPART) { ShowTool(CadHubTool.Find("gear")); return; }
+            using (var dialog = new GearDialog())
+            {
+                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
+                Execute(() =>
+                {
+                    var login = GetLogin(false);
+                    if (login == null) return;
+                    var catalog = LoadCatalog(login);
+                    RequireCurrentAddin(login, catalog);
+                    var robot = catalog.Robot;
+                    var svn = new SvnWorkspace(login, robot);
+                    if (robot.Archived || !svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the gear has a robot to go into.");
+                    string name = "Spur Gear " + StockParts.Inches(dialog.Pitch) + "DP " + StockParts.Inches(dialog.Pressure) + "PA " + dialog.Teeth + "T " +
+                        dialog.BoreName + " " + StockParts.Inches(dialog.FaceWidth) + " FW";
+                    string path = Path.Combine(robot.Root, "90_COTS", "Stock", "Gears", name + ".SLDPRT");
+                    bool cancelled;
+                    var assembly = InsertTarget(catalog, name, out cancelled);
+                    if (cancelled) return;
+                    if (!File.Exists(path))
+                    {
+                        if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(path)))
+                            throw new InvalidOperationException("A teammate already made " + name + ". Get their changes first (Close & Update in the panel), then insert again.");
+                        var doc = NewPart();
+                        SelectPlane(doc, Front);
+                        doc.SketchManager.InsertSketch(true);
+                        var outline = SpurGear.Outline(dialog.Teeth, dialog.Pitch, dialog.Pressure);
+                        for (int i = 0; i < outline.Count; i++)
+                        {
+                            var a = outline[i]; var b = outline[(i + 1) % outline.Count];
+                            doc.SketchManager.CreateLine(a[0] * Meters, a[1] * Meters, 0, b[0] * Meters, b[1] * Meters, 0);
+                        }
+                        if (dialog.BoreHex) Hexagon(doc, dialog.Bore);
+                        else if (dialog.Bore > 0) doc.SketchManager.CreateCircleByRadius(0, 0, 0, dialog.Bore / 2 * Meters);
+                        Extrude(doc, dialog.FaceWidth);
+                        doc.SketchManager.AddToDB = false;
+                        doc.SketchManager.DisplayWhenAdded = true;
+                        ((PartDoc)doc).SetMaterialPropertyName2("", "SOLIDWORKS Materials", "6061 Alloy");
+                        doc.Extension.CustomPropertyManager[""].Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, name, (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
+                        SaveNewFile(doc, path);
+                    }
+                    DeliverConfigured(assembly, path, "Default", dialog.Copies, name);
+                });
             }
         }
 

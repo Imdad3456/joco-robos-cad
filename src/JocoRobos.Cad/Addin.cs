@@ -45,6 +45,7 @@ namespace JocoRobos.Cad
         [DispId(23)] void PartsList();
         [DispId(24)] void WhereUsed();
         [DispId(25)] void CheckComputer();
+        [DispId(27)] void MakeGear();
         [DispId(28)] void BeltChainCalculator();
         [DispId(29)] void LightenPlate();
     }
@@ -64,7 +65,7 @@ namespace JocoRobos.Cad
         private const int GroupId = 591913; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
         private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591925;
+        private const int LayoutVersion = 591926;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -182,6 +183,7 @@ namespace JocoRobos.Cad
                 Add(group, "Where Used", "Which assemblies use the open file (all the way up to the robot), and what it uses", nameof(WhereUsed), 23, menu);
                 group.AddSpacer2(-1, menu);
                 // Modeling tools: on the CAD Hub tab (below), grouped like SOLIDWORKS' own.
+                int gear = Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore (an editable CAD Hub feature in a part)", nameof(MakeGear), 26, both, 18);
                 int beltChain = Add(group, "Belt and Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
                 int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
                 group.AddSpacer2(-1, menu);
@@ -210,10 +212,10 @@ namespace JocoRobos.Cad
                     if (existing != null) continue;
                     CommandTab tab = commands.AddCommandTab(type, Title);
                     if (tab == null) throw new InvalidOperationException("Could not create CommandManager tab.");
-                    // The tab is for modeling (Lighten Plate, Belt and Chain); team work (Open Robot, Edit, Submit, Library)
+                    // The tab is for modeling (Lighten Plate · Spur Gear, Belt and Chain); team work (Open Robot, Edit, Submit, Library)
                     // lives in the CAD Hub task pane and the Tools menu.
                     int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
-                    foreach (var section in new[] { new[] { lighten, beltChain } })
+                    foreach (var section in new[] { new[] { lighten }, new[] { gear, beltChain } })
                     {
                         CommandTabBox box = tab.AddCommandTabBox();
                         int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();

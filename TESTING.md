@@ -91,8 +91,10 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 3e.1 | A | Restart SOLIDWORKS after updating | The **CAD Hub** tab has just **Lighten Plate** and **Belt and Chain** (no Sign In or other buttons on it). Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
-| 3e.2 | A | Open a part that has a "CAD Hub Spur Gear" feature from an earlier version | It still rebuilds (the tools were removed from the tab, not the features) | ☐ |
+| 3e.1 | A | Restart SOLIDWORKS after updating | The **CAD Hub** tab has **Lighten Plate**, **Spur Gear** and **Belt and Chain** (no Sign In, Bearing Hole or Hole Pattern on it). Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.2 | A | New part → **Spur Gear** → 36T, 20 DP, 1/2" hex → ✓ | "CAD Hub Spur Gear1" in the tree; right-click → Edit Feature reopens the page with the same values | ☐ |
+| 3e.3 | A | In an assembly: **Spur Gear** | The gear part is made in `90_COTS/Stock/Gears` and inserted; it's in your next Submit | ☐ |
+| 3e.4 | A | Open a part with a "CAD Hub Bearing Hole" from an earlier version | It still rebuilds (the tool was removed, not the feature) | ☐ |
 
 ## 4. Together: nobody overwrites anybody
 
