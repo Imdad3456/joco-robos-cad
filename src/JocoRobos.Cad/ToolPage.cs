@@ -86,8 +86,13 @@ namespace JocoRobos.Cad
             catch (Exception) { } // A convenience only.
         }
 
+        // The page on screen, if any: SOLIDWORKS can crash when a second PropertyManager page is opened over one that's still up.
+        private static ToolPage open;
+
         internal void Show()
         {
+            if (open != null)
+                throw new InvalidOperationException(open.tool.Title + " is already open on the left. Finish it with ✓ (or cancel with ✗) first.");
             // Something already selected that this tool takes (the plate's face, the tube's side): it starts in the box.
             object preselected = null;
             try
@@ -148,6 +153,7 @@ namespace JocoRobos.Cad
             result = (PropertyManagerPageLabel)main.AddControl2(ResultId, (short)swPropertyManagerPageControlType_e.swControlType_Label, " ",
                 (short)swPropertyManagerPageControlLeftAlign_e.swControlAlign_LeftEdge, (int)(swAddControlOptions_e.swControlOptions_Visible | swAddControlOptions_e.swControlOptions_Enabled), "");
             page.Show2(0);
+            open = this;
             if (preselected != null && Accepts(preselected))
             {
                 try
@@ -245,6 +251,7 @@ namespace JocoRobos.Cad
 
         public void OnClose(int Reason)
         {
+            if (open == this) open = null;
             okay = Reason == (int)swPropertyManagerPageCloseReasons_e.swPropertyManagerPageClose_Okay;
             try
             {
@@ -265,8 +272,14 @@ namespace JocoRobos.Cad
         public void AfterClose()
         {
             ClearPreview();
+            if (open == this) open = null;
             if (!okay) return;
             Remember();
+            if (!tool.AnyDocument && doc.IsOpenedReadOnly())
+            {
+                report("✗ " + doc.GetTitle() + " is read-only: click Edit on it first, then " + tool.Title + " again (your settings are remembered).");
+                return;
+            }
             try
             {
                 if (!tool.MakesFeature)

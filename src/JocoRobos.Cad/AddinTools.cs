@@ -111,7 +111,8 @@ namespace JocoRobos.Cad
         {
             var addin = Instance;
             Action<string> report = text => { if (addin != null) addin.ShowFlash(text); };
-            new ToolPage(app, doc, tool, addin?.Standards ?? TeamStandards.Defaults, values, feature, report).Show();
+            try { new ToolPage(app, doc, tool, addin?.Standards ?? TeamStandards.Defaults, values, feature, report).Show(); }
+            catch (InvalidOperationException busy) { report("✗ " + busy.Message); }
         }
 
         // Opens a tool's page in the PropertyManager (the left side panel). The gear starts a new part when nothing is open; the
