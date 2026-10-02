@@ -84,7 +84,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
-| 3d.2 | A | Edit an assembly → Library → **Make a stock part** → 2×1 box tube 1/16", 23.75 in, ×2 | Two plain tubes inserted at once, 23.75" long (no holes: add your pattern with Hole Pattern) | ☐ |
+| 3d.2 | A | Edit an assembly → Library tab → search `2x1 tube` → pick "⚡ 2×1 box tube, 1/16" wall" (first in the results) → Length 23.75, ×2 → Insert | Two plain tubes inserted at once, 23.75" long (no holes: add your pattern with Hole Pattern). FRCDesignLib's tubes are listed below it. Searching `falcon` shows no ⚡ built parts | ☐ |
 | 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); the part is now locked by B and shows in B's Submit. Nothing was shared until B submits | ☐ |
 | 3d.4 | A | Stock part: 1/2" hex shaft 7.25; spacer 0.25; aluminum plate 1/4" 6 × 12; FR8ZZ bearing | Each correct size; the Parts List shows them under Buy: Stock with their sizes | ☐ |
 | 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
@@ -97,7 +97,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3e.0 | A | With a part open, **Spur Gear** (or Bearing Hole) on the CAD Hub tab | The CAD Hub page opens in the PropertyManager (no error) | ☐ |
-| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Stock Part, Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
 | 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
 | 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |
 | 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit | "Resulting bore 1.1265 in". A preview cylinder at the click point. ✓ → a through hole; "CAD Hub Bearing Hole1" in the tree | ☐ |

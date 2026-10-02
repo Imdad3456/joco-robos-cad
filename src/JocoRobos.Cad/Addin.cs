@@ -68,7 +68,7 @@ namespace JocoRobos.Cad
         private const int GroupId = 591912;
         private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591922;
+        private const int LayoutVersion = 591923;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -186,7 +186,8 @@ namespace JocoRobos.Cad
                 Add(group, "Where Used", "Which assemblies use the open file (all the way up to the robot), and what it uses", nameof(WhereUsed), 23, menu);
                 group.AddSpacer2(-1, menu);
                 // Modeling tools: on the CAD Hub tab (below), grouped like SOLIDWORKS' own.
-                int stock = Add(group, "Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, both, 20);
+                // Stock parts are found in the Library tab's search (built by CAD Hub, first in the results); the menu item stays.
+                Add(group, "Stock Part", "Box tube, hex or round shaft, spacer, plate or bearing, built right away in any size (no Onshape)", nameof(MakeStockPart), 25, menu, 20);
                 int gear = Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore (an editable CAD Hub feature in a part)", nameof(MakeGear), 26, both, 18);
                 int bearingHole = Add(group, "Bearing Hole", "Click a face: a bore sized for the bearing you pick, with the team's fit (an editable CAD Hub feature)", nameof(BearingHole), 31, both, 19);
                 int beltChain = Add(group, "Belt and Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
@@ -221,7 +222,7 @@ namespace JocoRobos.Cad
                     // The tab is for modeling (Structure, Powertrain, Hardware); team work (Open Robot, Edit, Submit, Library)
                     // lives in the CAD Hub task pane and the Tools menu.
                     int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
-                    foreach (var section in new[] { new[] { stock, holes, lighten }, new[] { gear, beltChain }, new[] { bearingHole } })
+                    foreach (var section in new[] { new[] { holes, lighten }, new[] { gear, beltChain }, new[] { bearingHole } })
                     {
                         CommandTabBox box = tab.AddCommandTabBox();
                         int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();
@@ -322,7 +323,7 @@ namespace JocoRobos.Cad
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 AskForFile = AskForActiveFile, DismissRequests = DismissRequests,
                 SetCopies = count => nextCopies = Math.Max(1, Math.Min(20, count)),
-                MakeStock = MakeStockPart, MakeGear = MakeGear, BeltChain = BeltChainCalculator,
+                MakeStock = MakeStockPart, MakeGear = MakeGear, BeltChain = BeltChainCalculator, InsertStock = InsertStock,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
             });
             pane.CreateControl();

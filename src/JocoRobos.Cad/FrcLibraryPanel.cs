@@ -20,6 +20,10 @@ namespace JocoRobos.Cad
         private readonly Action<FrcItem, Dictionary<string, string>> insert;
         private readonly PaneActions actions;
         private string selectedTeam;
+        private StockType selectedStock;
+        // A stock part's sizes (CAD Hub builds it): length, and width for plates.
+        private readonly FlowLayoutPanel stockFields = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true };
+        private readonly TextBox stockLength = new TextBox { Text = "12", Width = 200 }, stockWidth = new TextBox { Text = "6", Width = 200 };
         // Everything stretches with the task pane: results take the top half, details the bottom half.
         private const int Thumb = 72;
         private readonly TextBox search = new TextBox { Dock = DockStyle.Fill };
@@ -85,6 +89,7 @@ namespace JocoRobos.Cad
             details.Controls.Add(title);
             details.Controls.Add(subtitle);
             details.Controls.Add(choices);
+            details.Controls.Add(stockFields);
             results.LargeImageList = pictures;
             Controls.Add(grid);
             Resize += (s, e) => FitWidths();
@@ -97,6 +102,20 @@ namespace JocoRobos.Cad
             {
                 actions.SetCopies?.Invoke((int)copies.Value);
                 if (selectedTeam != null) { actions.InsertTeam(selectedTeam); return; }
+                if (selectedStock != null)
+                {
+                    double? length = selectedStock.HasLength ? StockParts.ParseInches(stockLength.Text) : null;
+                    double? width = selectedStock.HasWidth ? StockParts.ParseInches(stockWidth.Text) : null;
+                    string problem = StockParts.Problem(selectedStock, length, width);
+                    if (problem != null)
+                    {
+                        MessageBox.Show(this, problem, "CAD Hub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        (selectedStock.HasWidth && width == null ? stockWidth : stockLength).Focus();
+                        return;
+                    }
+                    actions.InsertStock(selectedStock, length, width, (int)copies.Value);
+                    return;
+                }
                 if (selected == null) return;
                 // A mistyped length is caught here, next to the box, instead of after the server round trip.
                 foreach (Control holder in choices.Controls)
@@ -207,8 +226,13 @@ namespace JocoRobos.Cad
             List<string> team;
             try { team = actions.SearchTeam(query); }
             catch (Exception) { team = new List<string>(); }
+            // What CAD Hub builds itself comes first: any length, instantly, no Onshape.
+            var stock = StockParts.Match(query);
             results.BeginUpdate();
             results.Items.Clear();
+            foreach (var type in stock)
+                results.Items.Add(new ListViewItem(new[] { "⚡ " + type.Label.Replace(", plain", ""), "Built by CAD Hub · " + (type.HasWidth ? "any size" : type.HasLength ? "any length" : "standard size") + " · instant" })
+                    { Tag = type, ImageKey = "placeholder" });
             foreach (string path in team)
                 results.Items.Add(new ListViewItem(new[] { Path.GetFileNameWithoutExtension(path), "Team Library · " + Path.GetFileName(Path.GetDirectoryName(path)) })
                     { Tag = path, ImageKey = "placeholder" });
@@ -222,11 +246,11 @@ namespace JocoRobos.Cad
                 foreach (var row in results.Items.Cast<ListViewItem>().Where(r => r.Tag is FrcItem).ToList()) results.Items.Remove(row);
                 foreach (var item in found) results.Items.Add(Row(item));
                 results.EndUpdate();
-                int total = found.Count + team.Count;
-                status.Text = total == 0 ? "Nothing found." : (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
+                int total = found.Count + team.Count + stock.Count;
+                status.Text = total == 0 ? "Nothing found." : (stock.Count > 0 ? stock.Count + " built by CAD Hub, " : "") + (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
                     (found.Count >= 40 ? " (showing 40; be more specific)" : "") + (found.Any(i => i.InLibrary) ? ". ⚡ = already in the team Library" : "") + budgetNote;
                 LoadSmallPictures(found.Where(i => !pictures.Images.ContainsKey(i.Id)).ToList(), mine);
-            }, error => { if (mine == generation) status.Text = (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
+            }, error => { if (mine == generation) status.Text = (stock.Count > 0 ? stock.Count + " built by CAD Hub. " : "") + (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
         }
 
         // One after another, so 40 results don't open 40 connections; stops if the student searches again.
@@ -253,6 +277,25 @@ namespace JocoRobos.Cad
         {
             if (results.SelectedItems.Count == 0) return;
             selectedTeam = results.SelectedItems[0].Tag as string;
+            selectedStock = results.SelectedItems[0].Tag as StockType;
+            stockFields.Controls.Clear();
+            if (selectedStock != null)
+            {
+                // Built by CAD Hub: just its size.
+                selected = null;
+                title.Text = selectedStock.Label.Replace(", plain", "");
+                subtitle.Text = "Built by CAD Hub in SOLIDWORKS (no Onshape). One team part in 90_COTS/Stock with a configuration per size." +
+                    (selectedStock.Shape == StockShape.BoxTube ? " Plain: add holes with Hole Pattern." : "");
+                choices.Controls.Clear();
+                inputs.Clear();
+                hidden.Clear();
+                picture.Image = null;
+                if (selectedStock.HasWidth) { stockFields.Controls.Add(new Label { Text = "Width (in)", AutoSize = true }); stockFields.Controls.Add(stockWidth); }
+                if (selectedStock.HasLength) { stockFields.Controls.Add(new Label { Text = "Length (in), like 23.75 or 23 3/4", AutoSize = true }); stockFields.Controls.Add(stockLength); }
+                insertButton.Enabled = true;
+                FitWidths();
+                return;
+            }
             if (selectedTeam != null)
             {
                 // A team Library part: nothing to configure.

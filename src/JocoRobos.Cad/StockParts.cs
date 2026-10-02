@@ -79,6 +79,55 @@ namespace JocoRobos.Cad
                 BoreHex = hex, FlangeDiameter = flange, FlangeThickness = flangeThickness, HasLength = false, Material = "Chrome Stainless Steel" };
         }
 
+        /// <summary>
+        /// The stock parts a Library search means: every word typed appears in the part's name or its usual names
+        /// ("2x1 tube", "1/2 hex", "spacer", "polycarb", "bearing"). Empty for anything CAD Hub doesn't build.
+        /// </summary>
+        internal static List<StockType> Match(string query)
+        {
+            var words = Normalize(query).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0) return new List<StockType>();
+            return Types.Where(t =>
+            {
+                var known = Normalize(t.Label + " " + t.FileName + " " + t.Group + " " + Aliases(t)).Split(' ');
+                return words.All(w => known.Any(k => k.StartsWith(w, StringComparison.Ordinal)));
+            }).ToList();
+        }
+
+        private static string Normalize(string text)
+        {
+            text = (text ?? "").ToLowerInvariant().Replace('×', 'x').Replace("\"", " ").Replace(",", " ").Replace("(", " ").Replace(")", " ");
+            // "2 x 1" and "2x1" alike.
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"(\d)\s*x\s*(\d)", "$1x$2");
+            return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        }
+
+        private static string Aliases(StockType t)
+        {
+            switch (t.Shape)
+            {
+                case StockShape.BoxTube: return "tube tubing box rectangular square aluminum " + Inches(t.Width) + "x" + Inches(t.Height) + " " + Inches(t.Height) + "x" + Inches(t.Width) +
+                    " " + Inches(t.Wall) + " " + Fraction(t.Wall);
+                case StockShape.HexShaft: return "shaft hex shafting axle steel aluminum " + Inches(t.Size) + " " + Fraction(t.Size);
+                case StockShape.RoundShaft: return "shaft round shafting axle rod " + Inches(t.Size) + " " + Fraction(t.Size);
+                case StockShape.HexSpacer: case StockShape.RoundSpacer: return "spacer spacers standoff bushing " + Inches(t.Size) + " " + Fraction(t.Size) + " " + Fraction(Math.Round(t.Bore * 8) / 8);
+                case StockShape.Plate: return "plate sheet " + Inches(t.Thickness) + " " + Fraction(t.Thickness) + (t.Material.StartsWith("PC") ? " polycarbonate polycarb lexan" : " aluminum aluminium 6061");
+                case StockShape.Bearing: return "bearing bearings " + Fraction(Math.Round(t.Bore * 8) / 8) + " " + Inches(t.Size) + (t.BoreHex ? " hex" : " round");
+            }
+            return "";
+        }
+
+        // 0.5 → "1/2", 0.0625 → "1/16": how students type sizes.
+        private static string Fraction(double value)
+        {
+            for (int bottom = 2; bottom <= 64; bottom *= 2)
+            {
+                double top = value * bottom;
+                if (Math.Abs(top - Math.Round(top)) < 1e-6) return Math.Round(top) + "/" + bottom;
+            }
+            return Inches(value);
+        }
+
         internal static StockType Find(string id)
         {
             return Types.FirstOrDefault(t => t.Id == id);

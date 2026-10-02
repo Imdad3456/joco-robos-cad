@@ -196,6 +196,11 @@ static class Program
     static void ToolChecks()
     {
         var tube = StockParts.Find("tube-2x1-0625");
+        Func<string, string[]> ids = q => StockParts.Match(q).Select(t => t.Id).ToArray();
+        Check(ids("2x1 tube").SequenceEqual(new[] { "tube-2x1-0625", "tube-2x1-125" }) && ids("2 x 1 box tube 1/16").SequenceEqual(new[] { "tube-2x1-0625" }) &&
+            ids("1/2 hex shaft").SequenceEqual(new[] { "hex-500" }) && ids("polycarb").Length == 2 && ids("spacer").Length == 4 && ids("bearing").Length == 4 &&
+            ids("hex bearing").Length == 2 && ids("falcon motor").Length == 0 && ids("").Length == 0 && ids("2x1").Length == 2,
+            "Library search finds the stock parts CAD Hub builds (2x1 tube, 1/2 hex shaft, polycarb, spacers, bearings) and nothing else");
         Check(StockParts.FillRows(2, 0.5, 0.196).SequenceEqual(new[] { -0.5, 0, 0.5 }) && StockParts.FillRows(1, 0.5, 0.196).SequenceEqual(new[] { 0.0 }) &&
             StockParts.FillRows(1.5, 0.5, 0.196).SequenceEqual(new[] { -0.25, 0.25 }), "Fill the side: 3 rows on 2\", 2 on 1.5\", 1 on 1\" (0.5\" grid)");
         Check(StockParts.ParseInches("23.75") == 23.75 && StockParts.ParseInches("23 3/4\"") == 23.75 && StockParts.ParseInches("3/4") == 0.75 &&
