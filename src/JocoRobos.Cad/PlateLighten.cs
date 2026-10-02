@@ -106,7 +106,8 @@ namespace JocoRobos.Cad
                 // still gets junctions and no long slot is left along it.
                 var near = holes.OrderBy(hole => Distance(p, new[] { hole.X, hole.Y })).First();
                 var at = new[] { near.X, near.Y };
-                if (fresh(at)) nodes.Add(at);
+                // It counts as a point along the edge: no rib between it and its neighbors along the edge (the border is that rib).
+                if (fresh(at)) { nodes.Add(at); edgeNodes.Add(at); }
             }
             foreach (var p in extraPoints ?? new List<double[]>()) if (fresh(p)) nodes.Add(new[] { p[0], p[1] });
             for (int round = 0; round < 8 && nodes.Count < 800; round++)
@@ -136,14 +137,19 @@ namespace JocoRobos.Cad
                 // Neighbors along the plate's edge get no rib between them: the edge's border is the rib there, and a straight rib
                 // across a curved edge would flatten the pockets beside it.
                 var alongEdge = edgeNodes.OrderBy(p => AlongBorder(border, p)).ToList();
-                for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) skipped.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+                var chords = new HashSet<string>();
+                for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) chords.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+                skipped.UnionWith(chords);
                 var triangles = Triangulate(nodes);
                 foreach (var triangle in triangles)
                 {
                     double smallestAngle = Enumerable.Range(0, 3).Min(k => Math.PI - Math.Abs(Turn(triangle[(k + 2) % 3], triangle[k], triangle[(k + 1) % 3])));
                     if (smallestAngle >= MinAngle) continue;
-                    int longest = Enumerable.Range(0, 3).OrderByDescending(k => Distance(triangle[k], triangle[(k + 1) % 3])).First();
-                    skipped.Add(key(triangle[longest], triangle[(longest + 1) % 3]));
+                    // Its longest rib: next to the plate's edge the longest side is often along the edge, which has no rib; dropping the
+                    // rib at the sharp corner instead joins the thin wedge to the pocket beside it rather than leaving it solid.
+                    var sides = Enumerable.Range(0, 3).Where(k => !chords.Contains(key(triangle[k], triangle[(k + 1) % 3])))
+                        .OrderByDescending(k => Distance(triangle[k], triangle[(k + 1) % 3])).ToList();
+                    if (sides.Count > 0) skipped.Add(key(triangle[sides[0]], triangle[(sides[0] + 1) % 3]));
                 }
                 foreach (var triangle in triangles)
                     for (int k = 0; k < 3; k++)
@@ -395,12 +401,40 @@ namespace JocoRobos.Cad
             return points.Where(p => corners.Contains(p) || corners.All(c => Distance(c, p) > spacing * 0.4)).ToList();
         }
 
-        // Real corners: where the outline turns by more than 30° (points along an arc turn a little at a time and don't count).
+        // Real corners: where the outline turns by more than 30° at once, or a rounded corner (a short stretch that keeps turning
+        // the same way, 30° or more in all, within about an inch): its middle point. Long curves (a lobe around a bearing) aren't
+        // corners; they get points along them like any edge.
         private static List<double[]> Corners(List<double[]> border)
         {
+            int n = border.Count;
+            var turn = Enumerable.Range(0, n).Select(i => Turn(border[(i + n - 1) % n], border[i], border[(i + 1) % n])).ToArray();
             var corners = new List<double[]>();
-            for (int i = 0; i < border.Count; i++)
-                if (Math.Abs(Turn(border[(i + border.Count - 1) % border.Count], border[i], border[(i + 1) % border.Count])) > Math.PI / 6) corners.Add(border[i]);
+            for (int i = 0; i < n; i++) if (Math.Abs(turn[i]) > Math.PI / 6) corners.Add(border[i]);
+            const double Bend = 0.5 * Math.PI / 180, MaxRun = 1.0;
+            var inRun = new bool[n];
+            for (int start = 0; start < n; start++)
+            {
+                // Runs start where the previous point doesn't bend the same way.
+                if (Math.Abs(turn[start]) < Bend || Math.Abs(turn[start]) > Math.PI / 6 || inRun[start]) continue;
+                int previous = (start + n - 1) % n;
+                if (Math.Abs(turn[previous]) >= Bend && Math.Sign(turn[previous]) == Math.Sign(turn[start]) && Math.Abs(turn[previous]) <= Math.PI / 6 && n > 2) continue;
+                var run = new List<int>();
+                double total = 0, length = 0;
+                for (int k = start; run.Count < n; k = (k + 1) % n)
+                {
+                    if (Math.Abs(turn[k]) < Bend || Math.Abs(turn[k]) > Math.PI / 6 || Math.Sign(turn[k]) != Math.Sign(turn[start])) break;
+                    if (run.Count > 0) length += Distance(border[run[run.Count - 1]], border[k]);
+                    run.Add(k);
+                    total += turn[k];
+                }
+                foreach (int k in run) inRun[k] = true;
+                if (Math.Abs(total) < Math.PI / 6 || length > MaxRun) continue;
+                // The point halfway along the run.
+                double half = length / 2, walked = 0;
+                int middle = run[0];
+                for (int r = 1; r < run.Count && walked < half; r++) { walked += Distance(border[run[r - 1]], border[run[r]]); middle = run[r]; }
+                corners.Add(border[middle]);
+            }
             return corners;
         }
 
