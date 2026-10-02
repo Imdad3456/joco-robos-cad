@@ -92,9 +92,6 @@ namespace JocoRobos.Cad
             HeaderStyle = ColumnHeaderStyle.Nonclickable, Dock = DockStyle.Fill, MultiSelect = false,
             // Set here, never later: changing it after items are added rebuilds the list and drops its checkboxes and groups.
             ShowItemToolTips = true };
-        private readonly ListViewGroup changedGroup = new ListViewGroup("Changed");
-        private readonly ListViewGroup newGroup = new ListViewGroup("New");
-        private readonly ListViewGroup releaseGroup = new ListViewGroup("Release lock (unchanged)");
         private readonly TextBox comment = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
         private readonly Label hint = new Label { AutoSize = true, ForeColor = Color.Firebrick, Margin = new Padding(0, 9, 12, 0) };
         private readonly Button submit = new Button { Text = "Submit", Size = new Size(110, 32) };
@@ -131,7 +128,6 @@ namespace JocoRobos.Cad
             files.Columns.Add("File", 250);
             files.Columns.Add("Folder", 230);
             files.Columns.Add("", 160);
-            files.Groups.AddRange(new[] { changedGroup, newGroup, releaseGroup });
             files.ItemChecked += (s, e) =>
             {
                 var item = e.Item?.Tag as SubmitItem;
@@ -356,6 +352,16 @@ namespace JocoRobos.Cad
             {
                 files.Items.Clear();
                 rows.Clear();
+                // Groups made fresh with their counts, only for kinds that have files: renaming groups already on screen can
+                // put a heading on the wrong group ("Changed (0)" above a new file).
+                files.Groups.Clear();
+                var groupFor = new Dictionary<SubmitKind, ListViewGroup>();
+                foreach (var kind in plan.Items.Select(x => x.Kind).Distinct().OrderBy(k => k))
+                {
+                    string heading = kind == SubmitKind.Modified ? "Changed" : kind == SubmitKind.New ? "New" : "Release lock (unchanged)";
+                    groupFor[kind] = new ListViewGroup(heading + " (" + plan.Items.Count(x => x.Kind == kind) + ")");
+                    files.Groups.Add(groupFor[kind]);
+                }
                 foreach (var item in plan.Items.OrderBy(x => x.Kind).ThenBy(x => x.Workspace.IsLibrary).ThenBy(x => x.Relative, StringComparer.OrdinalIgnoreCase))
                 {
                     string extra = item.NeedsLock ? "Not locked yet; Submit locks it" : item.Kind == SubmitKind.ReleaseOnly ? "Gives your lock back" : "";
@@ -363,7 +369,7 @@ namespace JocoRobos.Cad
                     {
                         Tag = item,
                         Checked = !draft.Unchecked.Contains(item.Path),
-                        Group = item.Kind == SubmitKind.Modified ? changedGroup : item.Kind == SubmitKind.New ? newGroup : releaseGroup,
+                        Group = groupFor[item.Kind],
                         ToolTipText = item.Path,
                     };
                     if (extra.Length > 0) row.UseItemStyleForSubItems = false;
@@ -371,8 +377,6 @@ namespace JocoRobos.Cad
                     rows.Add(row);
                     if (extra.Length > 0) row.SubItems[2].ForeColor = SystemColors.GrayText;
                 }
-                foreach (var pair in new[] { Tuple.Create(changedGroup, "Changed"), Tuple.Create(newGroup, "New"), Tuple.Create(releaseGroup, "Release lock (unchanged)") })
-                    pair.Item1.Header = pair.Item2 + " (" + pair.Item1.Items.Count + ")";
             }
             finally
             {

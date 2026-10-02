@@ -20,10 +20,6 @@ namespace JocoRobos.Cad
         private readonly Action<FrcItem, Dictionary<string, string>> insert;
         private readonly PaneActions actions;
         private string selectedTeam;
-        private StockType selectedStock;
-        // A stock part's sizes (CAD Hub builds it): length, and width for plates.
-        private readonly FlowLayoutPanel stockFields = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true };
-        private readonly TextBox stockLength = new TextBox { Text = "12", Width = 200 }, stockWidth = new TextBox { Text = "6", Width = 200 };
         // Everything stretches with the task pane: results take the top half, details the bottom half.
         private const int Thumb = 72;
         private readonly TextBox search = new TextBox { Dock = DockStyle.Fill };
@@ -53,7 +49,7 @@ namespace JocoRobos.Cad
             insert = actions.InsertFrc;
             BackColor = SystemColors.Window;
             var heading = new Label { Text = "Find a part", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10f, FontStyle.Bold), Margin = new Padding(0, 4, 0, 2) };
-            var hint = new Label { Text = "Team Library parts come first, then FRCDesignLib (motors, bearings, gears, tube…). The first time anyone uses an FRCDesignLib part and size, it's prepared for the team, which takes a little longer.",
+            var hint = new Label { Text = "Team Library parts come first, then FRCDesignLib (motors, bearings, gears, tube…). The first time anyone uses an FRCDesignLib part and size, it's prepared for the team, which takes a little longer. Box tube with no hole pattern and plain shafts are built by CAD Hub right away, any length.",
                 AutoSize = true, ForeColor = SystemColors.GrayText, Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0) };
             var browse = new LinkLabel { Text = "Browse the team Library folder…", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
             browse.LinkClicked += (s, e) => actions.BrowseTeam();
@@ -89,7 +85,6 @@ namespace JocoRobos.Cad
             details.Controls.Add(title);
             details.Controls.Add(subtitle);
             details.Controls.Add(choices);
-            details.Controls.Add(stockFields);
             results.LargeImageList = pictures;
             Controls.Add(grid);
             Resize += (s, e) => FitWidths();
@@ -102,20 +97,6 @@ namespace JocoRobos.Cad
             {
                 actions.SetCopies?.Invoke((int)copies.Value);
                 if (selectedTeam != null) { actions.InsertTeam(selectedTeam); return; }
-                if (selectedStock != null)
-                {
-                    double? length = selectedStock.HasLength ? StockParts.ParseInches(stockLength.Text) : null;
-                    double? width = selectedStock.HasWidth ? StockParts.ParseInches(stockWidth.Text) : null;
-                    string problem = StockParts.Problem(selectedStock, length, width);
-                    if (problem != null)
-                    {
-                        MessageBox.Show(this, problem, "CAD Hub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        (selectedStock.HasWidth && width == null ? stockWidth : stockLength).Focus();
-                        return;
-                    }
-                    actions.InsertStock(selectedStock, length, width, (int)copies.Value);
-                    return;
-                }
                 if (selected == null) return;
                 // A mistyped length is caught here, next to the box, instead of after the server round trip.
                 foreach (Control holder in choices.Controls)
@@ -129,6 +110,10 @@ namespace JocoRobos.Cad
                     box.SelectAll();
                     return;
                 }
+                // Something CAD Hub builds itself exactly as chosen (a box tube with no hole pattern, a plain shaft): built right
+                // here, no Onshape. Anything else comes from FRCDesignLib.
+                var built = StockParts.FromLibrary(selected.Name, ChosenAsShown());
+                if (built != null) { actions.InsertStock(built.Item1, built.Item2, null, (int)copies.Value); return; }
                 insert(selected, CurrentChoices(true));
             };
             status.Text = "Search the team Library and FRCDesignLib…";
@@ -162,7 +147,7 @@ namespace JocoRobos.Cad
         private void NoteBudget(FrcBudget budget)
         {
             budgetNote = budget == null || budget.Limit <= 0 || budget.Used < budget.Limit * 0.8 ? ""
-                : "\n⚠ The team has used " + budget.Used + " of " + budget.Limit + " Onshape calls this year. Prefer ⚡ parts and stock parts.";
+                : "\n⚠ The team has used " + budget.Used + " of " + budget.Limit + " Onshape calls this year. Prefer ⚡ parts, and tube without a hole pattern (CAD Hub builds that itself).";
         }
 
         internal void FocusSearch()
@@ -226,13 +211,8 @@ namespace JocoRobos.Cad
             List<string> team;
             try { team = actions.SearchTeam(query); }
             catch (Exception) { team = new List<string>(); }
-            // What CAD Hub builds itself comes first: any length, instantly, no Onshape.
-            var stock = StockParts.Match(query);
             results.BeginUpdate();
             results.Items.Clear();
-            foreach (var type in stock)
-                results.Items.Add(new ListViewItem(new[] { "⚡ " + type.Label.Replace(", plain", ""), "Built by CAD Hub · " + (type.HasWidth ? "any size" : type.HasLength ? "any length" : "standard size") + " · instant" })
-                    { Tag = type, ImageKey = "placeholder" });
             foreach (string path in team)
                 results.Items.Add(new ListViewItem(new[] { Path.GetFileNameWithoutExtension(path), "Team Library · " + Path.GetFileName(Path.GetDirectoryName(path)) })
                     { Tag = path, ImageKey = "placeholder" });
@@ -246,11 +226,11 @@ namespace JocoRobos.Cad
                 foreach (var row in results.Items.Cast<ListViewItem>().Where(r => r.Tag is FrcItem).ToList()) results.Items.Remove(row);
                 foreach (var item in found) results.Items.Add(Row(item));
                 results.EndUpdate();
-                int total = found.Count + team.Count + stock.Count;
-                status.Text = total == 0 ? "Nothing found." : (stock.Count > 0 ? stock.Count + " built by CAD Hub, " : "") + (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
+                int total = found.Count + team.Count;
+                status.Text = total == 0 ? "Nothing found." : (team.Count > 0 ? team.Count + " in the team Library, " : "") + found.Count + " in FRCDesignLib" +
                     (found.Count >= 40 ? " (showing 40; be more specific)" : "") + (found.Any(i => i.InLibrary) ? ". ⚡ = already in the team Library" : "") + budgetNote;
                 LoadSmallPictures(found.Where(i => !pictures.Images.ContainsKey(i.Id)).ToList(), mine);
-            }, error => { if (mine == generation) status.Text = (stock.Count > 0 ? stock.Count + " built by CAD Hub. " : "") + (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
+            }, error => { if (mine == generation) status.Text = (team.Count > 0 ? team.Count + " in the team Library. " : "") + "FRCDesignLib: " + (error?.Message ?? "search failed."); });
         }
 
         // One after another, so 40 results don't open 40 connections; stops if the student searches again.
@@ -277,25 +257,6 @@ namespace JocoRobos.Cad
         {
             if (results.SelectedItems.Count == 0) return;
             selectedTeam = results.SelectedItems[0].Tag as string;
-            selectedStock = results.SelectedItems[0].Tag as StockType;
-            stockFields.Controls.Clear();
-            if (selectedStock != null)
-            {
-                // Built by CAD Hub: just its size.
-                selected = null;
-                title.Text = selectedStock.Label.Replace(", plain", "");
-                subtitle.Text = "Built by CAD Hub in SOLIDWORKS (no Onshape). One team part in 90_COTS/Stock with a configuration per size." +
-                    (selectedStock.Shape == StockShape.BoxTube ? " Plain: add holes with Hole Pattern." : "");
-                choices.Controls.Clear();
-                inputs.Clear();
-                hidden.Clear();
-                picture.Image = null;
-                if (selectedStock.HasWidth) { stockFields.Controls.Add(new Label { Text = "Width (in)", AutoSize = true }); stockFields.Controls.Add(stockWidth); }
-                if (selectedStock.HasLength) { stockFields.Controls.Add(new Label { Text = "Length (in), like 23.75 or 23 3/4", AutoSize = true }); stockFields.Controls.Add(stockLength); }
-                insertButton.Enabled = true;
-                FitWidths();
-                return;
-            }
             if (selectedTeam != null)
             {
                 // A team Library part: nothing to configure.
@@ -411,6 +372,22 @@ namespace JocoRobos.Cad
                 }
             }
             finally { updating = false; }
+        }
+
+        // Each visible setting as the student sees it: its name, the value shown, and its unit.
+        private List<Tuple<string, string, string>> ChosenAsShown()
+        {
+            var result = new List<Tuple<string, string, string>>();
+            foreach (Control holder in choices.Controls)
+            {
+                var choice = (FrcChoice)holder.Tag;
+                Control input;
+                if (hidden.Contains(choice.Id) || !inputs.TryGetValue(choice.Id, out input)) continue;
+                string shown = input is ComboBox ? (((ComboBox)input).SelectedItem as FrcOption)?.Name : input is CheckBox ? (((CheckBox)input).Checked ? "true" : "false") :
+                    input is TextBox ? input.Text : choice.Default;
+                result.Add(Tuple.Create(choice.Name, shown ?? "", choice.Unit ?? ""));
+            }
+            return result;
         }
 
         private Dictionary<string, string> CurrentChoices(bool visibleOnly)

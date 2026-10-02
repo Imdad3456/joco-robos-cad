@@ -48,7 +48,7 @@ namespace JocoRobos.Cad
             this.standards = standards ?? TeamStandards.Defaults;
             this.editing = editing;
             this.report = report;
-            values = start ?? new FeatureParams();
+            values = start ?? Remembered(tool.Kind);
             values["kind"] = tool.Kind;
             fields = tool.Fields(this.standards);
             foreach (var field in fields.Where(f => values[f.Key] == null))
@@ -56,8 +56,47 @@ namespace JocoRobos.Cad
                 else if (field.Kind != FieldKind.Selection) values.Set(field.Key, field.Default);
         }
 
+        private const string SavedKey = @"Software\JOCO ROBOS\CAD\Tools";
+        // Where the student picked the selection: never remembered, it belongs to one part.
+        private static readonly string[] Placement = { "cx", "cy", "cz", "ax", "ay", "az", "bore" };
+
+        // Each tool opens with the settings it was last used with on this computer.
+        private static FeatureParams Remembered(string kind)
+        {
+            try
+            {
+                using (var saved = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SavedKey))
+                {
+                    var values = FeatureParams.Decode(saved?.GetValue(kind) as string ?? "");
+                    foreach (var key in Placement) values.Values.Remove(key);
+                    return values;
+                }
+            }
+            catch (Exception) { return new FeatureParams(); }
+        }
+
+        private void Remember()
+        {
+            try
+            {
+                var copy = FeatureParams.Decode(values.Encode());
+                foreach (var key in Placement) copy.Values.Remove(key);
+                using (var saved = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SavedKey)) saved.SetValue(tool.Kind, copy.Encode());
+            }
+            catch (Exception) { } // A convenience only.
+        }
+
         internal void Show()
         {
+            // Something already selected that this tool takes (the plate's face, the tube's side): it starts in the box.
+            object preselected = null;
+            try
+            {
+                var manager = (SelectionMgr)doc.SelectionManager;
+                if (tool.NeedsSelection && manager.GetSelectedObjectCount2(-1) > 0 && tool.SelectionFilters.Contains(manager.GetSelectedObjectType3(1, -1)))
+                    preselected = manager.GetSelectedObject6(1, -1);
+            }
+            catch (Exception) { }
             int errors = 0;
             page = application.CreatePropertyManagerPage((editing != null ? "Edit " : "") + "CAD Hub " + tool.Title,
                 (int)(swPropertyManagerPageOptions_e.swPropertyManagerOptions_OkayButton | swPropertyManagerPageOptions_e.swPropertyManagerOptions_CancelButton),
@@ -88,7 +127,7 @@ namespace JocoRobos.Cad
                         box.SingleEntityOnly = true;
                         box.Mark = SelectionMark;
                         box.Height = 30;
-                        box.SetSelectionFilters(new[] { (int)swSelectType_e.swSelFACES, (int)swSelectType_e.swSelEDGES });
+                        box.SetSelectionFilters(tool.SelectionFilters);
                         control = box;
                         break;
                     default:
@@ -109,6 +148,20 @@ namespace JocoRobos.Cad
             result = (PropertyManagerPageLabel)main.AddControl2(ResultId, (short)swPropertyManagerPageControlType_e.swControlType_Label, " ",
                 (short)swPropertyManagerPageControlLeftAlign_e.swControlAlign_LeftEdge, (int)(swAddControlOptions_e.swControlOptions_Visible | swAddControlOptions_e.swControlOptions_Enabled), "");
             page.Show2(0);
+            if (preselected != null && Accepts(preselected))
+            {
+                try
+                {
+                    var data = (SelectData)((SelectionMgr)doc.SelectionManager).CreateSelectData();
+                    data.Mark = SelectionMark;
+                    doc.ClearSelection2(true);
+                    var entity = preselected as Entity;
+                    if (entity != null) entity.Select4(true, data);
+                    else ((preselected as DisplayDimension)?.GetAnnotation() as Annotation)?.Select3(true, data);
+                }
+                catch (Exception) { }
+                if (chosen == null) chosen = preselected; // In case SOLIDWORKS doesn't report the selection to the box.
+            }
             Refresh();
         }
 
@@ -119,7 +172,7 @@ namespace JocoRobos.Cad
             {
                 if (tool.NeedsSelection && chosen != null) tool.Capture(chosen, chosenPoint, values, standards);
                 string problem = tool.Problem(values);
-                if (result != null) result.Caption = problem ?? tool.Result(values, standards);
+                if (result != null) result.Caption = problem ?? tool.Result(values, standards, chosen);
                 ClearPreview();
                 if (problem != null) return;
                 preview = tool.Build(application, values, true);
@@ -157,16 +210,7 @@ namespace JocoRobos.Cad
         {
             try
             {
-                if (SelType == (int)swSelectType_e.swSelFACES)
-                {
-                    var surface = (Selection as Face2)?.GetSurface() as Surface;
-                    if (surface == null || !surface.IsPlane()) return false; // Only flat faces.
-                }
-                else if (SelType == (int)swSelectType_e.swSelEDGES)
-                {
-                    var curve = (Selection as Edge)?.GetCurve() as Curve;
-                    if (curve == null || !curve.IsCircle()) return false; // Only round edges.
-                }
+                if (!tool.SelectionFilters.Contains(SelType) || !Accepts(Selection)) return false;
                 chosen = Selection;
                 var manager = (SelectionMgr)doc.SelectionManager;
                 chosenPoint = null;
@@ -174,6 +218,16 @@ namespace JocoRobos.Cad
                 return true;
             }
             catch (Exception exception) { ErrorLog.Write(tool.Title + " selection", exception); return false; }
+        }
+
+        // Only flat faces, round edges, and dimensions.
+        private static bool Accepts(object selection)
+        {
+            var face = selection as Face2;
+            if (face != null) { var surface = face.GetSurface() as Surface; return surface != null && surface.IsPlane(); }
+            var edge = selection as Edge;
+            if (edge != null) { var curve = edge.GetCurve() as Curve; return curve != null && curve.IsCircle(); }
+            return selection is DisplayDimension;
         }
 
         public void OnSelectionboxListChanged(int Id, int Count)
@@ -195,7 +249,8 @@ namespace JocoRobos.Cad
             try
             {
                 // Selections are gone after closing: freeze them now.
-                if (okay && tool.NeedsSelection)
+                if (okay && tool.NeedsSelection && tool.SelectionOptional) { }
+                else if (okay && tool.NeedsSelection)
                 {
                     string problem = chosen == null && values["cx"] == null ? "Select where it goes first." : chosen != null ? tool.Capture(chosen, chosenPoint, values, standards) : null;
                     if (problem != null) { okay = false; report("✗ " + tool.Title + ": " + problem); }
@@ -211,9 +266,15 @@ namespace JocoRobos.Cad
         {
             ClearPreview();
             if (!okay) return;
+            Remember();
             try
             {
-                if (editing != null) { Update(); report("✓ Updated " + editing.Name + "."); }
+                if (!tool.MakesFeature)
+                {
+                    string done = tool.Apply(application, doc, values, chosen, standards);
+                    if (!String.IsNullOrEmpty(done)) report(done);
+                }
+                else if (editing != null) { Update(); report("✓ Updated " + editing.Name + "."); }
                 else report("✓ Added " + Insert().Name + ". Right-click it → Edit Feature to change it.");
             }
             catch (Exception exception)
@@ -308,7 +369,7 @@ namespace JocoRobos.Cad
                 var body = tool.Build((SldWorks)app, values, false);
                 if (body == null) return "Nothing to build: edit the feature and check its settings.";
                 if (!tool.Cuts) return body;
-                var target = data.EditBody;
+                var target = data.EditBody ?? ((data.EditBodies as object[]) ?? new object[0]).OfType<Body2>().FirstOrDefault();
                 if (target == null) return "The body this feature cuts is missing.";
                 int error = 0;
                 var cut = target.Operations2((int)swBodyOperationType_e.SWBODYCUT, body, out error) as object[];

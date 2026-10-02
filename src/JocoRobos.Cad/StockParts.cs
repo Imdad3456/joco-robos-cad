@@ -80,53 +80,101 @@ namespace JocoRobos.Cad
         }
 
         /// <summary>
-        /// The stock parts a Library search means: every word typed appears in the part's name or its usual names
-        /// ("2x1 tube", "1/2 hex", "spacer", "polycarb", "bearing"). Empty for anything CAD Hub doesn't build.
+        /// An FRCDesignLib part CAD Hub can build itself, exactly as chosen: a box tube with no hole pattern, or a plain hex or
+        /// round shaft, with its length. Null for anything else (vendor hole patterns, grooves, other options), which then comes
+        /// from FRCDesignLib as usual. `chosen` is each setting's name, its value as shown, and its unit.
         /// </summary>
-        internal static List<StockType> Match(string query)
+        internal static Tuple<StockType, double> FromLibrary(string itemName, IList<Tuple<string, string, string>> chosen)
         {
-            var words = Normalize(query).Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length == 0) return new List<StockType>();
-            return Types.Where(t =>
+            string name = (itemName ?? "").ToLowerInvariant();
+            double? length = null;
+            double[] tube = null;
+            double? size = null;
+            bool hex = name.Contains("hex"), round = name.Contains("round");
+            foreach (var choice in chosen)
             {
-                var known = Normalize(t.Label + " " + t.FileName + " " + t.Group + " " + Aliases(t)).Split(' ');
-                return words.All(w => known.Any(k => k.StartsWith(w, StringComparison.Ordinal)));
-            }).ToList();
-        }
-
-        private static string Normalize(string text)
-        {
-            text = (text ?? "").ToLowerInvariant().Replace('×', 'x').Replace("\"", " ").Replace(",", " ").Replace("(", " ").Replace(")", " ");
-            // "2 x 1" and "2x1" alike.
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"(\d)\s*x\s*(\d)", "$1x$2");
-            return System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
-        }
-
-        private static string Aliases(StockType t)
-        {
-            switch (t.Shape)
-            {
-                case StockShape.BoxTube: return "tube tubing box rectangular square aluminum " + Inches(t.Width) + "x" + Inches(t.Height) + " " + Inches(t.Height) + "x" + Inches(t.Width) +
-                    " " + Inches(t.Wall) + " " + Fraction(t.Wall);
-                case StockShape.HexShaft: return "shaft hex shafting axle steel aluminum " + Inches(t.Size) + " " + Fraction(t.Size);
-                case StockShape.RoundShaft: return "shaft round shafting axle rod " + Inches(t.Size) + " " + Fraction(t.Size);
-                case StockShape.HexSpacer: case StockShape.RoundSpacer: return "spacer spacers standoff bushing " + Inches(t.Size) + " " + Fraction(t.Size) + " " + Fraction(Math.Round(t.Bore * 8) / 8);
-                case StockShape.Plate: return "plate sheet " + Inches(t.Thickness) + " " + Fraction(t.Thickness) + (t.Material.StartsWith("PC") ? " polycarbonate polycarb lexan" : " aluminum aluminium 6061");
-                case StockShape.Bearing: return "bearing bearings " + Fraction(Math.Round(t.Bore * 8) / 8) + " " + Inches(t.Size) + (t.BoreHex ? " hex" : " round");
+                string label = (choice.Item1 ?? "").ToLowerInvariant(), value = (choice.Item2 ?? "").Trim(), lower = value.ToLowerInvariant();
+                if (label.Contains("length"))
+                {
+                    var number = ParseInches(value);
+                    if (number == null) return null;
+                    length = (choice.Item3 ?? "").Trim().ToLowerInvariant() == "mm" ? number / 25.4 : number;
+                    continue;
+                }
+                var dims = TubeSize(value);
+                if (dims != null) { tube = dims; continue; }
+                if (label.Contains("pattern") || label.Contains("hole"))
+                {
+                    // A hole offset or spacing only matters when there's a pattern; the pattern itself must be none.
+                    if (label.Contains("pattern") && !None(lower)) return null;
+                    continue;
+                }
+                if (label.Contains("size") || label.Contains("diameter") || label.Contains("type"))
+                {
+                    var across = ShaftSize(value);
+                    if (across != null) { size = across; if (lower.Contains("hex")) hex = true; if (lower.Contains("round")) round = true; continue; }
+                    if (lower.Contains("hex")) { hex = true; continue; }
+                    if (lower.Contains("round")) { round = true; continue; }
+                }
+                if (label.Contains("material") || label.Contains("color") || label.Contains("colour")) continue;
+                if (!None(lower)) return null; // Any other option turned on: the vendor's part has something we don't build.
             }
-            return "";
+            if (length == null) return null;
+            if (name.Contains("tube") && tube != null && !name.Contains("round tube"))
+                return Tuple.Create(ForTube(tube[0], tube[1], tube[2]), length.Value);
+            if (name.Contains("shaft") && (hex != round))
+            {
+                size = size ?? ShaftSize(itemName);
+                if (size != null) return Tuple.Create(ForShaft(hex, size.Value), length.Value);
+            }
+            return null;
         }
 
-        // 0.5 → "1/2", 0.0625 → "1/16": how students type sizes.
-        private static string Fraction(double value)
+        private static bool None(string value)
         {
-            for (int bottom = 2; bottom <= 64; bottom *= 2)
-            {
-                double top = value * bottom;
-                if (Math.Abs(top - Math.Round(top)) < 1e-6) return Math.Round(top) + "/" + bottom;
-            }
-            return Inches(value);
+            return value.Length == 0 || value == "false" || value == "0" || value.StartsWith("none") || value.StartsWith("no ") || value == "no" ||
+                value.Contains("plain") || value.Contains("blank") || value.Contains("solid") || value.Contains("without");
         }
+
+        // "2\" x 1\" x 0.0625\"" → 2, 1, 0.0625 (wide side first).
+        internal static double[] TubeSize(string text)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(text ?? "", @"(\d*\.?\d+)\s*(?:in|"")?\s*[x×]\s*(\d*\.?\d+)\s*(?:in|"")?\s*[x×]\s*(\d*\.?\d+)");
+            if (!match.Success) return null;
+            var n = Enumerable.Range(1, 3).Select(k => double.Parse(match.Groups[k].Value, CultureInfo.InvariantCulture)).ToArray();
+            if (n[2] <= 0 || n[2] * 2 >= Math.Min(n[0], n[1])) return null;
+            return new[] { Math.Max(n[0], n[1]), Math.Min(n[0], n[1]), n[2] };
+        }
+
+        // "1/2\" Hex", "3/8 in", "0.5\"" → inches (shaft sizes only: 0.125 to 2).
+        internal static double? ShaftSize(string text)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(text ?? "", @"(\d+\s*/\s*\d+|\d*\.\d+|\d+)\s*(""|in\b|-?inch)");
+            if (!match.Success) return null;
+            var value = ParseInches(match.Groups[1].Value.Replace(" ", ""));
+            return value != null && value >= 0.125 && value <= 2 ? value : null;
+        }
+
+        /// <summary>The team's master for a box tube size: one of the list, or a new kind named the same way.</summary>
+        internal static StockType ForTube(double width, double height, double wall)
+        {
+            var known = Types.FirstOrDefault(t => t.Shape == StockShape.BoxTube && Same(t.Width, width) && Same(t.Height, height) && Same(t.Wall, wall));
+            if (known != null) return known;
+            string size = Inches(width) + "x" + Inches(height);
+            return Tube("tube-" + size + "-" + Inches(wall), size + " box tube, " + Inches(wall) + "\" wall", size + " Box Tube " + Inches(wall) + " wall", width, height, wall);
+        }
+
+        internal static StockType ForShaft(bool hex, double size)
+        {
+            var shape = hex ? StockShape.HexShaft : StockShape.RoundShaft;
+            var known = Types.FirstOrDefault(t => t.Shape == shape && Same(t.Size, size));
+            if (known != null) return known;
+            string kind = hex ? "Hex" : "Round";
+            return new StockType { Id = kind.ToLowerInvariant() + "-" + Inches(size), Label = Inches(size) + "\" " + kind.ToLowerInvariant() + " shaft", FileName = kind + " Shaft " + Inches(size),
+                Group = "Shafts", Shape = shape, Size = size, MaxLength = 72 };
+        }
+
+        private static bool Same(double a, double b) { return Math.Abs(a - b) < 1e-4; }
 
         internal static StockType Find(string id)
         {

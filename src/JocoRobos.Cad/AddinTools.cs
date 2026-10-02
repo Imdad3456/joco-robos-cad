@@ -316,16 +316,27 @@ namespace JocoRobos.Cad
             new ToolPage(app, doc, tool, addin?.Standards ?? TeamStandards.Defaults, values, feature, report).Show();
         }
 
-        // Opens a tool's page on the active part (a new part when nothing is open). A read-only team part needs Edit first.
+        // Opens a tool's page in the PropertyManager (the left side panel). The gear starts a new part when nothing is open; the
+        // others work on the open part (Belt and Chain on any document). A read-only team part needs Edit first.
         private void ShowTool(CadHubTool tool)
         {
             try
             {
                 var doc = application.ActiveDoc as ModelDoc2;
-                if (doc == null) doc = NewPart();
-                if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
-                    throw new InvalidOperationException(tool.Title + " works in a part. Open the part (or start a new one), then try again.");
-                if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
+                if (doc == null && tool.Kind == "gear") doc = NewPart();
+                if (doc == null && tool.AnyDocument)
+                {
+                    // Nothing open to show a side panel in: the calculator in its own window.
+                    using (var dialog = new BeltChainDialog(SetSelectedDimension)) dialog.ShowDialog(new SolidWorksWindow());
+                    return;
+                }
+                if (doc == null) throw new InvalidOperationException("Open the part first, then " + tool.Title + ".");
+                if (!tool.AnyDocument)
+                {
+                    if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
+                        throw new InvalidOperationException(tool.Title + " works in a part. Open the part (right-click it → Open Part), then try again.");
+                    if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
+                }
                 new ToolPage(application, doc, tool, Standards, null, null, text => ShowFlash(text)).Show();
             }
             catch (Exception exception)
@@ -336,6 +347,44 @@ namespace JocoRobos.Cad
         }
 
         public void BearingHole() { ShowTool(CadHubTool.Find("bearing-hole")); }
+
+        // A bearing bore: a circle on the face (with its diameter dimension, so it can be changed later) and a cut through.
+        internal static string CutBearingHole(SldWorks app, ModelDoc2 doc, object selection, double[] center, double[] axis, double bore, string bearing)
+        {
+            var face = selection as Face2;
+            if (face == null && selection is Edge)
+                // A round edge (resizing a hole): the flat face it lies on.
+                face = (((Edge)selection).GetTwoAdjacentFaces2() as object[] ?? new object[0]).OfType<Face2>()
+                    .FirstOrDefault(f => (f.GetSurface() as Surface)?.IsPlane() == true);
+            if (face == null) throw new InvalidOperationException("Click the flat face where the bearing goes.");
+            doc.ClearSelection2(true);
+            ((Entity)face).Select4(false, null);
+            doc.SketchManager.InsertSketch(true);
+            var sketch = doc.SketchManager.ActiveSketch;
+            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
+            var math = (MathUtility)app.GetMathUtility();
+            var at = (double[])((MathPoint)((MathPoint)math.CreatePoint(center)).MultiplyTransform(sketch.ModelToSketchTransform)).ArrayData;
+            doc.SketchManager.AddToDB = true;
+            SketchSegment circle;
+            try { circle = doc.SketchManager.CreateCircleByRadius(at[0], at[1], 0, bore / 2 * Meters); }
+            finally { doc.SketchManager.AddToDB = false; }
+            if (circle == null) throw new InvalidOperationException("SOLIDWORKS couldn't draw the bore.");
+            doc.ClearSelection2(true);
+            circle.Select4(false, null);
+            doc.AddDimension2(at[0] + bore * Meters, at[1] + bore * Meters, 0);
+            doc.ClearSelection2(true);
+            var feature = CutThroughBoth(doc);
+            string name = "Bearing Hole (" + bearing + ")";
+            for (int n = 1; n < 50 && !TryRename(feature, n == 1 ? name : name + " " + n); n++) { }
+            return "✓ " + feature.Name + ": ⌀" + bore.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) +
+                " in, through. To change the size later, edit its sketch's diameter.";
+        }
+
+        private static bool TryRename(Feature feature, string name)
+        {
+            try { feature.Name = name; return feature.Name == name; }
+            catch (Exception) { return false; }
+        }
 
         // ---------- spur gears ----------
 
@@ -391,11 +440,7 @@ namespace JocoRobos.Cad
 
         // ---------- belt and chain calculator ----------
 
-        public void BeltChainCalculator()
-        {
-            using (var dialog = new BeltChainDialog(SetSelectedDimension))
-                dialog.ShowDialog(new SolidWorksWindow());
-        }
+        public void BeltChainCalculator() { ShowTool(CadHubTool.Find("belt-chain")); }
 
         // "Use for the selected dimension": the calculator's center distance onto the dimension selected in SOLIDWORKS.
         private string SetSelectedDimension(double inches)
@@ -410,73 +455,85 @@ namespace JocoRobos.Cad
 
         // ---------- lighten plate ----------
 
-        public void LightenPlate()
+        public void LightenPlate() { ShowTool(CadHubTool.Find("lighten")); }
+
+        // The pockets for a face (for the page's result line, and the cut).
+        internal static LightenPlan PlanPockets(Face2 face, LightenSettings settings)
         {
-            Execute(() =>
+            double[] frame;
+            List<double[]> outline;
+            List<Circle2> holes;
+            List<List<double[]>> cutouts;
+            ReadPlate(face, out frame, out outline, out holes, out cutouts);
+            return PlateLighten.Plan(outline, holes, null, settings, cutouts);
+        }
+
+        private static void ReadPlate(Face2 face, out double[] frame, out List<double[]> outline, out List<Circle2> holes, out List<List<double[]>> cutouts)
+        {
+            var surface = face?.GetSurface() as Surface;
+            if (surface == null || !surface.IsPlane()) throw new InvalidOperationException("Click the plate's flat face.");
+            frame = PlaneFrame(surface, face);
+            outline = new List<double[]>();
+            holes = new List<Circle2>();
+            cutouts = new List<List<double[]>>();
+            ReadFace(face, frame, outline, holes, cutouts);
+            if (outline.Count < 3) throw new InvalidOperationException("Couldn't read the outline of that face.");
+        }
+
+        internal static string CutPockets(SldWorks app, ModelDoc2 doc, Face2 face, LightenSettings settings, double depth)
+        {
+            double[] frame;
+            List<double[]> outline;
+            List<Circle2> holes;
+            List<List<double[]>> cutouts;
+            ReadPlate(face, out frame, out outline, out holes, out cutouts);
+            var plan = PlateLighten.Plan(outline, holes, null, settings, cutouts);
+            if (plan.Pockets.Count == 0)
+                throw new InvalidOperationException("No pockets fit with these settings. Try narrower ribs, a smaller border or ring, or a smaller smallest pocket.");
+            double before = doc.Extension.CreateMassProperty().Mass;
+            doc.ClearSelection2(true);
+            ((Entity)face).Select4(false, null);
+            doc.SketchManager.InsertSketch(true);
+            var sketch = doc.SketchManager.ActiveSketch;
+            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
+            var toSketch = sketch.ModelToSketchTransform;
+            var math = app.GetMathUtility() as MathUtility;
+            Func<double, double, double[]> map = (x, y) =>
             {
-                var doc = application.ActiveDoc as ModelDoc2;
-                var face = (doc?.SelectionManager as SelectionMgr)?.GetSelectedObject6(1, -1) as Face2;
-                var surface = face?.GetSurface() as Surface;
-                if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocPART || surface == null || !surface.IsPlane())
-                    throw new InvalidOperationException("Open the plate (as a part), click its flat face once, then Lighten Plate.");
-                if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
-                var frame = PlaneFrame(surface, face);
-                var outline = new List<double[]>();
-                var holes = new List<Circle2>();
-                var cutouts = new List<List<double[]>>();
-                ReadFace(face, frame, outline, holes, cutouts);
-                if (outline.Count < 3) throw new InvalidOperationException("Couldn't read the outline of that face.");
-                using (var dialog = new LightenDialog())
-                {
-                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                    var plan = PlateLighten.Plan(outline, holes, null, dialog.Settings, cutouts);
-                    if (plan.Pockets.Count == 0)
-                        throw new InvalidOperationException("No pockets fit with these settings. Try narrower ribs, a smaller border or ring, or a smaller minimum pocket.");
-                    double before = doc.Extension.CreateMassProperty().Mass;
-                    ((Entity)face).Select4(false, null);
-                    doc.SketchManager.InsertSketch(true);
-                    var sketch = doc.SketchManager.ActiveSketch;
-                    if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Click the face once more, then try again.");
-                    var toSketch = sketch.ModelToSketchTransform;
-                    var math = application.GetMathUtility() as MathUtility;
-                    Func<double, double, double[]> map = (x, y) =>
+                var model = new[] { frame[0] + x * frame[3] + y * frame[6], frame[1] + x * frame[4] + y * frame[7], frame[2] + x * frame[5] + y * frame[8] };
+                var point = ((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch) as MathPoint;
+                return (double[])point.ArrayData;
+            };
+            // The sketch's axes may be mirrored relative to the plane frame: then counterclockwise arcs become clockwise.
+            var o = map(0, 0); var ux = map(Meters, 0); var vy = map(0, Meters);
+            short direction = (short)(((ux[0] - o[0]) * (vy[1] - o[1]) - (ux[1] - o[1]) * (vy[0] - o[0])) >= 0 ? 1 : -1);
+            doc.SketchManager.AddToDB = true;
+            doc.SketchManager.DisplayWhenAdded = false;
+            try
+            {
+                foreach (var pocket in plan.Pockets)
+                    foreach (var segment in pocket.Segments)
                     {
-                        var model = new[] { frame[0] + x * frame[3] + y * frame[6], frame[1] + x * frame[4] + y * frame[7], frame[2] + x * frame[5] + y * frame[8] };
-                        var point = ((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch) as MathPoint;
-                        return (double[])point.ArrayData;
-                    };
-                    // The sketch's axes may be mirrored relative to the plane frame: then counterclockwise arcs become clockwise.
-                    var o = map(0, 0); var ux = map(Meters, 0); var vy = map(0, Meters);
-                    short direction = (short)(((ux[0] - o[0]) * (vy[1] - o[1]) - (ux[1] - o[1]) * (vy[0] - o[0])) >= 0 ? 1 : -1);
-                    doc.SketchManager.AddToDB = true;
-                    doc.SketchManager.DisplayWhenAdded = false;
-                    try
-                    {
-                        foreach (var pocket in plan.Pockets)
-                            foreach (var segment in pocket.Segments)
-                            {
-                                var a = map(segment.X1 * Meters, segment.Y1 * Meters);
-                                var b = map(segment.X2 * Meters, segment.Y2 * Meters);
-                                if (!segment.Arc) doc.SketchManager.CreateLine(a[0], a[1], 0, b[0], b[1], 0);
-                                else
-                                {
-                                    var c = map(segment.Cx * Meters, segment.Cy * Meters);
-                                    doc.SketchManager.CreateArc(c[0], c[1], 0, a[0], a[1], 0, b[0], b[1], 0, (short)(segment.Clockwise ? -direction : direction));
-                                }
-                            }
+                        var a = map(segment.X1 * Meters, segment.Y1 * Meters);
+                        var b = map(segment.X2 * Meters, segment.Y2 * Meters);
+                        if (!segment.Arc) doc.SketchManager.CreateLine(a[0], a[1], 0, b[0], b[1], 0);
+                        else
+                        {
+                            var c = map(segment.Cx * Meters, segment.Cy * Meters);
+                            doc.SketchManager.CreateArc(c[0], c[1], 0, a[0], a[1], 0, b[0], b[1], 0, (short)(segment.Clockwise ? -direction : direction));
+                        }
                     }
-                    finally
-                    {
-                        doc.SketchManager.AddToDB = false;
-                        doc.SketchManager.DisplayWhenAdded = true;
-                    }
-                    if (dialog.Depth <= 0) CutThroughBoth(doc); else Extrude(doc, dialog.Depth, true);
-                    double after = doc.Extension.CreateMassProperty().Mass;
-                    double saved = (before - after) * 2.20462;
-                    ShowFlash("✓ Lightened " + doc.GetTitle() + ": " + plan.Count + " pockets, −" + saved.ToString("0.00") + " lb (" +
-                        (before > 0 ? (100 * (before - after) / before).ToString("0") : "?") + "%). It's an ordinary cut: edit or delete it like any feature.");
-                }
-            });
+            }
+            finally
+            {
+                doc.SketchManager.AddToDB = false;
+                doc.SketchManager.DisplayWhenAdded = true;
+            }
+            if (depth <= 0) CutThroughBoth(doc); else Extrude(doc, depth, true);
+            double after = doc.Extension.CreateMassProperty().Mass;
+            double saved = (before - after) * 2.20462;
+            return "✓ Lightened " + doc.GetTitle() + ": " + plan.Count + " pockets, −" + saved.ToString("0.00") + " lb (" +
+                (before > 0 ? (100 * (before - after) / before).ToString("0") : "?") + "%). It's an ordinary cut: edit or delete it like any feature.";
         }
 
         // The face's plane as origin (0..2), u axis (3..5), v axis (6..8), in meters: u along its longest straight edge.
@@ -574,62 +631,84 @@ namespace JocoRobos.Cad
 
         // ---------- FRC hole pattern on a tube face ----------
 
-        // Holes every 0.5" along the selected flat face of a tube (for example a Structural Member), through both walls.
-        public void AddHolePattern()
+        public void AddHolePattern() { ShowTool(CadHubTool.Find("holes")); }
+
+        // Where the holes go on a tube's side: positions along it, row offsets across it, the face's frame and the cut depth.
+        private static string HoleLayout(Face2 face, FeatureParams p, out double[] frame, out List<double> along, out double[] rows, out double minX, out double middle, out double depth)
         {
-            Execute(() =>
+            frame = null; along = null; rows = null; minX = middle = depth = 0;
+            var surface = face?.GetSurface() as Surface;
+            if (surface == null || !surface.IsPlane()) return "Click a long flat side of the tube.";
+            frame = PlaneFrame(surface, face);
+            var outline = new List<double[]>();
+            ReadFace(face, frame, outline, new List<Circle2>());
+            if (outline.Count < 3) return "Couldn't read that face.";
+            minX = outline.Min(q => q[0]);
+            double maxX = outline.Max(q => q[0]), minY = outline.Min(q => q[1]), maxY = outline.Max(q => q[1]);
+            double length = maxX - minX, width = maxY - minY;
+            middle = (minY + maxY) / 2;
+            if (width > length) return "That's the end of the tube: click a long side.";
+            double diameter = p.Number("diameter", 0.196), rowSpacing = p.Number("rowSpacing", 0.5);
+            int count = (int)p.Number("rows", 0);
+            rows = count == 0 ? StockParts.FillRows(width, rowSpacing, diameter) : StockParts.RowOffsets(count, rowSpacing);
+            if (rows.Max() + diameter / 2 > width / 2) return "Those rows don't fit across a " + StockParts.Inches(width) + "\" side.";
+            along = StockParts.HolePositions(length, p.Number("start", 0.25), p.Number("spacing", 0.5), diameter);
+            // How deep: the body's size across the face, so the holes go through both walls but nothing behind the tube.
+            var box = (double[])((Body2)face.GetBody()).GetBodyBox();
+            double[] normal = Normalize(Cross(new[] { frame[3], frame[4], frame[5] }, new[] { frame[6], frame[7], frame[8] }));
+            depth = (Math.Abs(normal[0]) * (box[3] - box[0]) + Math.Abs(normal[1]) * (box[4] - box[1]) + Math.Abs(normal[2]) * (box[5] - box[2])) / Meters;
+            return null;
+        }
+
+        internal static string PlanHoles(Face2 face, FeatureParams p, out int count, out int rowCount)
+        {
+            double[] frame, rows;
+            List<double> along;
+            double minX, middle, depth;
+            string problem = HoleLayout(face, p, out frame, out along, out rows, out minX, out middle, out depth);
+            count = problem == null ? along.Count * rows.Length : 0;
+            rowCount = problem == null ? rows.Length : 0;
+            return problem;
+        }
+
+        internal static string CutHolePattern(SldWorks app, ModelDoc2 doc, Face2 face, FeatureParams p)
+        {
+            double[] frame, rows;
+            List<double> along;
+            double minX, middle, depth;
+            string problem = HoleLayout(face, p, out frame, out along, out rows, out minX, out middle, out depth);
+            if (problem != null) throw new InvalidOperationException(problem);
+            double diameter = p.Number("diameter", 0.196);
+            doc.ClearSelection2(true);
+            ((Entity)face).Select4(false, null);
+            doc.SketchManager.InsertSketch(true);
+            var sketch = doc.SketchManager.ActiveSketch;
+            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
+            var toSketch = sketch.ModelToSketchTransform;
+            var math = app.GetMathUtility() as MathUtility;
+            doc.SketchManager.AddToDB = true;
+            doc.SketchManager.DisplayWhenAdded = false;
+            int count = 0;
+            try
             {
-                var doc = application.ActiveDoc as ModelDoc2;
-                var face = (doc?.SelectionManager as SelectionMgr)?.GetSelectedObject6(1, -1) as Face2;
-                var surface = face?.GetSurface() as Surface;
-                if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocPART || surface == null || !surface.IsPlane())
-                    throw new InvalidOperationException("Click the flat side of a tube once (in a part), then Add FRC Hole Pattern.");
-                if (doc.IsOpenedReadOnly()) throw new InvalidOperationException("Click Edit on " + doc.GetTitle() + " first, so it can be changed.");
-                HolePatternDialog pattern;
-                using (pattern = new HolePatternDialog())
-                    if (pattern.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                var frame = PlaneFrame(surface, face);
-                var outline = new List<double[]>();
-                ReadFace(face, frame, outline, new List<Circle2>());
-                if (outline.Count < 3) throw new InvalidOperationException("Couldn't read that face.");
-                double minX = outline.Min(p => p[0]), maxX = outline.Max(p => p[0]), minY = outline.Min(p => p[1]), maxY = outline.Max(p => p[1]);
-                double length = maxX - minX, width = maxY - minY, middle = (minY + maxY) / 2;
-                if (width > length) throw new InvalidOperationException("Select a long side of the tube.");
-                var rows = pattern.Rows == 0 ? StockParts.FillRows(width, pattern.RowSpacing, pattern.Diameter) : StockParts.RowOffsets(pattern.Rows, pattern.RowSpacing);
-                if (rows.Max() + pattern.Diameter / 2 > width / 2) throw new InvalidOperationException("Those rows don't fit across a " + StockParts.Inches(width) + "\" face.");
-                // How deep: the body's size across the face, so the holes go through both walls but nothing behind the tube.
-                var box = (double[])((Body2)face.GetBody()).GetBodyBox();
-                double[] normal = Normalize(Cross(new[] { frame[3], frame[4], frame[5] }, new[] { frame[6], frame[7], frame[8] }));
-                double depth = (Math.Abs(normal[0]) * (box[3] - box[0]) + Math.Abs(normal[1]) * (box[4] - box[1]) + Math.Abs(normal[2]) * (box[5] - box[2])) / Meters;
-                ((Entity)face).Select4(false, null);
-                doc.SketchManager.InsertSketch(true);
-                var sketch = doc.SketchManager.ActiveSketch;
-                if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Click the face once more, then try again.");
-                var toSketch = sketch.ModelToSketchTransform;
-                var math = application.GetMathUtility() as MathUtility;
-                doc.SketchManager.AddToDB = true;
-                doc.SketchManager.DisplayWhenAdded = false;
-                int count = 0;
-                try
-                {
-                    foreach (double x in StockParts.HolePositions(length, pattern.Start, pattern.Spacing, pattern.Diameter))
-                        foreach (double row in rows)
-                        {
-                            double px = minX + x, py = middle + row;
-                            var model = new[] { frame[0] + (px * frame[3] + py * frame[6]) * Meters, frame[1] + (px * frame[4] + py * frame[7]) * Meters, frame[2] + (px * frame[5] + py * frame[8]) * Meters };
-                            var point = (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch)).ArrayData;
-                            doc.SketchManager.CreateCircleByRadius(point[0], point[1], 0, pattern.Diameter / 2 * Meters);
-                            count++;
-                        }
-                }
-                finally
-                {
-                    doc.SketchManager.AddToDB = false;
-                    doc.SketchManager.DisplayWhenAdded = true;
-                }
-                Extrude(doc, depth + 0.01, true);
-                ShowFlash("✓ Added " + count + " holes in " + rows.Length + (rows.Length == 1 ? " row" : " rows") + " (⌀" + StockParts.Inches(pattern.Diameter) + "\" every " + StockParts.Inches(pattern.Spacing) + "\"). It's an ordinary cut: edit or delete it like any feature.");
-            });
+                foreach (double x in along)
+                    foreach (double row in rows)
+                    {
+                        double px = minX + x, py = middle + row;
+                        var model = new[] { frame[0] + (px * frame[3] + py * frame[6]) * Meters, frame[1] + (px * frame[4] + py * frame[7]) * Meters, frame[2] + (px * frame[5] + py * frame[8]) * Meters };
+                        var point = (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch)).ArrayData;
+                        doc.SketchManager.CreateCircleByRadius(point[0], point[1], 0, diameter / 2 * Meters);
+                        count++;
+                    }
+            }
+            finally
+            {
+                doc.SketchManager.AddToDB = false;
+                doc.SketchManager.DisplayWhenAdded = true;
+            }
+            Extrude(doc, depth + 0.01, true);
+            return "✓ Added " + count + " holes in " + rows.Length + (rows.Length == 1 ? " row" : " rows") + " (⌀" + StockParts.Inches(diameter) + "\" every " +
+                StockParts.Inches(p.Number("spacing", 0.5)) + "\"). It's an ordinary cut: edit or delete it like any feature.";
         }
     }
 }

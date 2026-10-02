@@ -196,11 +196,20 @@ static class Program
     static void ToolChecks()
     {
         var tube = StockParts.Find("tube-2x1-0625");
-        Func<string, string[]> ids = q => StockParts.Match(q).Select(t => t.Id).ToArray();
-        Check(ids("2x1 tube").SequenceEqual(new[] { "tube-2x1-0625", "tube-2x1-125" }) && ids("2 x 1 box tube 1/16").SequenceEqual(new[] { "tube-2x1-0625" }) &&
-            ids("1/2 hex shaft").SequenceEqual(new[] { "hex-500" }) && ids("polycarb").Length == 2 && ids("spacer").Length == 4 && ids("bearing").Length == 4 &&
-            ids("hex bearing").Length == 2 && ids("falcon motor").Length == 0 && ids("").Length == 0 && ids("2x1").Length == 2,
-            "Library search finds the stock parts CAD Hub builds (2x1 tube, 1/2 hex shaft, polycarb, spacers, bearings) and nothing else");
+        Func<string, string, string, Tuple<string, string, string>> pick = (a, b, c) => Tuple.Create(a, b, c);
+        var plainTube = StockParts.FromLibrary("Aluminum Box Tube (AM)", new[] { pick("Tube Type", "2\" x 1\" x 0.0625\"", ""), pick("Pattern Type", "None", ""),
+            pick("Hole Offset", "0.5", "in"), pick("Length", "23.75", "in") });
+        var fullTube = StockParts.FromLibrary("Aluminum Box Tube (AM)", new[] { pick("Tube Type", "2\" x 1\" x 0.0625\"", ""), pick("Pattern Type", "Full", ""),
+            pick("Hole Offset", "0.5", "in"), pick("Length", "23.75", "in") });
+        var newSize = StockParts.FromLibrary("Box Tube (WCP)", new[] { pick("Size", "1.5\" x 1\" x 0.0625\"", ""), pick("Length", "300", "mm") });
+        var shaft = StockParts.FromLibrary("Hex Shaft (WCP)", new[] { pick("Size", "1/2\"", ""), pick("Retaining Ring Grooves", "None", ""), pick("Length", "6", "in") });
+        var turned = StockParts.FromLibrary("Hex Shaft (WCP)", new[] { pick("Size", "1/2\"", ""), pick("Ends", "Turned 12mm", ""), pick("Length", "6", "in") });
+        Check(plainTube != null && plainTube.Item1.Id == "tube-2x1-0625" && plainTube.Item2 == 23.75 && fullTube == null,
+            "Library: AM box tube with no pattern is built by CAD Hub (the team's 2x1 1/16 tube); with the Full pattern it comes from FRCDesignLib");
+        Check(newSize != null && newSize.Item1.Width == 1.5 && newSize.Item1.Height == 1 && Math.Abs(newSize.Item2 - 300 / 25.4) < 1e-9 && newSize.Item1.FileName == "1.5x1 Box Tube 0.0625 wall",
+            "Library: a tube size not in the list is still built (named the same way), mm lengths converted");
+        Check(shaft != null && shaft.Item1.Id == "hex-500" && turned == null && StockParts.FromLibrary("NEO Motor", new[] { pick("Length", "6", "in") }) == null,
+            "Library: plain 1/2\" hex shaft is built; one with turned ends, or a motor, comes from FRCDesignLib");
         Check(StockParts.FillRows(2, 0.5, 0.196).SequenceEqual(new[] { -0.5, 0, 0.5 }) && StockParts.FillRows(1, 0.5, 0.196).SequenceEqual(new[] { 0.0 }) &&
             StockParts.FillRows(1.5, 0.5, 0.196).SequenceEqual(new[] { -0.25, 0.25 }), "Fill the side: 3 rows on 2\", 2 on 1.5\", 1 on 1\" (0.5\" grid)");
         Check(StockParts.ParseInches("23.75") == 23.75 && StockParts.ParseInches("23 3/4\"") == 23.75 && StockParts.ParseInches("3/4") == 0.75 &&

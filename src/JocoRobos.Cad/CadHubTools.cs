@@ -31,16 +31,27 @@ namespace JocoRobos.Cad
         internal abstract List<ToolField> Fields(TeamStandards standards);
         /// <summary>A line under the settings with what will be made, e.g. "Resulting bore 1.1265 in".</summary>
         internal virtual string Result(FeatureParams p, TeamStandards standards) { return ""; }
+        /// <summary>The result line once something is selected (Lighten counts its pockets on the chosen face).</summary>
+        internal virtual string Result(FeatureParams p, TeamStandards standards, object selection) { return Result(p, standards); }
         internal virtual string Problem(FeatureParams p) { return null; }
         /// <summary>True: the feature cuts the selected body. False: it adds a new body.</summary>
         internal abstract bool Cuts { get; }
         internal virtual bool NeedsSelection { get { return false; } }
+        /// <summary>A selection box that may stay empty (Belt and Chain: the dimension to set is optional).</summary>
+        internal virtual bool SelectionOptional { get { return false; } }
+        internal virtual int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES, (int)swSelectType_e.swSelEDGES }; } }
+        /// <summary>False: on OK the tool does its work directly (a sketch and a cut, a dimension) instead of adding a CAD Hub feature.</summary>
+        internal virtual bool MakesFeature { get { return true; } }
+        /// <summary>Works in assemblies and drawings too (only a calculator).</summary>
+        internal virtual bool AnyDocument { get { return false; } }
+        /// <summary>For tools that don't make a feature: do the work, and say what was done.</summary>
+        internal virtual string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards) { return null; }
         /// <summary>Called on OK: turn the selection into stored geometry (center, axis…) and freeze preset-derived numbers.</summary>
         internal virtual string Capture(object selection, double[] pickPoint, FeatureParams p, TeamStandards standards) { return null; }
         /// <summary>The body to add, or the tool to cut with, in meters.</summary>
         internal abstract Body2 Build(SldWorks application, FeatureParams p, bool preview);
 
-        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new BearingHoleTool() };
+        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new BearingHoleTool(), new LightenTool(), new HolePatternTool(), new BeltChainTool() };
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
         // ---------- shared geometry ----------
@@ -148,6 +159,17 @@ namespace JocoRobos.Cad
         internal override string Title { get { return "Bearing Hole"; } }
         internal override bool Cuts { get { return true; } }
         internal override bool NeedsSelection { get { return true; } }
+        // An ordinary sketch circle (with its diameter dimension) and a cut: it rebuilds like any feature, and the size can be
+        // changed by editing the sketch. (Bearing Holes made by 1.9.x as CAD Hub features still rebuild.)
+        internal override bool MakesFeature { get { return false; } }
+
+        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
+        {
+            var presets = BearingHoles.Presets(standards);
+            var bearing = presets[Math.Max(0, Math.Min(presets.Count - 1, (int)p.Number("bearing", 0)))];
+            return Addin.CutBearingHole(application, doc, selection, new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) },
+                new[] { p.Number("ax", 0), p.Number("ay", 0), p.Number("az", 1) }, p.Number("bore", 1.1265), bearing.Name);
+        }
 
         internal override List<ToolField> Fields(TeamStandards standards)
         {
@@ -213,6 +235,167 @@ namespace JocoRobos.Cad
             // Through: a cylinder centered on the face, long enough to pass through the plate both ways.
             var start = new[] { center[0] - axis[0] * length / 2, center[1] - axis[1] * length / 2, center[2] - axis[2] * length / 2 };
             return modeler.CreateBodyFromCyl(new[] { start[0], start[1], start[2], axis[0], axis[1], axis[2], radius, length }) as Body2;
+        }
+    }
+
+    /// <summary>Lighten Plate on the PropertyManager: pick the plate's face, see how many pockets, OK cuts them.</summary>
+    internal sealed class LightenTool : CadHubTool
+    {
+        internal override string Kind { get { return "lighten"; } }
+        internal override string Title { get { return "Lighten Plate"; } }
+        internal override bool Cuts { get { return true; } }
+        internal override bool NeedsSelection { get { return true; } }
+        internal override bool MakesFeature { get { return false; } }
+        internal override int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES }; } }
+
+        internal override List<ToolField> Fields(TeamStandards standards)
+        {
+            return new List<ToolField>
+            {
+                new ToolField { Key = "face", Label = "Plate face: click the flat face to lighten", Kind = FieldKind.Selection },
+                new ToolField { Key = "size", Label = "Pocket size", Kind = FieldKind.Length, Min = 0.75, Max = 12, Default = 2, Step = 0.25,
+                    Tip = "About how big across each pocket gets. Smaller: more ribs, stronger and heavier." },
+                new ToolField { Key = "rib", Label = "Rib width", Kind = FieldKind.Length, Min = 0.05, Max = 1, Default = 0.15, Step = 0.025 },
+                new ToolField { Key = "border", Label = "Edge border", Kind = FieldKind.Length, Min = 0.05, Max = 2, Default = 0.25, Step = 0.025 },
+                new ToolField { Key = "ring", Label = "Ring around holes", Kind = FieldKind.Length, Min = 0.03, Max = 1, Default = 0.15, Step = 0.025 },
+                new ToolField { Key = "corner", Label = "Corner radius (router bit)", Kind = FieldKind.Length, Min = 0.01, Max = 0.5, Default = 0.0625, Step = 0.0625, Advanced = true },
+                new ToolField { Key = "smallest", Label = "Smallest pocket", Kind = FieldKind.Length, Min = 0.1, Max = 2, Default = 0.35, Step = 0.05, Advanced = true },
+                new ToolField { Key = "depth", Label = "Pocket depth (0: through)", Kind = FieldKind.Length, Min = 0, Max = 4, Default = 0, Step = 0.0625, Advanced = true },
+            };
+        }
+
+        internal static LightenSettings Settings(FeatureParams p)
+        {
+            return new LightenSettings { MaxPocket = p.Number("size", 2), Rib = p.Number("rib", 0.15), Border = p.Number("border", 0.25), Ring = p.Number("ring", 0.15),
+                CornerRadius = p.Number("corner", 0.0625), MinPocket = p.Number("smallest", 0.35) };
+        }
+
+        internal override string Result(FeatureParams p, TeamStandards standards, object selection)
+        {
+            var face = selection as Face2;
+            if (face == null) return "Click the plate's flat face.";
+            var plan = Addin.PlanPockets(face, Settings(p));
+            return plan.Count == 0 ? "No pockets fit: try narrower ribs, a smaller border or ring, or a smaller smallest pocket." :
+                plan.Count + " pockets, about " + plan.Percent.ToString("0") + "% of the face removed.";
+        }
+
+        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return null; }
+
+        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
+        {
+            return Addin.CutPockets(application, doc, selection as Face2, Settings(p), p.Number("depth", 0));
+        }
+    }
+
+    /// <summary>Hole Pattern on the PropertyManager: pick the tube's side; rows fill it on the grid or a number you choose.</summary>
+    internal sealed class HolePatternTool : CadHubTool
+    {
+        internal override string Kind { get { return "holes"; } }
+        internal override string Title { get { return "Hole Pattern"; } }
+        internal override bool Cuts { get { return true; } }
+        internal override bool NeedsSelection { get { return true; } }
+        internal override bool MakesFeature { get { return false; } }
+        internal override int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES }; } }
+
+        internal override List<ToolField> Fields(TeamStandards standards)
+        {
+            return new List<ToolField>
+            {
+                new ToolField { Key = "face", Label = "Side of the tube: click a long flat side", Kind = FieldKind.Selection },
+                new ToolField { Key = "rows", Label = "Rows", Kind = FieldKind.Choice, Items = new List<string> { "Fill the side (on the row spacing)", "1", "2", "3", "4", "5" },
+                    Tip = "Fill the side: 3 rows on a 2\" side, 1 on a 1\" side, with 0.5\" spacing." },
+                new ToolField { Key = "spacing", Label = "Spacing along the tube", Kind = FieldKind.Length, Min = 0.1, Max = 12, Default = 0.5, Step = 0.125 },
+                new ToolField { Key = "diameter", Label = "Hole diameter (#10 clearance 0.196)", Kind = FieldKind.Length, Min = 0.05, Max = 2, Default = 0.196, Step = 0.001 },
+                new ToolField { Key = "rowSpacing", Label = "Row spacing", Kind = FieldKind.Length, Min = 0.1, Max = 6, Default = 0.5, Step = 0.125 },
+                new ToolField { Key = "start", Label = "First hole from the end", Kind = FieldKind.Length, Min = 0, Max = 12, Default = 0.25, Step = 0.125 },
+            };
+        }
+
+        internal override string Problem(FeatureParams p)
+        {
+            if (p.Number("diameter", 0.196) >= p.Number("spacing", 0.5)) return "The holes are bigger than their spacing.";
+            if ((int)p.Number("rows", 0) != 1 && p.Number("rowSpacing", 0.5) <= p.Number("diameter", 0.196)) return "Row spacing must be bigger than the hole diameter.";
+            return null;
+        }
+
+        internal override string Result(FeatureParams p, TeamStandards standards, object selection)
+        {
+            var face = selection as Face2;
+            if (face == null) return "Click the side of the tube.";
+            int count, rows;
+            string problem = Addin.PlanHoles(face, p, out count, out rows);
+            return problem ?? count + " holes in " + rows + (rows == 1 ? " row" : " rows") + ", through both walls.";
+        }
+
+        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return null; }
+
+        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
+        {
+            return Addin.CutHolePattern(application, doc, selection as Face2, p);
+        }
+    }
+
+    /// <summary>Belt and Chain on the PropertyManager: the center distance as you change the numbers; OK can set a dimension.</summary>
+    internal sealed class BeltChainTool : CadHubTool
+    {
+        internal override string Kind { get { return "belt-chain"; } }
+        internal override string Title { get { return "Belt and Chain"; } }
+        internal override bool Cuts { get { return false; } }
+        internal override bool NeedsSelection { get { return true; } }
+        internal override bool SelectionOptional { get { return true; } }
+        internal override bool MakesFeature { get { return false; } }
+        internal override bool AnyDocument { get { return true; } }
+        internal override int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelDIMENSIONS }; } }
+
+        internal override List<ToolField> Fields(TeamStandards standards)
+        {
+            return new List<ToolField>
+            {
+                new ToolField { Key = "kind", Label = "Belt or chain", Kind = FieldKind.Choice, Items = BeltChain.Kinds.Select(k => k.Name).ToList() },
+                new ToolField { Key = "teeth1", Label = "Pulley/sprocket 1 (teeth)", Kind = FieldKind.Number, Min = 8, Max = 120, Default = 18 },
+                new ToolField { Key = "teeth2", Label = "Pulley/sprocket 2 (teeth)", Kind = FieldKind.Number, Min = 8, Max = 120, Default = 36 },
+                new ToolField { Key = "length", Label = "Belt length (teeth) or chain length (links)", Kind = FieldKind.Number, Min = 10, Max = 2000, Default = 100 },
+                new ToolField { Key = "wanted", Label = "Or: the center distance you want (0: off)", Kind = FieldKind.Length, Min = 0, Max = 100, Default = 0, Step = 0.25 },
+                new ToolField { Key = "dimension", Label = "Optional: click the center-distance dimension to set it on OK", Kind = FieldKind.Selection },
+            };
+        }
+
+        private static double Center(FeatureParams p)
+        {
+            var drive = BeltChain.Kinds[Math.Max(0, Math.Min(BeltChain.Kinds.Count - 1, (int)p.Number("kind", 0)))];
+            return BeltChain.CenterDistance(drive, (int)p.Number("teeth1", 18), (int)p.Number("teeth2", 36), (int)p.Number("length", 100));
+        }
+
+        internal override string Result(FeatureParams p, TeamStandards standards)
+        {
+            var drive = BeltChain.Kinds[Math.Max(0, Math.Min(BeltChain.Kinds.Count - 1, (int)p.Number("kind", 0)))];
+            int a = (int)p.Number("teeth1", 18), b = (int)p.Number("teeth2", 36);
+            double wanted = p.Number("wanted", 0);
+            string answer;
+            if (wanted > 0)
+            {
+                var near = BeltChain.NearestLengths(drive, a, b, wanted);
+                answer = "For " + StockParts.Inches(wanted) + " in: " + near.Item1 + " " + drive.Unit + " (center " + Show(BeltChain.CenterDistance(drive, a, b, near.Item1)) +
+                    ") or " + near.Item2 + " " + drive.Unit + " (center " + Show(BeltChain.CenterDistance(drive, a, b, near.Item2)) + "). ";
+            }
+            else answer = "";
+            double center = Center(p);
+            return answer + (double.IsNaN(center) ? "Belt/chain too short to go around both." :
+                "Center distance: " + Show(center) + " in (" + (center * 25.4).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + " mm).");
+        }
+
+        private static string Show(double inches) { return double.IsNaN(inches) ? "—" : inches.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture); }
+
+        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return null; }
+
+        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
+        {
+            var dimension = selection as DisplayDimension;
+            double center = Center(p);
+            if (dimension == null || double.IsNaN(center)) return null;
+            dimension.GetDimension2(0).SetSystemValue3(center * M, (int)swSetValueInConfiguration_e.swSetValue_InThisConfiguration, null);
+            doc.EditRebuild3();
+            return "✓ Set the dimension to " + Show(center) + " in.";
         }
     }
 }

@@ -84,13 +84,13 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
-| 3d.2 | A | Edit an assembly → Library tab → search `2x1 tube` → pick "⚡ 2×1 box tube, 1/16" wall" (first in the results) → Length 23.75, ×2 → Insert | Two plain tubes inserted at once, 23.75" long (no holes: add your pattern with Hole Pattern). FRCDesignLib's tubes are listed below it. Searching `falcon` shows no ⚡ built parts | ☐ |
+| 3d.2 | A | Edit an assembly → Library tab → **Aluminum Box Tube (AM)** → Tube Type 2" x 1" x 0.0625", Pattern Type **None** (or the plain option), Length 23.75, ×2 → Insert | Built right away by CAD Hub (no "preparing" wait): two plain tubes in `90_COTS/Stock/Box tube`. With Pattern Type **Full**, the same Insert gets the vendor tube from FRCDesignLib instead | ☐ |
 | 3d.3 | B | Same tube, **24 in** | Added as a new size of the same part (`90_COTS/Stock/Box tube/2x1 Box Tube 0.0625 wall.SLDPRT`, configuration "24 in"); the part is now locked by B and shows in B's Submit. Nothing was shared until B submits | ☐ |
-| 3d.4 | A | Stock part: 1/2" hex shaft 7.25; spacer 0.25; aluminum plate 1/4" 6 × 12; FR8ZZ bearing | Each correct size; the Parts List shows them under Buy: Stock with their sizes | ☐ |
+| 3d.4 | A | Library → a hex shaft part → 1/2", no grooves or turned ends, 7.25 → Insert. Then the same with turned ends | Plain: built by CAD Hub. Turned ends: from FRCDesignLib | ☐ |
 | 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
-| 3d.6 | A | **Belt & Chain Calculator**: HTD 5 mm, 18T and 36T, 100 teeth. Then select a sketch's center dimension → **Use for selected dimension** | A center distance that matches a vendor's calculator; the dimension changes to it | ☐ |
-| 3d.7 | A | Open a flat plate with holes (try one with a curved edge and a bearing hole), Edit it, click its face → **Lighten Plate** (defaults) | Pockets between ribs; next to round holes and curved edges the pocket edge is an arc that follows them (no flat cuts); bolt clusters stay solid; no slivers; rounded corners, a border along the edge; flash with weight saved. Undo removes it | ☐ |
-| 3d.8 | A | Click the 2" side of a 2×1 tube → **Hole Pattern** → Rows: **Fill the side** (the default) | 3 rows of holes on the 0.5" grid, through both walls; on the 1" side, 1 row. A number of rows instead works too; the dialog remembers it | ☐ |
+| 3d.6 | A | Open a sketch with a center distance → **Belt and Chain** | Side panel: belt/chain, teeth, length; the center distance updates as you type. Click the center dimension into the box → ✓ sets it | ☐ |
+| 3d.7 | A | A plate part (Edit it) → **Lighten Plate** → click its face | Side panel; the result line says how many pockets and how much is removed, and changes as you change Pocket size. ✓ cuts them: arcs around round holes and curved edges, clusters solid, no long slot along an edge lined with holes, no big open areas | ☐ |
+| 3d.8 | A | A tube part → **Hole Pattern** → click the 2" side | Side panel; "N holes in 3 rows"; ✓ cuts them through both walls. Next time it opens with your last settings | ☐ |
 
 ## 3e. CAD Hub tab and editable features
 
@@ -100,7 +100,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
 | 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
 | 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |
-| 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit | "Resulting bore 1.1265 in". A preview cylinder at the click point. ✓ → a through hole; "CAD Hub Bearing Hole1" in the tree | ☐ |
+| 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit → ✓ | A cut named "Bearing Hole (…)" through the plate, its sketch has the diameter dimension; no "body is missing" error | ☐ |
 | 3e.5 | A | Bearing Hole on an existing round edge | The hole is resized around the same center | ☐ |
 | 3e.6 | A | Mentor page → Add-in → **Team standards**: Normal 0.002, add `Swerve bearing, 1.375` → Save. In SOLIDWORKS: Check now, then Bearing Hole | "★ Swerve bearing" listed first; Normal fit on a 1.125 bearing shows 1.1270. The earlier hole keeps its size (fits are frozen per hole) | ☐ |
 | 3e.7 | B | Open the plate and gear parts A submitted | Both open and rebuild with no errors on B's computer | ☐ |

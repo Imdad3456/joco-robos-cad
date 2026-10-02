@@ -99,7 +99,15 @@ namespace JocoRobos.Cad
             Func<double[], bool> clear = p => holes.All(h => Distance(p, new[] { h.X, h.Y }) > h.R + settings.Ring + settings.Rib + settings.MinPocket);
             var corners = Corners(border);
             var edgeNodes = new List<double[]>();
-            foreach (var p in EdgePoints(border, settings.MaxPocket)) if (fresh(p) && (corners.Contains(p) || clear(p))) { nodes.Add(p); edgeNodes.Add(p); }
+            foreach (var p in EdgePoints(border, settings.MaxPocket))
+            {
+                if (corners.Contains(p) || clear(p)) { if (fresh(p)) { nodes.Add(p); edgeNodes.Add(p); } continue; }
+                // Too close to a hole by the edge (a row of holes along it): the ribs meet at that hole instead, so the edge
+                // still gets junctions and no long slot is left along it.
+                var near = holes.OrderBy(hole => Distance(p, new[] { hole.X, hole.Y })).First();
+                var at = new[] { near.X, near.Y };
+                if (fresh(at)) nodes.Add(at);
+            }
             foreach (var p in extraPoints ?? new List<double[]>()) if (fresh(p)) nodes.Add(new[] { p[0], p[1] });
             for (int round = 0; round < 8 && nodes.Count < 800; round++)
             {
@@ -117,33 +125,63 @@ namespace JocoRobos.Cad
                 nodes.AddRange(added);
             }
 
-            // Ribs along the edges of the triangles; what's left of the region between them are the pockets. A thin triangle would
-            // only make a sliver: its longest side gets no rib, so it joins its neighbor in one pocket.
-            var edges = new PathsD(spokes);
-            var seen = new HashSet<string>();
-            var skipped = new HashSet<string>();
-            Func<double[], double[], string> key = (a, b) => Compare(a, b) > 0 ? b[0] + "," + b[1] + "," + a[0] + "," + a[1] : a[0] + "," + a[1] + "," + b[0] + "," + b[1];
-            // Neighbors along the plate's edge get no rib between them: the edge's border is the rib there, and a straight rib
-            // across a curved edge would flatten the pockets beside it.
-            var alongEdge = edgeNodes.OrderBy(p => AlongBorder(border, p)).ToList();
-            for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) skipped.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
-            var triangles = Triangulate(nodes);
-            foreach (var triangle in triangles)
+            Func<PathsD> layOut = () =>
             {
-                double smallestAngle = Enumerable.Range(0, 3).Min(k => Math.PI - Math.Abs(Turn(triangle[(k + 2) % 3], triangle[k], triangle[(k + 1) % 3])));
-                if (smallestAngle >= MinAngle) continue;
-                int longest = Enumerable.Range(0, 3).OrderByDescending(k => Distance(triangle[k], triangle[(k + 1) % 3])).First();
-                skipped.Add(key(triangle[longest], triangle[(longest + 1) % 3]));
-            }
-            foreach (var triangle in triangles)
-                for (int k = 0; k < 3; k++)
+                // Ribs along the edges of the triangles; what's left of the region between them are the pockets. A thin triangle would
+                // only make a sliver: its longest side gets no rib, so it joins its neighbor in one pocket.
+                var edges = new PathsD(spokes);
+                var seen = new HashSet<string>();
+                var skipped = new HashSet<string>();
+                Func<double[], double[], string> key = (a, b) => Compare(a, b) > 0 ? b[0] + "," + b[1] + "," + a[0] + "," + a[1] : a[0] + "," + a[1] + "," + b[0] + "," + b[1];
+                // Neighbors along the plate's edge get no rib between them: the edge's border is the rib there, and a straight rib
+                // across a curved edge would flatten the pockets beside it.
+                var alongEdge = edgeNodes.OrderBy(p => AlongBorder(border, p)).ToList();
+                for (int i = 0; i < alongEdge.Count && alongEdge.Count > 2; i++) skipped.Add(key(alongEdge[i], alongEdge[(i + 1) % alongEdge.Count]));
+                var triangles = Triangulate(nodes);
+                foreach (var triangle in triangles)
                 {
-                    double[] a = triangle[k], b = triangle[(k + 1) % 3];
-                    string id = key(a, b);
-                    if (!skipped.Contains(id) && seen.Add(id)) edges.Add(Path(new List<double[]> { a, b }));
+                    double smallestAngle = Enumerable.Range(0, 3).Min(k => Math.PI - Math.Abs(Turn(triangle[(k + 2) % 3], triangle[k], triangle[(k + 1) % 3])));
+                    if (smallestAngle >= MinAngle) continue;
+                    int longest = Enumerable.Range(0, 3).OrderByDescending(k => Distance(triangle[k], triangle[(k + 1) % 3])).First();
+                    skipped.Add(key(triangle[longest], triangle[(longest + 1) % 3]));
                 }
-            var ribs = Clipper.InflatePaths(edges, settings.Rib / 2, JoinType.Round, EndType.Round, 2, Precision, ArcTolerance);
-            var pieces = Clipper.Difference(region, ribs, FillRule.NonZero, Precision);
+                foreach (var triangle in triangles)
+                    for (int k = 0; k < 3; k++)
+                    {
+                        double[] a = triangle[k], b = triangle[(k + 1) % 3];
+                        string id = key(a, b);
+                        if (!skipped.Contains(id) && seen.Add(id)) edges.Add(Path(new List<double[]> { a, b }));
+                    }
+                var ribs = Clipper.InflatePaths(edges, settings.Rib / 2, JoinType.Round, EndType.Round, 2, Precision, ArcTolerance);
+                return Clipper.Difference(region, ribs, FillRule.NonZero, Precision);
+            };
+            var pieces = layOut();
+            // A pocket still too big (for example along an edge lined with holes, where no junction could go): more junctions
+            // inside it, spread about half a pocket apart, then lay the ribs out again.
+            for (int pass = 0; pass < 4 && nodes.Count < 800; pass++)
+            {
+                var added = new List<double[]>();
+                foreach (var piece in Pieces(pieces))
+                {
+                    var outer = piece[0];
+                    double minX = outer.Min(q => q.x), maxX = outer.Max(q => q.x), minY = outer.Min(q => q.y), maxY = outer.Max(q => q.y);
+                    if (Math.Max(maxX - minX, maxY - minY) <= settings.MaxPocket * 1.5 && Clipper.Area(piece) <= settings.MaxPocket * settings.MaxPocket * 0.6) continue;
+                    double step = settings.MaxPocket / 5;
+                    var candidates = new List<Tuple<double[], double>>();
+                    for (double x = minX + step / 2; x < maxX; x += step)
+                        for (double y = minY + step / 2; y < maxY; y += step)
+                        {
+                            var point = new[] { x, y };
+                            double depth = Depth(piece, point);
+                            if (depth >= (settings.MinPocket + settings.Rib) / 2) candidates.Add(Tuple.Create(point, depth));
+                        }
+                    foreach (var candidate in candidates.OrderByDescending(c => c.Item2))
+                        if (nodes.Concat(added).All(n => Distance(n, candidate.Item1) > settings.MaxPocket * 0.55)) added.Add(candidate.Item1);
+                }
+                if (added.Count == 0) break;
+                nodes.AddRange(added);
+                pieces = layOut();
+            }
 
             // Too narrow anywhere for the smallest pocket: left solid. Then rounded corners for the router bit (shrink, then grow
             // back by the corner radius), which also trims thin tails off pockets.
