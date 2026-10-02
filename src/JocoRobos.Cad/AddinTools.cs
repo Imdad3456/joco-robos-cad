@@ -185,6 +185,10 @@ namespace JocoRobos.Cad
                 var robot = catalog.Robot;
                 var svn = new SvnWorkspace(login, robot);
                 if (robot.Archived || !svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the " + tool.Title.ToLowerInvariant() + " has a robot to go into. It's still open as a new part.");
+                // Never save an empty part into the robot: if SOLIDWORKS didn't keep the body, say so and leave the part open.
+                var solids = ((PartDoc)part).GetBodies2((int)swBodyType_e.swSolidBody, true) as object[];
+                if (solids == null || solids.Length == 0)
+                    throw new InvalidOperationException("The " + tool.Title.ToLowerInvariant() + " came out empty, so it wasn't saved to the robot. It's still open as a new part; send a mentor the Diagnostics.");
                 string name = tool.PartName(values);
                 string path = Path.Combine(robot.Root, "90_COTS", "Stock", tool.Folder, name + ".SLDPRT");
                 if (File.Exists(path)) application.CloseDoc(part.GetTitle());

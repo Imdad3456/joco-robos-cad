@@ -406,21 +406,38 @@ namespace JocoRobos.Cad
                 if (tool == null) return "This CAD Hub feature needs a newer CAD Hub.";
                 var bodies = tool.BuildBodies((SldWorks)app, values, false);
                 if (bodies.Count == 0) return "Nothing to build: edit the feature and check its settings.";
-                // Always as a list, even of one: Planetary's list of bodies was accepted, a single body wasn't (1.13.2).
-                if (!tool.Cuts) return bodies.Cast<object>().ToArray();
+                if (!tool.Cuts)
+                {
+                    foreach (var made in bodies) NameEntities(data, made);
+                    ErrorLog.Step(tool.Title + " rebuilt: " + bodies.Count + " bod" + (bodies.Count == 1 ? "y" : "ies"));
+                    return bodies.Count == 1 ? (object)bodies[0] : bodies.Cast<object>().ToArray();
+                }
                 var body = bodies[0];
                 var target = data.EditBody ?? ((data.EditBodies as object[]) ?? new object[0]).OfType<Body2>().FirstOrDefault();
                 if (target == null) return "The body this feature cuts is missing.";
                 int error = 0;
                 var cut = target.Operations2((int)swBodyOperationType_e.SWBODYCUT, body, out error) as object[];
                 if (cut == null || cut.Length == 0) return "The cut didn't work (SOLIDWORKS error " + error + "). Edit the feature and pick the face again.";
-                return cut;
+                foreach (var made in cut.OfType<Body2>()) NameEntities(data, made);
+                return cut.Length == 1 ? cut[0] : cut;
             }
             catch (Exception exception)
             {
                 ErrorLog.Write("CAD Hub feature rebuild", exception);
                 return "CAD Hub couldn't rebuild this feature: " + exception.Message;
             }
+        }
+
+        // A body a macro feature returns needs an id on every new face and edge, or SOLIDWORKS won't keep it (that's how it
+        // tracks them between rebuilds, for mates and later features). Numbered in the order SOLIDWORKS lists them.
+        private static void NameEntities(MacroFeatureData data, Body2 body)
+        {
+            object faces, edges;
+            data.GetEntitiesNeedUserId(body, out faces, out edges);
+            int id = 0;
+            foreach (var face in (faces as object[]) ?? new object[0]) data.SetFaceUserId((Face2)face, id++, 0);
+            id = 0;
+            foreach (var edge in (edges as object[]) ?? new object[0]) data.SetEdgeUserId((Edge)edge, id++, 0);
         }
 
         public object Edit(object app, object modelDoc, object feature)
