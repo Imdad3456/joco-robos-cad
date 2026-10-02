@@ -406,7 +406,8 @@ namespace JocoRobos.Cad
                 if (tool == null) return "This CAD Hub feature needs a newer CAD Hub.";
                 var bodies = tool.BuildBodies((SldWorks)app, values, false);
                 if (bodies.Count == 0) return "Nothing to build: edit the feature and check its settings.";
-                if (!tool.Cuts) return bodies.Count == 1 ? (object)bodies[0] : bodies.Cast<object>().ToArray();
+                // Always as a list, even of one: Planetary's list of bodies was accepted, a single body wasn't (1.13.2).
+                if (!tool.Cuts) return bodies.Cast<object>().ToArray();
                 var body = bodies[0];
                 var target = data.EditBody ?? ((data.EditBodies as object[]) ?? new object[0]).OfType<Body2>().FirstOrDefault();
                 if (target == null) return "The body this feature cuts is missing.";
