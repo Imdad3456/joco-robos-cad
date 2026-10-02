@@ -131,7 +131,7 @@ namespace JocoRobos.Cad
                 }
                 return curves;
             };
-            Func<object[], double, double, Body2> extrude = (curves, z, length) =>
+            Func<Curve[], double, double, Body2> extrude = (curves, z, length) =>
             {
                 try
                 {
@@ -144,28 +144,28 @@ namespace JocoRobos.Cad
             var outer = curvesOf(profiles[0].Points, profiles[0].Circle, false, 0);
             var holes = profiles.Skip(1).Select(p => curvesOf(p.Points, p.Circle, true, 0)).ToList();
             double depthMeters = depth * M;
-            // 1: one face with the holes, loops separated by an empty entry (how SOLIDWORKS takes trimming loops).
-            var separated = new List<object>(outer);
-            foreach (var hole in holes) { separated.Add(null); separated.AddRange(hole); }
-            var body = extrude(separated.ToArray(), 0, depthMeters);
-            if (body != null) return body;
-            // 2: the same loops without separators.
-            ErrorLog.Step("profile: one face with separated loops failed (" + outer.Count + " edges, " + holes.Count + " holes); trying the others");
-            if (holes.Count > 0) body = extrude(outer.Concat(holes.SelectMany(h => h)).Cast<object>().ToArray(), 0, depthMeters);
-            if (body != null) { ErrorLog.Step("profile: loops without separators worked"); return body; }
-            // 3: the outside alone, then each hole cut out of it as its own solid (a little longer, so no faces coincide).
-            body = extrude(outer.Cast<object>().ToArray(), 0, depthMeters);
-            if (body == null) throw new InvalidOperationException("SOLIDWORKS couldn't make the profile (" + outer.Count + " edges).");
+            // Never pass SOLIDWORKS a curve list with empty entries: that crashed it (1.13.1).
+            // 1: the outside alone, then each hole cut out of it as its own solid. Without holes, that's all there is to it.
+            var body = extrude(outer.ToArray(), 0, depthMeters);
+            if (body != null && holes.Count == 0) return body;
+            if (body == null)
+            {
+                // 2: one face with the outside counterclockwise and the holes clockwise, in one list.
+                ErrorLog.Step("profile: the outside alone failed (" + outer.Count + " edges); trying one face with its holes");
+                body = holes.Count > 0 ? extrude(outer.Concat(holes.SelectMany(h => h)).ToArray(), 0, depthMeters) : null;
+                if (body != null) return body;
+                throw new InvalidOperationException("SOLIDWORKS couldn't make the profile (" + outer.Count + " edges).");
+            }
+            // The holes: each a little longer than the part, so no faces coincide.
             foreach (var hole in profiles.Skip(1))
             {
-                var tool = extrude(curvesOf(hole.Points, hole.Circle, false, -0.0005).Cast<object>().ToArray(), -0.0005, depthMeters + 0.001);
+                var tool = extrude(curvesOf(hole.Points, hole.Circle, false, -0.0005).ToArray(), -0.0005, depthMeters + 0.001);
                 if (tool == null) throw new InvalidOperationException("SOLIDWORKS couldn't make the bore.");
                 int error;
                 var cut = body.Operations2((int)swBodyOperationType_e.SWBODYCUT, tool, out error) as object[];
                 body = cut?.OfType<Body2>().OrderByDescending(b => { var box = (double[])b.GetBodyBox(); return box == null ? 0 : (box[3] - box[0]) * (box[4] - box[1]); }).FirstOrDefault();
                 if (body == null) throw new InvalidOperationException("SOLIDWORKS couldn't cut the bore (error " + error + ").");
             }
-            ErrorLog.Step("profile: outside then holes cut worked");
             return body;
         }
 
