@@ -115,21 +115,37 @@ namespace JocoRobos.Cad
             catch (InvalidOperationException busy) { report("✗ " + busy.Message); }
         }
 
-        // Opens a tool's page in the PropertyManager (the left side panel): the gear in the open part (a new one when nothing is
-        // open), Lighten Plate on the open part, Belt and Chain on any document. A read-only team part needs Edit first.
+        // Opens a tool's page in the PropertyManager (the left side panel). Parts (gear, sprocket…) in the open part, a new part when
+        // nothing is open, or a new part saved into the robot and inserted when an assembly is open; Lighten Plate on the open part;
+        // the calculators on any document. A read-only team part needs Edit first.
         private void ShowTool(CadHubTool tool)
         {
             try
             {
                 var doc = application.ActiveDoc as ModelDoc2;
-                if (doc == null && tool.Kind == "gear") doc = NewPart();
-                if (doc == null && tool.AnyDocument)
+                if (doc == null && tool.MakesFeature) doc = NewPart();
+                if (doc == null && tool.Kind == "belt-chain")
                 {
                     // Nothing open to show a side panel in: the calculator in its own window.
                     using (var dialog = new BeltChainDialog(SetSelectedDimension)) dialog.ShowDialog(new SolidWorksWindow());
                     return;
                 }
-                if (doc == null) throw new InvalidOperationException("Open the part first, then " + tool.Title + ".");
+                if (doc == null) throw new InvalidOperationException(tool.AnyDocument ? "Open any part or assembly first: " + tool.Title + " opens in its side panel." :
+                    "Open the part first, then " + tool.Title + ".");
+                if (tool.MakesFeature && doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY)
+                {
+                    // In an assembly: made in a new part, then saved into the robot and inserted.
+                    var assembly = doc;
+                    var part = NewPart();
+                    var page = new ToolPage(application, part, tool, Standards, null, null, text => ShowFlash(text));
+                    page.Finished = ok => OnUi(tool.Title, () =>
+                    {
+                        if (ok) FinishInAssembly(assembly, part, tool, page.Values);
+                        else application.CloseDoc(part.GetTitle());
+                    });
+                    page.Show();
+                    return;
+                }
                 if (!tool.AnyDocument)
                 {
                     if (doc.GetType() != (int)swDocumentTypes_e.swDocPART)
@@ -145,56 +161,46 @@ namespace JocoRobos.Cad
             }
         }
 
-        // ---------- spur gears ----------
+        // ---------- powertrain parts ----------
 
-        public void MakeGear()
+        public void MakeGear() { ShowTool(CadHubTool.Find("gear")); }
+        public void MakeSprocket() { ShowTool(CadHubTool.Find("sprocket")); }
+        public void MakePulley() { ShowTool(CadHubTool.Find("pulley")); }
+        public void MakeShaft() { ShowTool(CadHubTool.Find("shaft")); }
+        public void MakePlanetary() { ShowTool(CadHubTool.Find("planetary")); }
+        public void GearRatio() { ShowTool(CadHubTool.Find("ratio")); }
+
+        // From an assembly: the part made on its own page goes into the robot (90_COTS/Stock/<kind>), then into the assembly. An
+        // identical one a teammate already made is reused. It goes to the team with the student's next Submit, like any new part.
+        private void FinishInAssembly(ModelDoc2 assemblyDoc, ModelDoc2 part, CadHubTool tool, FeatureParams values)
         {
-            // In a part: the native page and an editable feature. In an assembly: a gear part made for the robot and inserted.
-            var active = application.ActiveDoc as ModelDoc2;
-            if (active == null || active.GetType() == (int)swDocumentTypes_e.swDocPART) { ShowTool(CadHubTool.Find("gear")); return; }
-            using (var dialog = new GearDialog())
+            Execute(() =>
             {
-                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                Execute(() =>
+                var login = GetLogin(false);
+                if (login == null) return;
+                var catalog = LoadCatalog(login);
+                RequireCurrentAddin(login, catalog);
+                var robot = catalog.Robot;
+                var svn = new SvnWorkspace(login, robot);
+                if (robot.Archived || !svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the " + tool.Title.ToLowerInvariant() + " has a robot to go into. It's still open as a new part.");
+                string name = tool.PartName(values);
+                string path = Path.Combine(robot.Root, "90_COTS", "Stock", tool.Folder, name + ".SLDPRT");
+                if (File.Exists(path)) application.CloseDoc(part.GetTitle());
+                else
                 {
-                    var login = GetLogin(false);
-                    if (login == null) return;
-                    var catalog = LoadCatalog(login);
-                    RequireCurrentAddin(login, catalog);
-                    var robot = catalog.Robot;
-                    var svn = new SvnWorkspace(login, robot);
-                    if (robot.Archived || !svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the gear has a robot to go into.");
-                    string name = "Spur Gear " + StockParts.Inches(dialog.Pitch) + "DP " + StockParts.Inches(dialog.Pressure) + "PA " + dialog.Teeth + "T " +
-                        dialog.BoreName + " " + StockParts.Inches(dialog.FaceWidth) + " FW";
-                    string path = Path.Combine(robot.Root, "90_COTS", "Stock", "Gears", name + ".SLDPRT");
-                    bool cancelled;
-                    var assembly = InsertTarget(catalog, name, out cancelled);
-                    if (cancelled) return;
-                    if (!File.Exists(path))
-                    {
-                        if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(path)))
-                            throw new InvalidOperationException("A teammate already made " + name + ". Get their changes first (Close & Update in the panel), then insert again.");
-                        var doc = NewPart();
-                        SelectPlane(doc, Front);
-                        doc.SketchManager.InsertSketch(true);
-                        var outline = SpurGear.Outline(dialog.Teeth, dialog.Pitch, dialog.Pressure);
-                        for (int i = 0; i < outline.Count; i++)
-                        {
-                            var a = outline[i]; var b = outline[(i + 1) % outline.Count];
-                            doc.SketchManager.CreateLine(a[0] * Meters, a[1] * Meters, 0, b[0] * Meters, b[1] * Meters, 0);
-                        }
-                        if (dialog.BoreHex) Hexagon(doc, dialog.Bore);
-                        else if (dialog.Bore > 0) doc.SketchManager.CreateCircleByRadius(0, 0, 0, dialog.Bore / 2 * Meters);
-                        Extrude(doc, dialog.FaceWidth);
-                        doc.SketchManager.AddToDB = false;
-                        doc.SketchManager.DisplayWhenAdded = true;
-                        ((PartDoc)doc).SetMaterialPropertyName2("", "SOLIDWORKS Materials", "6061 Alloy");
-                        doc.Extension.CustomPropertyManager[""].Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, name, (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-                        SaveNewFile(doc, path);
-                    }
-                    DeliverConfigured(assembly, path, "Default", dialog.Copies, name);
-                });
-            }
+                    if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(path)))
+                        throw new InvalidOperationException("A teammate already made " + name + ". Get their changes first (Close & Update in the panel), then insert again.");
+                    ((PartDoc)part).SetMaterialPropertyName2("", "SOLIDWORKS Materials", "6061 Alloy");
+                    part.Extension.CustomPropertyManager[""].Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, name, (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
+                    SaveNewFile(part, path);
+                }
+                int error = 0;
+                application.ActivateDoc3(assemblyDoc.GetTitle(), false, (int)swRebuildOnActivation_e.swDontRebuildActiveDoc, ref error);
+                bool cancelled;
+                var target = InsertTarget(catalog, name, out cancelled);
+                if (cancelled) return;
+                DeliverConfigured(target, path, "Default", 1, name);
+            });
         }
 
         // ---------- belt and chain calculator ----------
@@ -210,6 +216,50 @@ namespace JocoRobos.Cad
             shown.GetDimension2(0).SetSystemValue3(inches * Meters, (int)swSetValueInConfiguration_e.swSetValue_InThisConfiguration, null);
             doc.EditRebuild3();
             return null;
+        }
+
+        /// <summary>
+        /// A belt or chain layout sketch on a face or plane: the two pitch circles (construction) with a dimension between their
+        /// centers, and the belt's path around them, for laying out plates. Returns what it drew.
+        /// </summary>
+        internal static string DrawBeltLayout(ModelDoc2 doc, object where, double d1, double d2, double center, string name)
+        {
+            var path = BeltChain.Path(d1, d2, center);
+            if (path == null) throw new InvalidOperationException("The pulleys would overlap at that center distance.");
+            doc.ClearSelection2(true);
+            if (where is Entity) ((Entity)where).Select4(false, null); else ((Feature)where).Select2(false, 0);
+            doc.SketchManager.InsertSketch(true);
+            var sketch = doc.SketchManager.ActiveSketch;
+            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch there. Pick a flat face or a plane.");
+            doc.SketchManager.AddToDB = true;
+            SketchSegment first, second;
+            try
+            {
+                first = doc.SketchManager.CreateCircleByRadius(0, 0, 0, d1 / 2 * Meters);
+                second = doc.SketchManager.CreateCircleByRadius(center * Meters, 0, 0, d2 / 2 * Meters);
+                foreach (var circle in new[] { first, second }) if (circle != null) circle.ConstructionGeometry = true;
+                foreach (var segment in path)
+                {
+                    if (!segment.Arc) doc.SketchManager.CreateLine(segment.X1 * Meters, segment.Y1 * Meters, 0, segment.X2 * Meters, segment.Y2 * Meters, 0);
+                    else doc.SketchManager.CreateArc(segment.Cx * Meters, segment.Cy * Meters, 0, segment.X1 * Meters, segment.Y1 * Meters, 0,
+                        segment.X2 * Meters, segment.Y2 * Meters, 0, (short)(segment.Clockwise ? -1 : 1));
+                }
+            }
+            finally { doc.SketchManager.AddToDB = false; }
+            // The center distance as a dimension, so it can be read off (and changed) later.
+            try
+            {
+                doc.ClearSelection2(true);
+                var a = (first as SketchArc)?.GetCenterPoint2() as SketchPoint;
+                var b = (second as SketchArc)?.GetCenterPoint2() as SketchPoint;
+                if (a != null && b != null && a.Select4(false, null) && b.Select4(true, null))
+                    doc.AddDimension2(center / 2 * Meters, -(Math.Max(d1, d2) / 2 + 0.5) * Meters, 0);
+            }
+            catch (Exception exception) { ErrorLog.Write("belt layout dimension", exception); }
+            doc.ClearSelection2(true);
+            doc.SketchManager.InsertSketch(true);
+            try { ((Feature)sketch).Name = name; } catch (Exception) { } // A duplicate name keeps SOLIDWORKS' own.
+            return "✓ Drew " + ((Feature)sketch).Name + ": pitch circles " + center.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " in apart and the belt's path.";
         }
 
         // ---------- lighten plate ----------

@@ -91,9 +91,17 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 3e.1 | A | Restart SOLIDWORKS after updating | The **CAD Hub** tab has **Lighten Plate**, **Spur Gear** and **Belt and Chain** (no Sign In, Bearing Hole or Hole Pattern on it). Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.1 | A | Restart SOLIDWORKS after updating | The **CAD Hub** tab: Lighten Plate · Spur Gear, Sprocket, Timing Pulley, Shaft, Planetary · Belt and Chain, Gear Ratio (no Sign In, Bearing Hole or Hole Pattern on it). Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
 | 3e.2 | A | New part → **Spur Gear** → 36T, 20 DP, 1/2" hex → ✓ | "CAD Hub Spur Gear1" in the tree; right-click → Edit Feature reopens the page with the same values | ☐ |
 | 3e.3 | A | In an assembly: **Spur Gear** | The gear part is made in `90_COTS/Stock/Gears` and inserted; it's in your next Submit | ☐ |
+| 3e.5 | A | New part → **Sprocket**: #35, 22T, 1/2" hex → ✓ | "CAD Hub Sprocket1"; each roller seat wraps the roller, teeth reach 2.83" across; Edit Feature reopens it | ☐ |
+| 3e.6 | A | New part → **Timing Pulley**: HTD 5 mm, 24T, flanges both sides → ✓ | A pulley with flanges; the result line said 1.5" pitch diameter | ☐ |
+| 3e.7 | A | New part → **Shaft**: 1/2" hex, 6", turned both ends to 0.5 for 0.5 → ✓ | A hex shaft with round ends | ☐ |
+| 3e.8 | A | New part → **Planetary**: 12 / 18 / 3 planets → ✓ | Ring 48, 5:1; sun, three planets and ring as separate bodies, teeth meshing without overlap. Try 13 / 18: it says why that doesn't work | ☐ |
+| 3e.9 | A | In an assembly → **Sprocket** → ✓ | A new part opens with the side panel; on ✓ it's saved in `90_COTS/Stock/Sprockets` and inserted into the assembly | ☐ |
+| 3e.10 | A | **Gear Ratio**: NEO Vortex, 12:60, 18:36, 4" wheel | "Ratio 10:1 → 678 rpm … 11.8 ft/s" | ☐ |
+| 3e.11 | A | **Belt and Chain**: HTD, 18T/36T, 100T → click a plate face → ✓ | A sketch "HTD 5mm 18T-36T 100T layout": two construction pitch circles with the center distance dimensioned, and the belt path | ☐ |
+| 3e.12 | A | Spur Gear → Advanced: hub 1", length 0.25 → ✓ | The hub is on the back, with the same bore | ☐ |
 | 3e.4 | A | Open a part with a "CAD Hub Bearing Hole" from an earlier version | It still rebuilds (the tool was removed, not the feature) | ☐ |
 
 ## 4. Together: nobody overwrites anybody

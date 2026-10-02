@@ -147,6 +147,7 @@ static class Program
             WhereUsedChecks();
             ToolChecks();
             FeatureChecks();
+            PowertrainChecks();
             HealthChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
@@ -243,6 +244,83 @@ static class Program
             Math.Sqrt((seg.X2 - seg.Cx) * (seg.X2 - seg.Cx) + (seg.Y2 - seg.Cy) * (seg.Y2 - seg.Cy))) < 1e-9)), "Every corner is a true arc");
         Check(PlateLighten.Plan(outline, plateHoles, null, new LightenSettings { Rib = 3 }).Pockets.Count == 0, "Ribs too wide for the plate: nothing cut");
         Check(PlateLighten.Triangulate(new System.Collections.Generic.List<double[]> { new[] { 0.0, 0 }, new[] { 1.0, 0 }, new[] { 0.0, 1 }, new[] { 1.0, 1 } }).Count == 2, "Four points: two triangles");
+    }
+
+    // Sprockets, pulleys, planetary sets and ratios: the shapes the powertrain tools extrude.
+    static void PowertrainChecks()
+    {
+        Func<System.Collections.Generic.List<double[]>, double> maxR = o => o.Max(p => Math.Sqrt(p[0] * p[0] + p[1] * p[1]));
+        Func<System.Collections.Generic.List<double[]>, double> minR = o => o.Min(p => Math.Sqrt(p[0] * p[0] + p[1] * p[1]));
+        var chain = Powertrain.Chains[1];
+        var sprocket = Powertrain.SprocketOutline(chain, 30);
+        double pd = Powertrain.SprocketPitchDiameter(chain, 30), seat = (1.005 * chain.Roller + 0.003) / 2;
+        Check(Math.Abs(pd - 3.5876) < 0.001 && PlateLighten.SignedArea(sprocket) > 0, "#35 30T sprocket: pitch diameter 3.588\"");
+        Check(maxR(sprocket) <= Powertrain.SprocketOutsideDiameter(chain, 30) / 2 + 1e-3 && Math.Abs(minR(sprocket) - (pd / 2 - seat)) < 0.005,
+            "Sprocket teeth reach the outside diameter at most, roots at the roller seats");
+        bool rollersFit = Enumerable.Range(0, 30).All(k => sprocket.All(p => Math.Sqrt(Math.Pow(p[0] - pd / 2 * Math.Cos(2 * Math.PI * k / 30), 2) +
+            Math.Pow(p[1] - pd / 2 * Math.Sin(2 * Math.PI * k / 30), 2)) >= seat - 1e-3));
+        Check(rollersFit, "Every roller sits in its seat (no tooth inside a seat)");
+        Check(Powertrain.SprocketProblem(7) != null && Powertrain.SprocketProblem(22) == null, "Sprocket tooth counts checked");
+
+        var htd = Powertrain.Belts[0];
+        var pulley = Powertrain.PulleyOutline(htd, 24);
+        double od = Powertrain.PulleyOutsideDiameter(htd, 24);
+        Check(Math.Abs(Powertrain.PulleyPitchDiameter(htd, 24) - 24 * 5 / Math.PI / 25.4) < 1e-9 && maxR(pulley) <= od / 2 + 1e-3 && maxR(pulley) > od / 2 - 0.01 &&
+            Math.Abs(minR(pulley) - (od / 2 - htd.Depth)) < 0.005, "HTD 24T pulley: outside " + od.ToString("0.000") + "\", grooves the belt tooth's depth");
+
+        Check(Powertrain.PlanetaryProblem(12, 18, 48, 3) == null && Powertrain.PlanetaryProblem(12, 18, 50, 3) != null &&
+            Powertrain.PlanetaryProblem(15, 18, 51, 3) == null && Powertrain.PlanetaryProblem(13, 18, 49, 3) != null && Powertrain.PlanetaryProblem(12, 18, 48, 5) != null && Powertrain.PlanetaryProblem(12, 30, 72, 4) != null,
+            "Planetary tooth counts: ring = sun + 2 planets, evenly spaced planets, planets don't collide");
+        Check(Math.Abs(Powertrain.PlanetaryRatio(12, 48) - 5) < 1e-9, "Planetary ratio 1 + ring/sun");
+        // The real test: placed as the tool places them, no teeth overlap.
+        foreach (var set in new[] { new[] { 12, 18, 48, 3 }, new[] { 15, 18, 51, 3 }, new[] { 16, 16, 48, 4 } })
+        {
+            int sun = set[0], planet = set[1], ring = set[2], count = set[3];
+            double dp = 20, backlash = 0.004;
+            var sunPath = Poly(SpurGear.Outline(sun, dp, 20, 8, backlash));
+            double ringTurn = Powertrain.RingTurn(sun, planet, ring, count);
+            var cavity = Poly(SpurGear.Outline(ring, dp, 20, 8, -backlash, 1.25, 1).Select(p => Rotate(p, ringTurn)).ToList());
+            var ringPath = Clipper2Lib.Clipper.Difference(new Clipper2Lib.PathsD { Powertrain.Disc(0, 0, ring / dp / 2 + 0.3) }, new Clipper2Lib.PathsD { cavity },
+                Clipper2Lib.FillRule.NonZero, 5);
+            double worst = 0;
+            foreach (var at in Powertrain.Planets(sun, planet, count, dp))
+            {
+                var planetPath = Poly(SpurGear.Outline(planet, dp, 20, 8, backlash).Select(p => Rotate(p, at[2])).Select(p => new[] { p[0] + at[0], p[1] + at[1] }).ToList());
+                worst = Math.Max(worst, Overlap(planetPath, new Clipper2Lib.PathsD { sunPath }));
+                worst = Math.Max(worst, Overlap(planetPath, ringPath));
+            }
+            var wrong = Poly(SpurGear.Outline(planet, dp, 20, 8, backlash).Select(p => Rotate(p, Powertrain.Planets(sun, planet, count, dp)[0][2] + Math.PI / planet))
+                .Select(p => new[] { p[0] + (sun + planet) / dp / 2, p[1] }).ToList());
+            Check(worst < 1e-4 && Overlap(wrong, new Clipper2Lib.PathsD { sunPath }) > 1e-3,
+                "Planetary " + sun + "/" + planet + "/" + ring + " ×" + count + ": every planet meshes with the sun and the ring (overlap " + worst.ToString("0.000000") + " sq in)");
+        }
+
+        double ratio = Powertrain.Ratio(new[] { new[] { 12, 60 }, new[] { 18, 36 }, new[] { 0, 0 } });
+        Check(Math.Abs(ratio - 10) < 1e-9 && Math.Abs(Powertrain.WheelSpeed(6000, 10, 4) - 6000 / 10.0 * Math.PI * 4 / 12 / 60) < 1e-9, "Gear ratio across stages and wheel speed");
+        Check(Bores.Size(0) > 0.5 && Bores.Loop(4) == null && Math.Abs(Bores.Size(2) - 0.502) < 0.01 && Bores.Loop(5).Max(p => p[1]) > 0.25 + 0.06,
+            "Bores: hex, round, none, and a keyway that reaches past the bore");
+        var thin = SpurGear.Outline(36, 20, 20, 8, 0.01);
+        var full = SpurGear.Outline(36, 20, 20, 8, 0);
+        Check(PlateLighten.SignedArea(thin) < PlateLighten.SignedArea(full), "Backlash thins the teeth");
+        var path = BeltChain.Path(1.5, 3.0, 6.0);
+        double drawn = 0;
+        foreach (var seg in path)
+        {
+            if (!seg.Arc) { drawn += Math.Sqrt((seg.X2 - seg.X1) * (seg.X2 - seg.X1) + (seg.Y2 - seg.Y1) * (seg.Y2 - seg.Y1)); continue; }
+            double r = Math.Sqrt((seg.X1 - seg.Cx) * (seg.X1 - seg.Cx) + (seg.Y1 - seg.Cy) * (seg.Y1 - seg.Cy));
+            double sweep = Math.Atan2(seg.Y1 - seg.Cy, seg.X1 - seg.Cx) - Math.Atan2(seg.Y2 - seg.Cy, seg.X2 - seg.Cx); // clockwise
+            while (sweep <= 0) sweep += 2 * Math.PI;
+            drawn += r * sweep;
+        }
+        Check(Math.Abs(drawn - BeltChain.Length(6.0, 1.5, 3.0)) < 1e-6 && path.Count == 4 && BeltChain.Path(1, 3, 0.5) == null,
+            "Belt layout path is exactly the calculator's belt length (" + drawn.ToString("0.0000") + " in)");
+    }
+
+    static Clipper2Lib.PathD Poly(System.Collections.Generic.List<double[]> points) { return new Clipper2Lib.PathD(points.Select(p => new Clipper2Lib.PointD(p[0], p[1]))); }
+    static double[] Rotate(double[] p, double a) { return new[] { p[0] * Math.Cos(a) - p[1] * Math.Sin(a), p[0] * Math.Sin(a) + p[1] * Math.Cos(a) }; }
+    static double Overlap(Clipper2Lib.PathD a, Clipper2Lib.PathsD b)
+    {
+        return Math.Abs(Clipper2Lib.Clipper.Area(Clipper2Lib.Clipper.Intersect(new Clipper2Lib.PathsD { a }, b, Clipper2Lib.FillRule.NonZero, 5)));
     }
 
     // Phase 1 framework: stored feature settings, team standards from the catalog, bearing hole sizes.

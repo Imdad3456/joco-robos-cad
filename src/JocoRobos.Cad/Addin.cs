@@ -48,6 +48,11 @@ namespace JocoRobos.Cad
         [DispId(27)] void MakeGear();
         [DispId(28)] void BeltChainCalculator();
         [DispId(29)] void LightenPlate();
+        [DispId(33)] void MakeSprocket();
+        [DispId(34)] void MakePulley();
+        [DispId(35)] void MakeShaft();
+        [DispId(36)] void MakePlanetary();
+        [DispId(37)] void GearRatio();
     }
 
     [ComVisible(true)]
@@ -65,7 +70,7 @@ namespace JocoRobos.Cad
         private const int GroupId = 591913; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
         private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591926;
+        private const int LayoutVersion = 591927;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -185,6 +190,11 @@ namespace JocoRobos.Cad
                 // Modeling tools: on the CAD Hub tab (below), grouped like SOLIDWORKS' own.
                 int gear = Add(group, "Spur Gear", "A spur gear from tooth count, pitch, pressure angle, width and bore (an editable CAD Hub feature in a part)", nameof(MakeGear), 26, both, 18);
                 int beltChain = Add(group, "Belt and Chain", "Center distance for HTD/GT2 belts and #25/#35 chain, and the lengths for a distance you want", nameof(BeltChainCalculator), 27, both, 23);
+                int sprocket = Add(group, "Sprocket", "A #25 or #35 roller chain sprocket: teeth, bore, hub (an editable CAD Hub feature)", nameof(MakeSprocket), 32, both, 25);
+                int pulley = Add(group, "Timing Pulley", "An HTD 5 mm or GT2 3 mm pulley: teeth, belt width, flanges, bore, hub (an editable CAD Hub feature)", nameof(MakePulley), 33, both, 26);
+                int shaft = Add(group, "Shaft", "A hex or round shaft, plain or with turned ends (an editable CAD Hub feature)", nameof(MakeShaft), 34, both, 27);
+                int planetary = Add(group, "Planetary", "A planetary gearset: sun, planets and ring that mesh, with its ratio (an editable CAD Hub feature)", nameof(MakePlanetary), 35, both, 28);
+                int ratio = Add(group, "Gear Ratio", "Motor, up to three stages and a wheel: the ratio, output speed and robot speed", nameof(GearRatio), 36, both, 29);
                 int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
@@ -215,7 +225,7 @@ namespace JocoRobos.Cad
                     // The tab is for modeling (Lighten Plate · Spur Gear, Belt and Chain); team work (Open Robot, Edit, Submit, Library)
                     // lives in the CAD Hub task pane and the Tools menu.
                     int below = (int)swCommandTabButtonTextDisplay_e.swCommandTabButton_TextBelow;
-                    foreach (var section in new[] { new[] { lighten }, new[] { gear, beltChain } })
+                    foreach (var section in new[] { new[] { lighten }, new[] { gear, sprocket, pulley, shaft, planetary }, new[] { beltChain, ratio } })
                     {
                         CommandTabBox box = tab.AddCommandTabBox();
                         int[] ids = section.Select(x => group.get_CommandID(x)).ToArray();

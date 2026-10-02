@@ -23,8 +23,9 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 
 **Modeling tools** live on the **CAD Hub tab** in SOLIDWORKS' CommandManager; team work (Open Robot, Edit, Submit, Library) stays in the CAD Hub panel. They open in the left side panel (PropertyManager), remember your last settings, and need no Onshape calls:
 - **Lighten Plate**: click a plate's face; pockets with ribs between its holes (close holes count as one group) and its corners, following round holes and curved edges with arcs, rounded for your router bit. ✓ cuts them as an ordinary cut and says the weight saved.
-- **Spur Gear** from teeth, pitch, pressure angle, width and bore: an editable **CAD Hub feature** in a part (right-click → Edit Feature to change it); in an assembly it makes the gear part and inserts it.
-- **Belt and Chain**: center distance for HTD/GT2 belts and #25/#35 chain as you change the numbers, or the lengths either side of a distance you want; click a dimension into its box and ✓ sets it.
+- **Spur Gear**, **Sprocket** (#25/#35), **Timing Pulley** (HTD 5 mm, GT2 3 mm, flanges), **Shaft** (hex or round, turned ends) and **Planetary** (sun, planets and ring that mesh): editable **CAD Hub features** in a part (right-click → Edit Feature to change them), with bore, hub and backlash options. In an assembly, the part is saved into the robot (`90_COTS/Stock/…`) and inserted.
+- **Gear Ratio**: motor, up to three stages and a wheel → ratio, output speed and robot speed.
+- **Belt and Chain**: center distance for HTD/GT2 belts and #25/#35 chain as you change the numbers, or the lengths either side of a distance you want; click a dimension into its box and ✓ sets it, or a flat face or plane and ✓ draws the layout sketch (pitch circles and belt path).
 
 In search, **⚡** marks FRCDesignLib parts the team Library already has (instant); with nothing typed, the Library tab shows the team's most-used parts. The **×** box next to Insert adds several at once.
 

@@ -34,7 +34,10 @@ namespace JocoRobos.Cad
         private readonly Dictionary<int, object> controls = new Dictionary<int, object>();
         private PropertyManagerPage2 page;
         private PropertyManagerPageLabel result;
-        private Body2 preview;
+        private List<Body2> preview = new List<Body2>();
+        /// <summary>Set when the page was opened from an assembly on a new part: called after ✓ (true) or ✗ (false).</summary>
+        internal Action<bool> Finished;
+        internal FeatureParams Values { get { return values; } }
         private bool okay;
         private object chosen;
         private double[] chosenPoint;
@@ -169,17 +172,17 @@ namespace JocoRobos.Cad
                 if (result != null) result.Caption = problem ?? tool.Result(values, standards, chosen);
                 ClearPreview();
                 if (problem != null) return;
-                preview = tool.Build(application, values, true);
-                preview?.Display3(null, 0x2090F0, (int)swTempBodySelectOptions_e.swTempBodySelectOptionNone); // orange-ish, like SOLIDWORKS previews
+                preview = tool.BuildBodies(application, values, true);
+                foreach (var body in preview) body.Display3(null, 0x2090F0, (int)swTempBodySelectOptions_e.swTempBodySelectOptionNone); // orange-ish, like SOLIDWORKS previews
             }
             catch (Exception exception) { ErrorLog.Write(tool.Title + " preview", exception); }
         }
 
         private void ClearPreview()
         {
-            if (preview == null) return;
-            try { preview.Hide(doc as PartDoc); } catch (Exception) { }
-            preview = null;
+            foreach (var body in preview)
+                try { body.Hide(doc as PartDoc); } catch (Exception) { }
+            preview = new List<Body2>();
         }
 
         // ---------- PropertyManager callbacks ----------
@@ -221,6 +224,8 @@ namespace JocoRobos.Cad
             if (face != null) { var surface = face.GetSurface() as Surface; return surface != null && surface.IsPlane(); }
             var edge = selection as Edge;
             if (edge != null) { var curve = edge.GetCurve() as Curve; return curve != null && curve.IsCircle(); }
+            var plane = selection as Feature;
+            if (plane != null) return plane.GetTypeName2() == "RefPlane";
             return selection is DisplayDimension;
         }
 
@@ -261,7 +266,7 @@ namespace JocoRobos.Cad
         {
             ClearPreview();
             if (open == this) open = null;
-            if (!okay) return;
+            if (!okay) { Finished?.Invoke(false); return; }
             Remember();
             if (!tool.AnyDocument && doc.IsOpenedReadOnly())
             {
@@ -278,7 +283,12 @@ namespace JocoRobos.Cad
                     if (!String.IsNullOrEmpty(done)) report(done);
                 }
                 else if (editing != null) { Update(); report("✓ Updated " + editing.Name + "."); }
-                else report("✓ Added " + Insert().Name + ". Right-click it → Edit Feature to change it.");
+                else
+                {
+                    var feature = Insert();
+                    if (Finished != null) Finished(true);
+                    else report("✓ Added " + feature.Name + ". Right-click it → Edit Feature to change it.");
+                }
             }
             catch (Exception exception)
             {
@@ -328,6 +338,7 @@ namespace JocoRobos.Cad
                     doc.ClearSelection2(true);
                     var entity = preselected as Entity;
                     if (entity != null) entity.Select4(true, data);
+                    else if (preselected is Feature) ((Feature)preselected).Select2(true, SelectionMark);
                     else ((preselected as DisplayDimension)?.GetAnnotation() as Annotation)?.Select3(true, data);
                     if (chosen == null) chosen = preselected; // In case SOLIDWORKS doesn't report the selection to the box.
                 }
@@ -388,9 +399,10 @@ namespace JocoRobos.Cad
                 var values = FeatureParams.Decode(stored);
                 var tool = CadHubTool.Find(values["kind"]);
                 if (tool == null) return "This CAD Hub feature needs a newer CAD Hub.";
-                var body = tool.Build((SldWorks)app, values, false);
-                if (body == null) return "Nothing to build: edit the feature and check its settings.";
-                if (!tool.Cuts) return body;
+                var bodies = tool.BuildBodies((SldWorks)app, values, false);
+                if (bodies.Count == 0) return "Nothing to build: edit the feature and check its settings.";
+                if (!tool.Cuts) return bodies.Count == 1 ? (object)bodies[0] : bodies.Cast<object>().ToArray();
+                var body = bodies[0];
                 var target = data.EditBody ?? ((data.EditBodies as object[]) ?? new object[0]).OfType<Body2>().FirstOrDefault();
                 if (target == null) return "The body this feature cuts is missing.";
                 int error = 0;

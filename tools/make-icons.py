@@ -11,7 +11,9 @@ ORDER = ['open-robot', 'update', 'edit', 'submit', 'insert-library',  # Image in
          'sign-in', 'test-connection', 'change-password', 'release-edit', 'choose-robot',  # 5..9: Tools menu.
          'open-old-robot', 'set-aside', 'restore-deleted', 'insert-external', 'import-references',  # 10..14
          'upgrade-files', 'repair-references', 'install-update',  # 15..17
-         'spur-gear', 'bearing-hole', 'stock-part', 'lighten-plate', 'hole-pattern', 'belt-chain', 'tube-profiles']  # 18..24: CAD Hub tab tools
+         'spur-gear', 'bearing-hole', 'stock-part', 'lighten-plate', 'hole-pattern', 'belt-chain', 'tube-profiles',  # 18..24: CAD Hub tab tools
+         'sprocket', 'pulley', 'shaft', 'planetary', 'gear-ratio',  # 25..29: powertrain
+         'connector', 'wire', 'zip-tie', 'harness', 'wiring-report', 'mounting-pattern']  # 30..35: electrical, mounting patterns
 SIZES = [20, 32, 40, 64, 96, 128]
 
 sources = [Image.open(ICONS / 'source' / (name + '.png')).convert('RGBA') for name in ORDER]

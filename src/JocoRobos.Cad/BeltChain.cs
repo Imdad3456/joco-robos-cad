@@ -53,6 +53,26 @@ namespace JocoRobos.Cad
             return (low + high) / 2;
         }
 
+        /// <summary>
+        /// The belt's path around two pulleys (pitch diameters d1 at the origin, d2 at (center, 0)): the top straight run, the arc
+        /// around pulley 2, the bottom run, and the arc around pulley 1 (counterclockwise arcs). Null if they overlap.
+        /// </summary>
+        internal static List<PocketSegment> Path(double d1, double d2, double center)
+        {
+            double r1 = d1 / 2, r2 = d2 / 2;
+            if (center <= Math.Abs(r1 - r2) || center <= 0) return null;
+            // The straight runs touch both pitch circles where the normal makes this angle with the line of centers.
+            double phi = Math.Acos((r1 - r2) / center), c = Math.Cos(phi), s = Math.Sin(phi);
+            double[] top1 = { r1 * c, r1 * s }, top2 = { center + r2 * c, r2 * s }, bottom1 = { r1 * c, -r1 * s }, bottom2 = { center + r2 * c, -r2 * s };
+            return new List<PocketSegment>
+            {
+                new PocketSegment { X1 = top1[0], Y1 = top1[1], X2 = top2[0], Y2 = top2[1] },
+                new PocketSegment { Arc = true, Clockwise = true, X1 = top2[0], Y1 = top2[1], X2 = bottom2[0], Y2 = bottom2[1], Cx = center, Cy = 0 },
+                new PocketSegment { X1 = bottom2[0], Y1 = bottom2[1], X2 = bottom1[0], Y2 = bottom1[1] },
+                new PocketSegment { Arc = true, Clockwise = true, X1 = bottom1[0], Y1 = bottom1[1], X2 = top1[0], Y2 = top1[1], Cx = 0, Cy = 0 },
+            };
+        }
+
         /// <summary>The lengths just shorter and just longer than what a center distance needs (chains: even link counts).</summary>
         internal static Tuple<int, int> NearestLengths(DriveKind kind, int teeth1, int teeth2, double center)
         {

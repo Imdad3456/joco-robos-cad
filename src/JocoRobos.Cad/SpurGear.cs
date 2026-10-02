@@ -20,15 +20,21 @@ namespace JocoRobos.Cad
             return null;
         }
 
-        /// <summary>The closed outline: for each tooth, root, one flank, tip, the other flank. pointsPerFlank sets smoothness.</summary>
-        internal static List<double[]> Outline(int teeth, double diametralPitch, double pressureDegrees, int pointsPerFlank = 8)
+        /// <summary>
+        /// The closed outline: for each tooth, root, one flank, tip, the other flank. pointsPerFlank sets smoothness. Backlash
+        /// (inches, the gap the pair runs with) thins each tooth by half of it. Addendum and dedendum are in modules (1/DP); swapped
+        /// (1.25 out, 1 in) and with negative backlash, it's the tooth spaces of an internal (ring) gear.
+        /// </summary>
+        internal static List<double[]> Outline(int teeth, double diametralPitch, double pressureDegrees, int pointsPerFlank = 8, double backlash = 0,
+            double addendum = 1, double dedendum = 1.25)
         {
             double phi = pressureDegrees * Math.PI / 180;
             double r = teeth / (2 * diametralPitch), rb = r * Math.Cos(phi);
-            double ra = r + 1 / diametralPitch, rf = Math.Max(0.05, r - 1.25 / diametralPitch);
+            double ra = r + addendum / diametralPitch, rf = Math.Max(0.05, r - dedendum / diametralPitch);
             double involuteAtPitch = Math.Tan(phi) - phi;
-            // Half the tooth's angular width at the base circle: half the pitch-circle thickness angle plus the involute angle.
-            double halfBase = Math.PI / (2 * teeth) + involuteAtPitch;
+            // Half the tooth's angular width at the base circle: half the pitch-circle thickness angle plus the involute angle,
+            // less half the backlash on each side.
+            double halfBase = Math.PI / (2 * teeth) + involuteAtPitch - backlash / 4 / r;
             double tMax = Math.Sqrt(ra * ra / (rb * rb) - 1);
             double tMin = rf > rb ? Math.Sqrt(rf * rf / (rb * rb) - 1) : 0;
             // One flank (the tooth's right side, centered on angle 0): points from the root up to the tip.
