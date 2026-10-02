@@ -51,7 +51,8 @@ namespace JocoRobos.Cad
         /// <summary>The body to add, or the tool to cut with, in meters.</summary>
         internal abstract Body2 Build(SldWorks application, FeatureParams p, bool preview);
 
-        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new SpurGearTool(), new BearingHoleTool(), new LightenTool(), new HolePatternTool(), new BeltChainTool() };
+        internal static readonly List<CadHubTool> All = new List<CadHubTool> { new LightenTool(), new BeltChainTool(), new SpurGearTool(), new BearingHoleTool() };
+        // Spur Gear and Bearing Hole are no longer on the tab: kept so the CAD Hub features earlier versions made still rebuild and edit.
         internal static CadHubTool Find(string kind) { return All.FirstOrDefault(t => t.Kind == kind); }
 
         // ---------- shared geometry ----------
@@ -159,18 +160,6 @@ namespace JocoRobos.Cad
         internal override string Title { get { return "Bearing Hole"; } }
         internal override bool Cuts { get { return true; } }
         internal override bool NeedsSelection { get { return true; } }
-        // An ordinary sketch circle (with its diameter dimension) and a cut: it rebuilds like any feature, and the size can be
-        // changed by editing the sketch. (Bearing Holes made by 1.9.x as CAD Hub features still rebuild.)
-        internal override bool MakesFeature { get { return false; } }
-
-        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
-        {
-            var presets = BearingHoles.Presets(standards);
-            var bearing = presets[Math.Max(0, Math.Min(presets.Count - 1, (int)p.Number("bearing", 0)))];
-            return Addin.CutBearingHole(application, doc, selection, new[] { p.Number("cx", 0), p.Number("cy", 0), p.Number("cz", 0) },
-                new[] { p.Number("ax", 0), p.Number("ay", 0), p.Number("az", 1) }, p.Number("bore", 1.1265), bearing.Name);
-        }
-
         internal override List<ToolField> Fields(TeamStandards standards)
         {
             return new List<ToolField>
@@ -281,54 +270,6 @@ namespace JocoRobos.Cad
         internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
         {
             return Addin.CutPockets(application, doc, selection as Face2, Settings(p), p.Number("depth", 0));
-        }
-    }
-
-    /// <summary>Hole Pattern on the PropertyManager: pick the tube's side; rows fill it on the grid or a number you choose.</summary>
-    internal sealed class HolePatternTool : CadHubTool
-    {
-        internal override string Kind { get { return "holes"; } }
-        internal override string Title { get { return "Hole Pattern"; } }
-        internal override bool Cuts { get { return true; } }
-        internal override bool NeedsSelection { get { return true; } }
-        internal override bool MakesFeature { get { return false; } }
-        internal override int[] SelectionFilters { get { return new[] { (int)swSelectType_e.swSelFACES }; } }
-
-        internal override List<ToolField> Fields(TeamStandards standards)
-        {
-            return new List<ToolField>
-            {
-                new ToolField { Key = "face", Label = "Side of the tube: click a long flat side", Kind = FieldKind.Selection },
-                new ToolField { Key = "rows", Label = "Rows", Kind = FieldKind.Choice, Items = new List<string> { "Fill the side (on the row spacing)", "1", "2", "3", "4", "5" },
-                    Tip = "Fill the side: 3 rows on a 2\" side, 1 on a 1\" side, with 0.5\" spacing." },
-                new ToolField { Key = "spacing", Label = "Spacing along the tube", Kind = FieldKind.Length, Min = 0.1, Max = 12, Default = 0.5, Step = 0.125 },
-                new ToolField { Key = "diameter", Label = "Hole diameter (#10 clearance 0.196)", Kind = FieldKind.Length, Min = 0.05, Max = 2, Default = 0.196, Step = 0.001 },
-                new ToolField { Key = "rowSpacing", Label = "Row spacing", Kind = FieldKind.Length, Min = 0.1, Max = 6, Default = 0.5, Step = 0.125 },
-                new ToolField { Key = "start", Label = "First hole from the end", Kind = FieldKind.Length, Min = 0, Max = 12, Default = 0.25, Step = 0.125 },
-            };
-        }
-
-        internal override string Problem(FeatureParams p)
-        {
-            if (p.Number("diameter", 0.196) >= p.Number("spacing", 0.5)) return "The holes are bigger than their spacing.";
-            if ((int)p.Number("rows", 0) != 1 && p.Number("rowSpacing", 0.5) <= p.Number("diameter", 0.196)) return "Row spacing must be bigger than the hole diameter.";
-            return null;
-        }
-
-        internal override string Result(FeatureParams p, TeamStandards standards, object selection)
-        {
-            var face = selection as Face2;
-            if (face == null) return "Click the side of the tube.";
-            int count, rows;
-            string problem = Addin.PlanHoles(face, p, out count, out rows);
-            return problem ?? count + " holes in " + rows + (rows == 1 ? " row" : " rows") + ", through both walls.";
-        }
-
-        internal override Body2 Build(SldWorks application, FeatureParams p, bool preview) { return null; }
-
-        internal override string Apply(SldWorks application, ModelDoc2 doc, FeatureParams p, object selection, TeamStandards standards)
-        {
-            return Addin.CutHolePattern(application, doc, selection as Face2, p);
         }
     }
 

@@ -9,69 +9,12 @@ using SolidWorks.Interop.swconst;
 namespace JocoRobos.Cad
 {
     /// <summary>
-    /// CAD Hub's modeling tools: spur gears, the belt and chain calculator, Lighten Plate, the hole pattern and bearing holes.
-    /// The math lives in StockParts (hole layout), SpurGear, BeltChain and PlateLighten (tested without SOLIDWORKS); this part only drives SOLIDWORKS.
+    /// CAD Hub's modeling tools: Lighten Plate and the belt and chain calculator (and rebuilding CAD Hub gear and bearing hole
+    /// features made by earlier versions). The math lives in PlateLighten and BeltChain (tested without SOLIDWORKS).
     /// </summary>
     public sealed partial class Addin
     {
         private const double Meters = 0.0254; // SOLIDWORKS' API works in meters; CAD Hub's tools in inches.
-
-        // A new file (a gear) saved into the robot: like any new part, it goes to the team with the student's
-        // next Submit (where they can still uncheck it).
-        private void SaveNewFile(ModelDoc2 doc, string path)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
-            int errors = 0, warnings = 0;
-            try
-            {
-                if (!doc.Extension.SaveAs3(path, (int)swSaveAsVersion_e.swSaveAsCurrentVersion, (int)swSaveAsOptions_e.swSaveAsOptions_Silent, null, null, ref errors, ref warnings) || !File.Exists(path))
-                    throw new InvalidOperationException("Couldn't save " + Path.GetFileName(path) + " (error " + errors + ").");
-            }
-            finally { application.CloseDoc(doc.GetTitle()); }
-        }
-
-        // Inserts a configuration of a part, as many times as asked; without an assembly, opens it in that configuration.
-        private void DeliverConfigured(ModelDoc2 assemblyDoc, string path, string configuration, int copies, string name)
-        {
-            if (assemblyDoc == null)
-            {
-                int errors = 0, warnings = 0;
-                var doc = application.OpenDoc6(path, (int)swDocumentTypes_e.swDocPART, (int)swOpenDocOptions_e.swOpenDocOptions_Silent, configuration, ref errors, ref warnings);
-                if (doc == null) throw new InvalidOperationException(name + " is in the robot at\n" + path + "\nbut SOLIDWORKS couldn't open it (error " + errors + ").");
-                doc.ShowConfiguration2(configuration);
-                ShowFlash("✓ " + name + " is open (90_COTS/Stock). Drag it into any assembly; it goes to the team with your next Submit.");
-                return;
-            }
-            for (int i = 0; i < copies; i++) AddToAssembly(assemblyDoc, path, configuration, i * 0.05);
-            ShowFlash("✓ Inserted " + (copies > 1 ? copies + "× " : "") + name + ". Mate it, save, and Submit (the new part goes with it).");
-        }
-
-        // ---------- building stock geometry ----------
-
-        private ModelDoc2 NewPart()
-        {
-            string template = application.GetUserPreferenceStringValue((int)swUserPreferenceStringValue_e.swDefaultTemplatePart);
-            var doc = application.NewDocument(template, 0, 0, 0) as ModelDoc2;
-            if (doc == null) throw new InvalidOperationException("SOLIDWORKS couldn't start a new part. Check Tools → Options → Default Templates.");
-            doc.Extension.SetUserPreferenceInteger((int)swUserPreferenceIntegerValue_e.swUnitSystem, 0, (int)swUnitSystem_e.swUnitSystem_IPS);
-            doc.SketchManager.AddToDB = true;
-            doc.SketchManager.DisplayWhenAdded = false;
-            return doc;
-        }
-
-        // The standard planes by position (Front, Top, Right), so it works in every SOLIDWORKS language.
-        private static void SelectPlane(ModelDoc2 doc, int which)
-        {
-            int seen = 0;
-            for (var feature = doc.FirstFeature() as Feature; feature != null; feature = feature.GetNextFeature() as Feature)
-            {
-                if (feature.GetTypeName2() != "RefPlane") continue;
-                if (seen++ == which) { doc.ClearSelection2(true); feature.Select2(false, 0); return; }
-            }
-            throw new InvalidOperationException("The part template has no standard planes.");
-        }
-
-        private const int Front = 0, Top = 1, Right = 2;
 
         private static Feature Extrude(ModelDoc2 doc, double inches, bool cut = false)
         {
@@ -94,12 +37,6 @@ namespace JocoRobos.Cad
             return feature;
         }
 
-        private static void Hexagon(ModelDoc2 doc, double acrossFlats)
-        {
-            // Inscribed: the circle touches the flats, so its radius is half the size across flats.
-            doc.SketchManager.CreatePolygon(0, 0, 0, acrossFlats / 2 * Meters, 0, 0, 6, true);
-        }
-
         // ---------- the PropertyManager tools (framework in ToolPage and CadHubTools) ----------
 
         // The add-in that's running, for CAD Hub features' Edit Feature (SOLIDWORKS creates those objects itself).
@@ -115,14 +52,13 @@ namespace JocoRobos.Cad
             catch (InvalidOperationException busy) { report("✗ " + busy.Message); }
         }
 
-        // Opens a tool's page in the PropertyManager (the left side panel). The gear starts a new part when nothing is open; the
-        // others work on the open part (Belt and Chain on any document). A read-only team part needs Edit first.
+        // Opens a tool's page in the PropertyManager (the left side panel): Lighten Plate on the open part, Belt and Chain on any
+        // document. A read-only team part needs Edit first.
         private void ShowTool(CadHubTool tool)
         {
             try
             {
                 var doc = application.ActiveDoc as ModelDoc2;
-                if (doc == null && tool.Kind == "gear") doc = NewPart();
                 if (doc == null && tool.AnyDocument)
                 {
                     // Nothing open to show a side panel in: the calculator in its own window.
@@ -142,98 +78,6 @@ namespace JocoRobos.Cad
             {
                 ErrorLog.Write(tool.Title, exception);
                 Message(exception.Message, MessageBoxIcon.Warning);
-            }
-        }
-
-        public void BearingHole() { ShowTool(CadHubTool.Find("bearing-hole")); }
-
-        // A bearing bore: a circle on the face (with its diameter dimension, so it can be changed later) and a cut through.
-        internal static string CutBearingHole(SldWorks app, ModelDoc2 doc, object selection, double[] center, double[] axis, double bore, string bearing)
-        {
-            var face = selection as Face2;
-            if (face == null && selection is Edge)
-                // A round edge (resizing a hole): the flat face it lies on.
-                face = (((Edge)selection).GetTwoAdjacentFaces2() as object[] ?? new object[0]).OfType<Face2>()
-                    .FirstOrDefault(f => (f.GetSurface() as Surface)?.IsPlane() == true);
-            if (face == null) throw new InvalidOperationException("Click the flat face where the bearing goes.");
-            doc.ClearSelection2(true);
-            ((Entity)face).Select4(false, null);
-            doc.SketchManager.InsertSketch(true);
-            var sketch = doc.SketchManager.ActiveSketch;
-            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
-            var math = (MathUtility)app.GetMathUtility();
-            var at = (double[])((MathPoint)((MathPoint)math.CreatePoint(center)).MultiplyTransform(sketch.ModelToSketchTransform)).ArrayData;
-            doc.SketchManager.AddToDB = true;
-            SketchSegment circle;
-            try { circle = doc.SketchManager.CreateCircleByRadius(at[0], at[1], 0, bore / 2 * Meters); }
-            finally { doc.SketchManager.AddToDB = false; }
-            if (circle == null) throw new InvalidOperationException("SOLIDWORKS couldn't draw the bore.");
-            doc.ClearSelection2(true);
-            circle.Select4(false, null);
-            doc.AddDimension2(at[0] + bore * Meters, at[1] + bore * Meters, 0);
-            doc.ClearSelection2(true);
-            var feature = CutThroughBoth(doc);
-            string name = "Bearing Hole (" + bearing + ")";
-            for (int n = 1; n < 50 && !TryRename(feature, n == 1 ? name : name + " " + n); n++) { }
-            return "✓ " + feature.Name + ": ⌀" + bore.ToString("0.0000", System.Globalization.CultureInfo.InvariantCulture) +
-                " in, through. To change the size later, edit its sketch's diameter.";
-        }
-
-        private static bool TryRename(Feature feature, string name)
-        {
-            try { feature.Name = name; return feature.Name == name; }
-            catch (Exception) { return false; }
-        }
-
-        // ---------- spur gears ----------
-
-        public void MakeGear()
-        {
-            // In a part: the native page and an editable feature. In an assembly: a gear part made for the robot and inserted.
-            var active = application.ActiveDoc as ModelDoc2;
-            if (active == null || active.GetType() == (int)swDocumentTypes_e.swDocPART) { ShowTool(CadHubTool.Find("gear")); return; }
-            using (var dialog = new GearDialog())
-            {
-                if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                Execute(() =>
-                {
-                    var login = GetLogin(false);
-                    if (login == null) return;
-                    var catalog = LoadCatalog(login);
-                    RequireCurrentAddin(login, catalog);
-                    var robot = catalog.Robot;
-                    var svn = new SvnWorkspace(login, robot);
-                    if (robot.Archived || !svn.IsCheckedOut) throw new InvalidOperationException("Click Open Robot first, so the gear has a robot to go into.");
-                    string name = "Spur Gear " + StockParts.Inches(dialog.Pitch) + "DP " + StockParts.Inches(dialog.Pressure) + "PA " + dialog.Teeth + "T " +
-                        dialog.BoreName + " " + StockParts.Inches(dialog.FaceWidth) + " FW";
-                    string path = Path.Combine(robot.Root, "90_COTS", "Stock", "Gears", name + ".SLDPRT");
-                    bool cancelled;
-                    var assembly = InsertTarget(catalog, name, out cancelled);
-                    if (cancelled) return;
-                    if (!File.Exists(path))
-                    {
-                        if (OperationDialog.Run("Checking the robot…", () => svn.OnServer(path)))
-                            throw new InvalidOperationException("A teammate already made " + name + ". Get their changes first (Close & Update in the panel), then insert again.");
-                        var doc = NewPart();
-                        SelectPlane(doc, Front);
-                        doc.SketchManager.InsertSketch(true);
-                        var outline = SpurGear.Outline(dialog.Teeth, dialog.Pitch, dialog.Pressure);
-                        for (int i = 0; i < outline.Count; i++)
-                        {
-                            var a = outline[i]; var b = outline[(i + 1) % outline.Count];
-                            doc.SketchManager.CreateLine(a[0] * Meters, a[1] * Meters, 0, b[0] * Meters, b[1] * Meters, 0);
-                        }
-                        if (dialog.BoreHex) Hexagon(doc, dialog.Bore);
-                        else if (dialog.Bore > 0) doc.SketchManager.CreateCircleByRadius(0, 0, 0, dialog.Bore / 2 * Meters);
-                        Extrude(doc, dialog.FaceWidth);
-                        doc.SketchManager.AddToDB = false;
-                        doc.SketchManager.DisplayWhenAdded = true;
-                        ((PartDoc)doc).SetMaterialPropertyName2("", "SOLIDWORKS Materials", "6061 Alloy");
-                        doc.Extension.CustomPropertyManager[""].Add3("Description", (int)swCustomInfoType_e.swCustomInfoText, name, (int)swCustomPropertyAddOption_e.swCustomPropertyReplaceValue);
-                        SaveNewFile(doc, path);
-                    }
-                    DeliverConfigured(assembly, path, "Default", dialog.Copies, name);
-                });
             }
         }
 
@@ -416,87 +260,5 @@ namespace JocoRobos.Cad
         private static double Gap(double[] a, double[] b) { return Math.Sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); }
         private static double[] Cross(double[] a, double[] b) { return new[] { a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0] }; }
         private static double[] Normalize(double[] a) { double l = Math.Sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]); return new[] { a[0] / l, a[1] / l, a[2] / l }; }
-
-        // ---------- FRC hole pattern on a tube face ----------
-
-        public void AddHolePattern() { ShowTool(CadHubTool.Find("holes")); }
-
-        // Where the holes go on a tube's side: positions along it, row offsets across it, the face's frame and the cut depth.
-        private static string HoleLayout(Face2 face, FeatureParams p, out double[] frame, out List<double> along, out double[] rows, out double minX, out double middle, out double depth)
-        {
-            frame = null; along = null; rows = null; minX = middle = depth = 0;
-            var surface = face?.GetSurface() as Surface;
-            if (surface == null || !surface.IsPlane()) return "Click a long flat side of the tube.";
-            frame = PlaneFrame(surface, face);
-            var outline = new List<double[]>();
-            ReadFace(face, frame, outline, new List<Circle2>());
-            if (outline.Count < 3) return "Couldn't read that face.";
-            minX = outline.Min(q => q[0]);
-            double maxX = outline.Max(q => q[0]), minY = outline.Min(q => q[1]), maxY = outline.Max(q => q[1]);
-            double length = maxX - minX, width = maxY - minY;
-            middle = (minY + maxY) / 2;
-            if (width > length) return "That's the end of the tube: click a long side.";
-            double diameter = p.Number("diameter", 0.196), rowSpacing = p.Number("rowSpacing", 0.5);
-            int count = (int)p.Number("rows", 0);
-            rows = count == 0 ? StockParts.FillRows(width, rowSpacing, diameter) : StockParts.RowOffsets(count, rowSpacing);
-            if (rows.Max() + diameter / 2 > width / 2) return "Those rows don't fit across a " + StockParts.Inches(width) + "\" side.";
-            along = StockParts.HolePositions(length, p.Number("start", 0.25), p.Number("spacing", 0.5), diameter);
-            // How deep: the body's size across the face, so the holes go through both walls but nothing behind the tube.
-            var box = (double[])((Body2)face.GetBody()).GetBodyBox();
-            double[] normal = Normalize(Cross(new[] { frame[3], frame[4], frame[5] }, new[] { frame[6], frame[7], frame[8] }));
-            depth = (Math.Abs(normal[0]) * (box[3] - box[0]) + Math.Abs(normal[1]) * (box[4] - box[1]) + Math.Abs(normal[2]) * (box[5] - box[2])) / Meters;
-            return null;
-        }
-
-        internal static string PlanHoles(Face2 face, FeatureParams p, out int count, out int rowCount)
-        {
-            double[] frame, rows;
-            List<double> along;
-            double minX, middle, depth;
-            string problem = HoleLayout(face, p, out frame, out along, out rows, out minX, out middle, out depth);
-            count = problem == null ? along.Count * rows.Length : 0;
-            rowCount = problem == null ? rows.Length : 0;
-            return problem;
-        }
-
-        internal static string CutHolePattern(SldWorks app, ModelDoc2 doc, Face2 face, FeatureParams p)
-        {
-            double[] frame, rows;
-            List<double> along;
-            double minX, middle, depth;
-            string problem = HoleLayout(face, p, out frame, out along, out rows, out minX, out middle, out depth);
-            if (problem != null) throw new InvalidOperationException(problem);
-            double diameter = p.Number("diameter", 0.196);
-            doc.ClearSelection2(true);
-            ((Entity)face).Select4(false, null);
-            doc.SketchManager.InsertSketch(true);
-            var sketch = doc.SketchManager.ActiveSketch;
-            if (sketch == null) throw new InvalidOperationException("SOLIDWORKS didn't start a sketch on that face. Try again.");
-            var toSketch = sketch.ModelToSketchTransform;
-            var math = app.GetMathUtility() as MathUtility;
-            doc.SketchManager.AddToDB = true;
-            doc.SketchManager.DisplayWhenAdded = false;
-            int count = 0;
-            try
-            {
-                foreach (double x in along)
-                    foreach (double row in rows)
-                    {
-                        double px = minX + x, py = middle + row;
-                        var model = new[] { frame[0] + (px * frame[3] + py * frame[6]) * Meters, frame[1] + (px * frame[4] + py * frame[7]) * Meters, frame[2] + (px * frame[5] + py * frame[8]) * Meters };
-                        var point = (double[])((MathPoint)((MathPoint)math.CreatePoint(model)).MultiplyTransform(toSketch)).ArrayData;
-                        doc.SketchManager.CreateCircleByRadius(point[0], point[1], 0, diameter / 2 * Meters);
-                        count++;
-                    }
-            }
-            finally
-            {
-                doc.SketchManager.AddToDB = false;
-                doc.SketchManager.DisplayWhenAdded = true;
-            }
-            Extrude(doc, depth + 0.01, true);
-            return "✓ Added " + count + " holes in " + rows.Length + (rows.Length == 1 ? " row" : " rows") + " (⌀" + StockParts.Inches(diameter) + "\" every " +
-                StockParts.Inches(p.Number("spacing", 0.5)) + "\"). It's an ordinary cut: edit or delete it like any feature.";
-        }
     }
 }

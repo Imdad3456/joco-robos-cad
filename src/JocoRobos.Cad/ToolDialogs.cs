@@ -73,44 +73,6 @@ namespace JocoRobos.Cad
         }
     }
 
-    /// <summary>Spur gear: teeth, pitch, pressure angle, width, bore.</summary>
-    internal sealed class GearDialog : ToolForm
-    {
-        private readonly NumericUpDown teeth = new NumericUpDown { Minimum = 8, Maximum = 200, Value = 36 };
-        private readonly ComboBox pitch = Choice("20 DP (most FRC gears)", "32 DP", "10 DP");
-        private readonly ComboBox pressure = Choice("20°", "14.5°");
-        private readonly TextBox face = new TextBox { Text = "0.5" };
-        private readonly ComboBox bore = Choice("1/2\" hex", "3/8\" hex", "1/2\" round", "8 mm round", "None");
-        private readonly NumericUpDown copies = new NumericUpDown { Minimum = 1, Maximum = 20, Value = 1 };
-
-        internal int Teeth { get { return (int)teeth.Value; } }
-        internal double Pitch { get { return new[] { 20.0, 32, 10 }[pitch.SelectedIndex]; } }
-        internal double Pressure { get { return pressure.SelectedIndex == 0 ? 20 : 14.5; } }
-        internal double FaceWidth { get { return Number(face) ?? 0; } }
-        internal bool BoreHex { get { return bore.SelectedIndex <= 1; } }
-        internal double Bore { get { return new[] { 0.5 + 0.004, 0.375 + 0.004, 0.5 + 0.002, 8 / 25.4 + 0.002, 0 }[bore.SelectedIndex]; } }
-        internal string BoreName { get { return new[] { "0.5 Hex Bore", "0.375 Hex Bore", "0.5 Round Bore", "8mm Round Bore", "No Bore" }[bore.SelectedIndex]; } }
-        internal int Copies { get { return (int)copies.Value; } }
-
-        internal GearDialog() : base("Spur Gear")
-        {
-            Row("Teeth", teeth);
-            Row("Diametral pitch", pitch);
-            Row("Pressure angle", pressure);
-            Row("Face width (in)", face);
-            Row("Bore", bore);
-            Row("How many", copies);
-            Note.Text = "Check the pitch and pressure angle against the gear it meshes with (vendors list both). The gear is saved in the robot (90_COTS/Stock/Gears) for the whole team.";
-        }
-
-        protected override string Check()
-        {
-            if (FaceWidth <= 0 || FaceWidth > 4) return "Face width from 0.05 to 4 in.";
-            return SpurGear.Problem(Teeth, Pitch, Pressure);
-        }
-    }
-
-    /// <summary>Belt and chain calculator: center distance from teeth and length, or the lengths for a center distance.</summary>
     internal sealed class BeltChainDialog : ToolForm
     {
         private readonly ComboBox kind = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };

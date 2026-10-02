@@ -195,15 +195,8 @@ static class Program
     // Hole layout, belt and chain calculator, gears, and plate lightening: the math behind the SOLIDWORKS tools.
     static void ToolChecks()
     {
-        Check(StockParts.FillRows(2, 0.5, 0.196).SequenceEqual(new[] { -0.5, 0, 0.5 }) && StockParts.FillRows(1, 0.5, 0.196).SequenceEqual(new[] { 0.0 }) &&
-            StockParts.FillRows(1.5, 0.5, 0.196).SequenceEqual(new[] { -0.25, 0.25 }), "Fill the side: 3 rows on 2\", 2 on 1.5\", 1 on 1\" (0.5\" grid)");
         Check(StockParts.ParseInches("23.75") == 23.75 && StockParts.ParseInches("23 3/4\"") == 23.75 && StockParts.ParseInches("3/4") == 0.75 &&
             StockParts.ParseInches("abc") == null && StockParts.ParseInches("") == null, "Lengths typed as decimals, fractions, mixed numbers");
-        var holes = StockParts.HolePositions(2.0, 0.25, 0.5, 0.196);
-        Check(holes.SequenceEqual(new[] { 0.25, 0.75, 1.25, 1.75 }), "Holes every 0.5\" from 0.25\": " + String.Join(",", holes));
-        Check(StockParts.HolePositions(3.0, 0.5, 1.0, 0.25).SequenceEqual(new[] { 0.5, 1.5, 2.5 }), "Other spacings and starts");
-        Check(StockParts.RowOffsets(1, 0.5).SequenceEqual(new[] { 0.0 }) && StockParts.RowOffsets(2, 0.5).SequenceEqual(new[] { -0.25, 0.25 }) &&
-            StockParts.RowOffsets(3, 0.5).SequenceEqual(new[] { -0.5, 0.0, 0.5 }), "Rows centered across the face");
         var htd = BeltChain.Kinds[0];
         double c = BeltChain.CenterDistance(htd, 30, 30, 100);
         Check(Math.Abs(c - (500 - 150) / 2.0 / 25.4) < 1e-6, "Equal pulleys: center = (belt − half the wrap) / 2 → " + c);

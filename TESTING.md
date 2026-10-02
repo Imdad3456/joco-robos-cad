@@ -84,23 +84,15 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 3d.1 | A | Library tab with nothing typed | "⚡ The team's most-used parts" with the FRCDesignLib parts the team has used; searching shows ⚡ on those, first | ☐ |
-| 3d.5 | A | In an assembly: **Spur Gear**: 36T, 20 DP, 20°, 0.5" wide, 1/2" hex | A 1.9" OD gear with a hex bore, inserted; it's in your next Submit (not shared before). It meshes with a vendor 20 DP gear at the right center (1.8" for two 36T) | ☐ |
 | 3d.6 | A | Open a sketch with a center distance → **Belt and Chain** | Side panel: belt/chain, teeth, length; the center distance updates as you type. Click the center dimension into the box → ✓ sets it | ☐ |
 | 3d.7 | A | A plate part (Edit it) → **Lighten Plate** → click its face | Side panel; the result line says how many pockets and how much is removed, and changes as you change Pocket size. ✓ cuts them: arcs around round holes and curved edges, clusters solid, no long slot along an edge lined with holes, no big open areas | ☐ |
-| 3d.8 | A | A tube part → **Hole Pattern** → click the 2" side | Side panel; "N holes in 3 rows"; ✓ cuts them through both walls. Next time it opens with your last settings | ☐ |
 
-## 3e. CAD Hub tab and editable features
+## 3e. CAD Hub tab
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 3e.0 | A | With a part open, **Spur Gear** (or Bearing Hole) on the CAD Hub tab | The CAD Hub page opens in the PropertyManager (no error) | ☐ |
-| 3e.1 | A | Restart SOLIDWORKS after updating | A **CAD Hub** tab with three groups (Hole Pattern, Lighten Plate · Spur Gear, Belt and Chain · Bearing Hole), each with an icon. Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
-| 3e.2 | A | New part → **Spur Gear** | A PropertyManager page on the left: Teeth, Diametral pitch, Thickness, Bore, and a folded **Advanced** (pressure angle). The result line shows pitch and outside diameter. A preview appears and follows every change | ☐ |
-| 3e.3 | A | ✓ | "CAD Hub Spur Gear1" in the feature tree with the gear. Right-click → **Edit Feature** → the page reopens with the same values; change teeth to 24 → ✓ → the gear updates | ☐ |
-| 3e.4 | A | A plate part (Edit it first) → **Bearing Hole** → click the face where the bearing goes → 1/2" hex bearing, Normal fit → ✓ | A cut named "Bearing Hole (…)" through the plate, its sketch has the diameter dimension; no "body is missing" error | ☐ |
-| 3e.5 | A | Bearing Hole on an existing round edge | The hole is resized around the same center | ☐ |
-| 3e.6 | A | Mentor page → Add-in → **Team standards**: Normal 0.002, add `Swerve bearing, 1.375` → Save. In SOLIDWORKS: Check now, then Bearing Hole | "★ Swerve bearing" listed first; Normal fit on a 1.125 bearing shows 1.1270. The earlier hole keeps its size (fits are frozen per hole) | ☐ |
-| 3e.7 | B | Open the plate and gear parts A submitted | Both open and rebuild with no errors on B's computer | ☐ |
+| 3e.1 | A | Restart SOLIDWORKS after updating | The **CAD Hub** tab has just **Lighten Plate** and **Belt and Chain** (no Sign In or other buttons on it). Open Robot / Edit / Submit are in the panel and Tools menu | ☐ |
+| 3e.2 | A | Open a part that has a "CAD Hub Spur Gear" feature from an earlier version | It still rebuilds (the tools were removed from the tab, not the features) | ☐ |
 
 ## 4. Together: nobody overwrites anybody
 
