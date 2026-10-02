@@ -304,7 +304,9 @@ namespace JocoRobos.Cad
 
         private List<string> ScheduleAdd(SvnClient client, string file)
         {
-            var parents = WorkspacePolicy.UnversionedParents(Root, file, dir => IsVersioned(client, dir));
+            // Every new folder on the way goes into the commit: also ones already marked for adding by an earlier Submit that
+            // failed. Leaving those out made SVN refuse the file ("Commit failed") on every try after the first.
+            var parents = WorkspacePolicy.UnversionedParents(Root, file, dir => IsCommitted(client, dir));
             foreach (string dir in parents)
                 if (!IsVersioned(client, dir)) client.Add(dir, new SvnAddArgs { Depth = SvnDepth.Empty });
             if (!IsVersioned(client, file)) client.Add(file, new SvnAddArgs { Depth = SvnDepth.Empty });
@@ -312,6 +314,14 @@ namespace JocoRobos.Cad
             client.SetProperty(file, "svn:needs-lock", "*");
             client.SetProperty(file, "svn:mime-type", "application/octet-stream");
             return parents;
+        }
+
+        // On the server already: versioned and not just marked for adding.
+        private static bool IsCommitted(SvnClient client, string path)
+        {
+            System.Collections.ObjectModel.Collection<SvnInfoEventArgs> infos;
+            return client.GetInfo(new SvnPathTarget(path), new SvnInfoArgs { ThrowOnError = false }, out infos) &&
+                infos != null && infos.Count > 0 && infos[0].Schedule != SvnSchedule.Add;
         }
 
         private static bool IsVersioned(SvnClient client, string path)

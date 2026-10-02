@@ -142,6 +142,8 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 5.4e | Both | Panel → **Diagnostics**, then paste into Notepad. A: mentor page → **Diagnostics** → View | "Sent to your mentors"; the same report on the mentor page and in Notepad: versions, account name, robot state, recent errors; no password, no setup code | ☐ |
 | 5.5 | Both | Wi-Fi off, then look at the panel and try **Edit** | "Can't reach the server" with a reason; nothing becomes writable. Wi-Fi back on | ☐ |
 
+| 5.9 | A | Make a new part in a **new folder**, Submit with the network off (it fails), turn the network on, Submit again | The second Submit succeeds (new folders marked by the failed try are included); Open Robot / Update work afterwards | ☐ |
+
 ## 6. Timing on the real robot (A)
 
 Write the times down; anything that makes SOLIDWORKS look stuck for more than a few seconds is a 1.0 bug. Slow operations are also logged automatically (see Copy Diagnostics).

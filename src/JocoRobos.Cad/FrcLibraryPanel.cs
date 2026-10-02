@@ -55,16 +55,6 @@ namespace JocoRobos.Cad
             browse.LinkClicked += (s, e) => actions.BrowseTeam();
             var import = new LinkLabel { Text = "Import a downloaded CAD file (McMaster, vendor site…)…", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
             import.LinkClicked += (s, e) => actions.ImportDownloaded();
-            // Made in SOLIDWORKS by CAD Hub: instant, any size, and no Onshape calls.
-            var tools = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
-            foreach (var tool in new[] { Tuple.Create("Make a stock part (tube, shaft, spacer, plate, bearing)…", actions.MakeStock),
-                Tuple.Create("Spur gear…", actions.MakeGear), Tuple.Create("Belt and chain calculator…", actions.BeltChain) })
-            {
-                var link = new LinkLabel { Text = tool.Item1, AutoSize = true, Margin = new Padding(0, 0, 12, 2) };
-                var run = tool.Item2;
-                link.LinkClicked += (s, e) => run?.Invoke();
-                tools.Controls.Add(link);
-            }
             // Insert and how many copies, side by side.
             var insertRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, AutoSize = true, Margin = new Padding(0) };
             insertRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -90,8 +80,7 @@ namespace JocoRobos.Cad
             grid.Controls.Add(browse);
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(import);
-            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            grid.Controls.Add(tools);
+
             details.Controls.Add(picture);
             details.Controls.Add(title);
             details.Controls.Add(subtitle);
