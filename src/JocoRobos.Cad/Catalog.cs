@@ -23,8 +23,12 @@ namespace JocoRobos.Cad
         /// </summary>
         internal static string BaseFolder { get { return baseFolder.Value; } }
 
+        // The unit tests set this first, so running them never creates or claims C:\JOCO-ROBOS on the computer. Never set otherwise.
+        internal static string TestBaseFolder;
+
         private static string ResolveBaseFolder()
         {
+            if (TestBaseFolder != null) return TestBaseFolder;
             try
             {
                 var me = System.Security.Principal.WindowsIdentity.GetCurrent().User;

@@ -328,7 +328,7 @@ namespace JocoRobos.Cad
                 History = FileHistory, Diagnostics = CopyDiagnostics,
                 OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path), WhereUsedOf = path => WhereUsedFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
-                AskForFile = AskForActiveFile, DismissRequests = DismissRequests,
+                AskForFile = AskForActiveFile, AskFor = AskFor, DismissRequests = DismissRequests,
                 SetCopies = count => nextCopies = Math.Max(1, Math.Min(20, count)),
                 BeltChain = BeltChainCalculator,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
@@ -346,6 +346,8 @@ namespace JocoRobos.Cad
                 doc => OnUi("lock offer", () => OfferLock(doc)),
                 path => OnUi("release on close", () => ReleaseIfUnchanged(path)),
                 path => OnUi("saved", () => OnDocumentSaved(path)));
+            // Redraw after the change has finished, not inside SOLIDWORKS' own event.
+            watcher.Dirtied = () => { try { closedTimer?.Stop(); closedTimer?.Start(); } catch (Exception) { } };
             // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
             savedTimer = new Timer { Interval = 1000 };
             savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
@@ -399,7 +401,7 @@ namespace JocoRobos.Cad
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
                 var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
-                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any());
+                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork());
                 state.Working = working;
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
                 if (state.Warning != null) state.EditTarget = null;
@@ -416,21 +418,34 @@ namespace JocoRobos.Cad
                 string askedOwner;
                 if (path != null && state.AskOwner != null && askedFor.TryGetValue(path, out askedOwner) && askedOwner == state.AskOwner)
                 {
-                    state.ActiveStatus += "\nYou asked " + askedOwner + " for it; this panel tells you when it's free.";
+                    state.ActiveHint = "You asked " + askedOwner + " for it. This panel tells you when it's free.";
                     state.AskOwner = null;
                 }
-                var mineNow = new[] { robotSnapshot, librarySnapshot }.Where(x => x != null).SelectMany(x => x.Mine).ToList();
-                var stillWanted = editRequests.Where(r => mineNow.Any(m => m.Replace('\\', '/').EndsWith("/" + r.Season + "/" + r.Path, StringComparison.OrdinalIgnoreCase))).ToList();
-                if (stillWanted.Count > 0)
-                    state.Requests = String.Join("\n", stillWanted.Take(4).Select(r => "✋ " + r.From + " is waiting for " + Path.GetFileName(r.Path))) +
-                        (stillWanted.Count > 4 ? "\n… and " + (stillWanted.Count - 4) + " more" : "") + "\nSubmit (or give back) when you're done with it.";
                 state.Flash = flash;
                 if (state.CanAutoUpdate) pane.BeginInvoke((Action)(() => StartAutoUpdate()));
                 state.Update = offeredUpdate == null ? null : "Add-in " + offeredUpdate.Version + " is available" + (offeredUpdate.Required ? " (required)" : "") + ".";
                 pane.Show(state);
-                pane.ShowRobotFiles(robotSnapshot ?? OfflineRobot());
+                pane.ShowRobotFiles(robotSnapshot ?? OfflineRobot(), paneUser, path);
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
+        }
+
+        // My work's files that are open with unsaved changes. Asks SOLIDWORKS only about those few files, never every open
+        // document (a robot assembly loads hundreds), so drawing the panel stays instant.
+        private List<string> UnsavedWork()
+        {
+            var unsaved = new List<string>();
+            foreach (var snapshot in new[] { robotSnapshot, librarySnapshot }.Where(x => x != null))
+                foreach (string path in snapshot.Mine.Concat(snapshot.New).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var doc = application.GetOpenDocumentByName(path) as ModelDoc2;
+                        if (doc != null && doc.GetSaveFlag()) unsaved.Add(path);
+                    }
+                    catch (COMException) { } // Closing right now.
+                }
+            return unsaved;
         }
 
         // Server unreachable before the first good check: the browser still lists what's on this computer (no statuses).
@@ -799,10 +814,16 @@ namespace JocoRobos.Cad
         // The panel's "Ask … for it" on the active file.
         private void AskForActiveFile()
         {
+            var doc = application.ActiveDoc as ModelDoc2;
+            AskFor(doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : doc.GetPathName());
+        }
+
+        // "Ask … for it", from the panel (the open file) or the file tree (any robot file someone else is editing).
+        private void AskFor(string path)
+        {
             Execute(() =>
             {
-                var doc = application.ActiveDoc as ModelDoc2;
-                string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
+                path = path == null ? null : Path.GetFullPath(path);
                 var snapshot = path == null ? null : new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Contains(path));
                 if (snapshot == null) return;
                 var login = GetLogin(false);

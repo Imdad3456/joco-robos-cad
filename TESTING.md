@@ -33,12 +33,19 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 2.1 | Both | Close all documents | Panel: "✓ Up to date" and only **Open Robot** | ☐ |
-| 2.2 | Both | **Open Robot**, then open `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B) | "Read-only. Nobody else is editing it" and an **Edit Part1test** button | ☐ |
-| 2.3 | Both | Wait 10 seconds, then change a dimension **without** clicking Edit | No question. The panel says "✎ You're editing …" (locked by itself), and your change is still there | ☐ |
-| 2.4 | Both | Save | "1 change waiting" and a **Submit 1** button | ☐ |
+| 2.2 | Both | **Open Robot**, then open `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B) | "Read-only · nobody's editing it" and an **Edit Part1test** button; the file is selected in Robot Files | ☐ |
+| 2.3 | Both | Wait 10 seconds, then change a dimension **without** clicking Edit | No question. The panel says "✎ You're editing this · unsaved" (locked by itself); **My work** lists it as *unsaved*; your change is still there | ☐ |
+| 2.4 | Both | Save | **My work** shows it as *saved*, and **Submit 1** under the list | ☐ |
 | 2.5 | Both | Open your assembly (A: `50_Electrical\battery holder`, B: `motor cover asssewmbly`) read-only and drag a component | Assemblies still ask "Lock it for editing now?" → **No**. Close it without saving | ☐ |
 | 2.5b | Both | Open your assembly read-only, change a mate right away (first 5 seconds), and click **No** if asked to lock. Then Submit something else | The panel keeps warning about the unsaved assembly changes; you can't easily forget them (write down anything that felt too quiet) | ☐ |
-| 2.6 | Both | Close the part from 2.3 (it stays yours: it has a saved change). Open `80_Unsorted\id2_1.SLDPRT`, click **Edit**, change nothing, close it | id2_1 is no longer listed under "You're editing" within a few seconds (unchanged → given back); the part from 2.3 still is | ☐ |
+| 2.6 | Both | Close the part from 2.3 (it stays yours: it has a saved change). Open `80_Unsorted\id2_1.SLDPRT`, click **Edit**, change nothing, close it | id2_1 leaves **My work** within a few seconds (unchanged → given back); the part from 2.3 is still there | ☐ |
+| 2.7 | Both | A: Edit a part and keep it. B: look at Robot Files | B sees A's part as "🔒 *name* · A" (A's username after the name, readable without hovering); its folder shows 🔒1 while collapsed. Hover: "A is editing this since …" | ☐ |
+| 2.8 | B | Right-click A's part in Robot Files | **Ask A for it** is in the menu (not for free files). Click it: "✓ Asked A…". A's **My work** shows "✋ B is waiting for it" on that file and keeps showing it (it doesn't disappear after 15 seconds) | ☐ |
+| 2.9 | A | **Not yet: let them know** | The ✋ line goes away | ☐ |
+| 2.10 | A | Submit a change to a part B has open read-only | Within 3 minutes (or ↻), B's header says "⬇ 1 new" (hover lists it); the part shows "⬇ *name* · newer from A" in Robot Files; with it open, the panel says "⬇ A submitted a newer version" | ☐ |
+| 2.11 | Both | Lock 2 parts with Edit and change nothing | **My work** lists both as *not changed* and offers **Give back 2 unchanged**; clicking it releases both | ☐ |
+| 2.12 | Both | Switch between open documents (Ctrl+Tab) | **This file** and the Robot Files selection follow the active document; the tree doesn't jump while you're typing in its search box | ☐ |
+| 2.13 | Both | Make the task pane narrow, then wide | Nothing is cut off on the right; long file names shorten (…) before the owner's name does | ☐ |
 
 ## 3. Library tab
 

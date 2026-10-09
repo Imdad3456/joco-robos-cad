@@ -1,57 +1,113 @@
-# Plan for 1.14: recovery copies, a clearer panel, CAD health
+# CAD Hub 1.14: the experience, not more features
 
-Written 2026-10-09 after reviewing the code at 1.13.8. Each step ships on its own, keeps **Open Robot → Edit → Submit**
-unchanged, and never touches SVN locking, Update or Submit's safeguards. Server changes (if any) wait for a mentor to deploy.
+Revised 2026-10-09 after a full review of the task pane (`StatusPane`, `PaneState`, `RobotFilesPanel`, `FrcLibraryPanel`)
+and the status check (`SvnWorkspace.Snapshot`). Nothing here replaces SVN sync, locking or Submit: every change reads the
+data those already produce and presents it better. Nothing is released or deployed without a mentor.
 
-## What already exists (reused, not rebuilt)
+## What a student sees today, and what gets in the way
 
-| Need | Already there |
-|---|---|
-| Copy of unsaved work | `SaveSafetyCopy` (Edit on a dirty file, closing an unlocked dirty file) saves to `C:\JOCO-ROBOS\Set Aside` |
-| Keep my version, restore the team's | Set Aside My Changes (`SvnSubmit.SetAside`) |
-| Interrupted submit | `pending-submit-*.txt`, finished by the next Submit |
-| Exit reminder | `OnSolidWorksClosing` offers Submit when work is unsubmitted |
-| Document events | `DocumentWatcher` (first change, save, close) |
-| Health | `HealthCheck` (Check This Computer: server, versions, folder, missing references, disk) and `SubmitCheck` (missing/temporary/outside references, rebuild problems, blocking only where needed) |
-| Collaboration data | `WorkspaceSnapshot` (locks with owner and since, incoming changes, mine/changed/new), edit requests ("Ask … for it"), `PaneState` (pure, tested), `RobotFilesPanel` (✎ 🔒 ●) |
+Robot tab, top to bottom: update banner · green "flash" · red warning · robot name and sync status · a grey paragraph
+(incoming submits as `#123 sarah: …`, how to get them, "Checked 2:41 PM") · Open Robot / Close & Update · one card
+mixing four things (the open file's status paragraph, Edit, Ask, History, teammate requests, "3 changes waiting",
+Submit, "You're editing A, B, C, D, …", Give back) · the file tree (✎ 🔒 ● with names only in tooltips) · Check now ·
+Diagnostics.
 
-## Step 1: automatic recovery copies (this branch)
+1. **Prose instead of state.** The open file's status is two or three sentences, and the same how-to text repeats
+   every time ("When you save: if SOLIDWORKS lists read-only files, tick…" shows whenever an assembly is editable).
+2. **My work isn't a list.** What I'm editing is a comma-separated sentence that cuts off at four names. I can't click
+   it, can't see which files are unsaved, saved, or untouched, and Submit's count isn't tied to anything visible.
+3. **Ownership is hidden.** The tree shows 🔒 but who has it is only in a tooltip; folders say nothing, so finding
+   "who's in the intake" means expanding everything. Nothing marks the files that teammates changed and I don't have yet.
+4. **Notifications vanish.** "Sarah is waiting for X" and "X is free now" are 15-second flashes. Miss them and they're gone.
+5. **Noise.** "Checked 2:41 PM" is always there; "Check now" competes with Diagnostics; the incoming list is SVN
+   revision text.
 
-Gap: nothing protects **unsaved** edits in a locked file from a SOLIDWORKS crash or power loss, and SOLIDWORKS' own
-Auto-recover is often off or slow to find.
+## The design
 
-- `Recovery.cs` (pure, tested): where copies go, when a round is due, pruning, which copies hold work newer than the
-  saved file, and an "SOLIDWORKS is running" marker to tell a crash from a normal close.
-- `AddinRecovery.cs`: every 30 s, if due, saves a copy of each open team file **the student is editing** (not
-  read-only) **with unsaved changes**, using the same Save-as-copy call as `SaveSafetyCopy`.
-  - Due = something was done since the last round, 5 min have passed (longer if copies are slow), and there's been
-    no mouse/keyboard input for 20 s, so SOLIDWORKS never pauses under the student's hand.
-  - Skipped while CAD Hub is busy, a CAD Hub side panel is open, a SOLIDWORKS command is running, a sketch is open,
-    or a part is being edited inside an assembly; skipped on low disk.
-  - Stored outside the robot: `%LOCALAPPDATA%\JocoRobos.Cad\Recovery\<Season>\<time>\<path in robot>`, so SVN,
-    Submit, Update, Set Aside, Robot Files and the reference checks never see them. Last 5 per file, 14 days.
-  - The document stays dirty and in place; the watcher ignores these saves (so the panel doesn't count a file as
-    saved when it isn't). That also fixes the same miscount after `SaveSafetyCopy`.
-- After an unexpected close, the next start lists files whose copy is newer than the saved file and opens the folder.
-- Tools → CAD Hub → **Recovery Copies** opens the folder any time. Diagnostics reports how many there are.
+One rule: **show the next step and the things that need me; everything else is one hover or one click away.**
 
-## Step 2: task pane (collaboration awareness)
+```
+ 2027-Robot                    ✓ Up to date  ↻        ← hover: checked 2:41 PM; ⬇ 3 new / ⚠ Offline when that's true
+ ─────────────────────────────────────────────
+ [ attention strip: at most one, only when it matters: required update · wrong SOLIDWORKS · interrupted Submit ·
+   work recovered after a crash · "Close & Update" when teammates' changes are waiting ]
 
-- "Who's editing" section from the existing lock data: teammates' locks grouped by person with "since", mine first,
-  stale locks (> 3 days) marked for a mentor.
-- Recent activity: the last few submits (author, message, time) from the SVN log the status refresh already reads.
-- Clear lock state for the active file in one line (yours / free / teammate since …, with Ask).
-- All text built in `PaneState` so it stays unit-tested; `StatusPane` only draws it.
+ ┌ Intake Plate.SLDPRT ───────────────────────┐     ← THIS FILE: only while a robot file is active
+ │ 🔒 sarah is editing · since 2:10 PM         │        one status line, one action
+ │ [ Ask sarah for it ]            History     │        (Edit · Ask · nothing), a hint only when it applies
+ └─────────────────────────────────────────────┘
 
-## Step 3: CAD health checks
+ MY WORK                       Give back 1 unchanged  ← only when I hold locks or have changes
+  ✎ Intake Plate        unsaved                        click a row to open it
+  ✎ Shooter Hood        saved   ✋ sarah is waiting   requests stay on the row until handled · Not yet
+  ● Camera Mount        new
+ [ Submit 2 ]
 
-- A `CadHealth` pass over the open robot (or active assembly): suppressed/unresolved components, missing files,
-  references outside the robot, rebuild errors and warnings (`GetWhatsWrong`), mates in error, and files from a
-  newer SOLIDWORKS. Pure evaluation (like `HealthCheck`) with SOLIDWORKS gathering kept thin.
-- Shown from the panel ("Check the robot") and folded into Check This Computer; Submit keeps its current checks and
-  blocking rules (warnings stay warnings).
+ ROBOT FILES                                           ← owner and incoming on the row, folders summarize
+  ▸ 20_Intake            🔒 2  ⬇ 1
+  ▾ 30_Shooter
+      Shooter Hood       ✎ you
+      Flywheel Plate     🔒 sarah
+      Hood Gear          ⬇ new version
+  right-click: Open · Ask sarah for it · File History · Where Used · Show in Explorer
+ ─────────────────────────────────────────────
+ Diagnostics                                   1.14.0
+```
 
-## Testing
+* **This file** follows the active document (and the selected component in an assembly, step 3). The tree selects
+  the active file too, so the two always agree.
+* **My work** is the to-do list: Submit lives with the files it submits; unsaved files are flagged before Submit
+  finds them; teammate requests sit on the file they're about.
+* **Robot files** answer "who's working where" without opening anything; *Ask for it* works from the tree.
+* **Library** keeps its search and insert. Its long hint text moves into a tooltip and the "Browse"/"Import" links
+  into one row.
+* **Activity** (step 2) holds what used to flash and vanish plus recent team submits: an in-pane notification list,
+  reached from the sync line's "⬇ 3 new". It's a third tab only if it earns its place in testing; otherwise a
+  section under Robot files.
 
-- After each step: `dotnet run --project tests/Addin.Tests -c Release` and an add-in build; CI also runs the server tests.
-- Inside SOLIDWORKS: new TESTING.md sections for each step, run in the `2099-Robot` test season.
+### A new student's first session
+Install → SOLIDWORKS opens with CAD Hub showing only **Open Robot** → sign-in and download (unchanged) → the robot
+opens; **This file** says "Read-only · nobody's editing it. Start changing it to edit." → they change a part, CAD Hub
+offers the lock (unchanged) → the card says "✎ Editing · unsaved" and **My work** lists the part → Save → "saved",
+**Submit 1** → the Submit window (unchanged) → "✓ Submitted". At every point there is one obvious button.
+
+### SOLIDWORKS assembly tree
+CAD Hub won't paint ownership into the FeatureManager tree: the only API routes change the documents (colors,
+display states, names) or hook SOLIDWORKS' own window, which risks dirtying files and breaking with every SOLIDWORKS
+update. Instead, selecting a component shows its owner in **This file** with Edit or Ask (step 3), which is where the
+student is already looking.
+
+## Recovery as a workflow
+Verified in SOLIDWORKS 2026 SP4.1 (API test, 2026-10-09): the save-as-copy call CAD Hub uses writes the **in-memory**
+model (a feature added after the last save is in the copy, not in the robot file), leaves the open document unsaved
+at its own path, and doesn't touch the robot file. Next:
+* After a crash, the attention strip says "Recovered work: 2 files". **Review** opens a list (file, copy time, saved
+  file's time, who holds the lock now).
+* **Restore** only when the student still holds that file's lock and the file isn't open; the current robot file
+  goes to Set Aside first. Never automatic, never onto a teammate's file.
+* **Save a copy to…** for everything else (lock gone, or to compare: SOLIDWORKS can't open two files with the same
+  name, so a copy can't be opened next to the original).
+
+## CAD health, where the student already is
+Reuse `SubmitCheck` (missing, temporary and outside references, rebuild problems) and `HealthCheck`:
+* On save of a file in My work, check that one document cheaply (rebuild errors, missing references for an
+  assembly) and show it on its row: "⚠ 2 rebuild errors". Submit's window and blocking rules stay as they are.
+* Check This Computer keeps its findings; a problem that blocks work (lost lock, conflict, low disk) also shows in
+  the attention strip.
+* No new "run the checker" button.
+
+## Order of work
+1. **Robot tab** (this step): data for incoming files; PaneState rebuilt around the next step, This file, My work;
+   StatusPane redrawn; file tree with owners, incoming, folder summaries, follow-active, Ask from the tree. Tests for
+   every state.
+2. **Activity**: persistent notices (requests, freed files, recovered work) and recent submits.
+3. **Assembly selection** in This file.
+4. **Recovery review and restore.**
+5. **Health on save** in My work.
+
+After each: `dotnet run --project tests/Addin.Tests -c Release`, an add-in build, and TESTING.md steps for what only
+SOLIDWORKS can show.
+
+## Step 0 (done): automatic recovery copies
+Copies of files the student is editing with unsaved changes, every 5 minutes while they pause, outside the robot
+(`%LOCALAPPDATA%\JocoRobos.Cad\Recovery`), offered after a crash. See `Recovery.cs`, `AddinRecovery.cs`, TESTING.md 5b.

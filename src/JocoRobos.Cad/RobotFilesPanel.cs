@@ -16,7 +16,7 @@ namespace JocoRobos.Cad
     /// </summary>
     internal sealed class RobotFilesPanel : UserControl
     {
-        private readonly Action<string> open, reveal, history, whereUsed;
+        private readonly Action<string> open, reveal, history, whereUsed, askFor;
         private readonly Label empty = new Label { Dock = DockStyle.Fill, ForeColor = SystemColors.GrayText, Padding = new Padding(2, 8, 2, 0),
             Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f), Text = "Open Robot to download the robot files." };
         private readonly SearchBox search = new SearchBox("Search robot files…") { Dock = DockStyle.Fill, Margin = new Padding(0, 6, 0, 6) };
@@ -26,34 +26,33 @@ namespace JocoRobos.Cad
         private readonly ContextMenuStrip menu = new ContextMenuStrip();
         private RobotFileIndex index;
         private WorkspaceSnapshot snapshot;
+        private string user;
         private string root;
+        // The open document, selected in the tree once the list is ready (and again whenever another one becomes active).
+        private string follow, followed;
+        private readonly ToolStripMenuItem askItem = new ToolStripMenuItem("Ask for it");
         private int generation;
         // Which folders are open, kept across searches and refreshes.
         private readonly HashSet<string> expandedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private bool filling;
         private const string Placeholder = "\u0001";
 
-        internal RobotFilesPanel(Action<string> open, Action<string> reveal, Action<string> history, Action<string> whereUsed)
+        internal RobotFilesPanel(Action<string> open, Action<string> reveal, Action<string> history, Action<string> whereUsed, Action<string> askFor)
         {
+            this.askFor = askFor;
             this.whereUsed = whereUsed;
             this.open = open;
             this.reveal = reveal;
             this.history = history;
             BackColor = SystemColors.Window;
 
-            // ROBOT FILES ........ ↻
+            // ROBOT FILES (the panel's ↻ checks the server, and every new check lists the files again)
             var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0) };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             header.Controls.Add(new Label { Text = "ROBOT FILES", AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 2, 0, 2),
                 Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f, FontStyle.Bold), ForeColor = SystemColors.GrayText }, 0, 0);
-            var refresh = new Label { Text = "\uE72C", AutoSize = true, Anchor = AnchorStyles.Right, Cursor = Cursors.Hand, Margin = new Padding(0),
-                Padding = new Padding(4, 3, 2, 3), Font = new Font("Segoe MDL2 Assets", 9f), ForeColor = SystemColors.GrayText };
-            refresh.Click += (s, e) => Reindex();
-            refresh.MouseEnter += (s, e) => refresh.ForeColor = SystemColors.HotTrack;
-            refresh.MouseLeave += (s, e) => refresh.ForeColor = SystemColors.GrayText;
-            new ToolTip().SetToolTip(refresh, "Refresh robot files");
-            header.Controls.Add(refresh, 1, 0);
+
 
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(14, 10, 14, 4) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -90,10 +89,20 @@ namespace JocoRobos.Cad
             };
             tree.NodeMouseClick += (s, e) => { if (e.Button == MouseButtons.Right) tree.SelectedNode = e.Node; };
             menu.Items.Add("Open", null, (s, e) => WithSelected(open));
-            menu.Items.Add("Show in Explorer", null, (s, e) => WithSelected(reveal));
+            askItem.Click += (s, e) => WithSelected(p => askFor?.Invoke(p));
+            menu.Items.Add(askItem);
             menu.Items.Add("File History", null, (s, e) => WithSelected(history));
             menu.Items.Add("Where Used…", null, (s, e) => WithSelected(whereUsed));
-            menu.Opening += (s, e) => e.Cancel = tree.SelectedNode == null || tree.SelectedNode.Name != "file";
+            menu.Items.Add("Show in Explorer", null, (s, e) => WithSelected(reveal));
+            menu.Opening += (s, e) =>
+            {
+                e.Cancel = tree.SelectedNode == null || tree.SelectedNode.Name != "file";
+                if (e.Cancel) return;
+                // Someone else is editing it: ask them right from here, without opening it first.
+                var status = RobotFileStatus.Of(snapshot, index.FullPath((string)tree.SelectedNode.Tag), user, DateTime.Now);
+                askItem.Visible = status.Mark == FileMark.Theirs && askFor != null;
+                askItem.Text = "Ask " + status.Owner + " for it";
+            };
             tree.ContextMenuStrip = menu;
             ShowEmpty(true);
         }
@@ -104,8 +113,9 @@ namespace JocoRobos.Cad
         }
 
         /// <summary>Called whenever the panel's status is drawn. Rebuilds only for a new robot or a new status check.</summary>
-        internal void Show(WorkspaceSnapshot robot)
+        internal void Show(WorkspaceSnapshot robot, string user)
         {
+            this.user = user;
             string newRoot = robot == null || robot.Local == 0 || !Directory.Exists(robot.Info.Root) ? null : robot.Info.Root;
             bool changed = !ReferenceEquals(robot, snapshot) || !String.Equals(newRoot, root, StringComparison.OrdinalIgnoreCase);
             snapshot = robot;
@@ -118,6 +128,18 @@ namespace JocoRobos.Cad
             }
             if (root == null) { ShowEmpty(true); return; }
             if (changed) Reindex();
+        }
+
+        /// <summary>Selects the open document in the tree (expanding its folders) when it changes; never while searching.</summary>
+        internal void Follow(string activePath)
+        {
+            follow = activePath;
+            if (index == null || activePath == null || String.Equals(activePath, followed, StringComparison.OrdinalIgnoreCase)) return;
+            if (root == null || !activePath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) return;
+            if (search.Text.Trim().Length > 0) return;
+            followed = activePath;
+            var node = Find(tree.Nodes, activePath.Substring(root.Length + 1), "file");
+            if (node != null) { tree.SelectedNode = node; node.EnsureVisible(); }
         }
 
         private void ShowEmpty(bool on)
@@ -143,6 +165,8 @@ namespace JocoRobos.Cad
                         index = task.Result;
                         ShowEmpty(false);
                         Fill();
+                        followed = null;
+                        Follow(follow);
                     }));
                 }
                 catch (InvalidOperationException) { } // Pane closed.
@@ -160,6 +184,7 @@ namespace JocoRobos.Cad
             try
             {
                 tree.Nodes.Clear();
+                details.Clear();
                 string query = search.Text.Trim();
                 if (query.Length > 0)
                 {
@@ -167,12 +192,9 @@ namespace JocoRobos.Cad
                     tree.Nodes.Add(Note(found.Count == 0 ? "No robot files match \"" + query + "\"" : "Search results for \"" + query + "\""));
                     foreach (string relative in found)
                     {
-                        var node = FileNode(relative);
-                        string folder = Path.GetDirectoryName(relative);
                         // The folder shows after the name, greyed (see DrawNode).
-                        var detail = String.IsNullOrEmpty(folder) ? "robot folder" : folder;
-                        node.Text += Separator + detail;
-                        tree.Nodes.Add(node);
+                        string folder = Path.GetDirectoryName(relative);
+                        tree.Nodes.Add(FileNode(relative, String.IsNullOrEmpty(folder) ? "robot folder" : folder));
                     }
                 }
                 else
@@ -195,7 +217,9 @@ namespace JocoRobos.Cad
             }
         }
 
-        private const string Separator = "   ";
+        // What shows in grey after each name (who's editing, folder summaries, a search result's folder). Kept out of the
+        // node's text so the tree never scrolls sideways and the name can shorten to keep it visible.
+        private readonly Dictionary<TreeNode, string> details = new Dictionary<TreeNode, string>();
 
         private static TreeNode Note(string text)
         {
@@ -208,6 +232,13 @@ namespace JocoRobos.Cad
             {
                 string path = relative.Length == 0 ? name : relative + Path.DirectorySeparatorChar + name;
                 var node = new TreeNode(name) { Name = "folder", Tag = path, ImageKey = FileIcons.Folder, SelectedImageKey = FileIcons.Folder };
+                // Who's working in here, without opening it: ✎ mine, 🔒 teammates', ● new, ⬇ newer versions waiting.
+                var summary = RobotFileStatus.Summarize(snapshot, index.FullPath(path), user);
+                if (summary.Text.Length > 0)
+                {
+                    details[node] = summary.Text;
+                    node.ToolTipText = Describe(summary);
+                }
                 node.Nodes.Add(new TreeNode(Placeholder)); // Filled in when expanded.
                 nodes.Add(node);
             }
@@ -222,59 +253,64 @@ namespace JocoRobos.Cad
             AddChildren(node.Nodes, (string)node.Tag);
         }
 
-        // Who has it, from the last status check (no extra server request): ✎ yours, 🔒 someone else's, ● new.
-        private TreeNode FileNode(string relative)
+        // Who has it, from the last status check (no extra server request), shown after the name: ✎ you, 🔒 sarah, ● new, ⬇ newer.
+        private TreeNode FileNode(string relative, string folder = null)
         {
             string icon = FileIcons.For(relative);
-            var node = new TreeNode(Path.GetFileName(relative)) { Name = "file", Tag = relative, ImageKey = icon, SelectedImageKey = icon };
-            if (snapshot == null) return node;
-            string full = index.FullPath(relative), owner;
-            DateTime since;
-            if (snapshot.Mine.Contains(full))
+            // The icon says part, assembly or drawing, so the name goes without its extension.
+            var node = new TreeNode(Path.GetFileNameWithoutExtension(relative)) { Name = "file", Tag = relative, ImageKey = icon, SelectedImageKey = icon };
+            var status = RobotFileStatus.Of(snapshot, index.FullPath(relative), user, DateTime.Now);
+            string glyph;
+            switch (status.Mark)
             {
-                node.ForeColor = Color.ForestGreen;
-                node.Text = "✎ " + node.Text;
-                node.ToolTipText = "You're editing this" + (snapshot.Changed.Contains(full) ? " (changes not submitted yet)" : "");
+                case FileMark.Mine: glyph = "✎ "; node.ForeColor = Color.ForestGreen; break;
+                case FileMark.MineElsewhere: glyph = "🔒 "; node.ForeColor = Color.DarkOrange; break;
+                case FileMark.Theirs: glyph = "🔒 "; node.ForeColor = Color.Firebrick; break;
+                case FileMark.New: glyph = "● "; node.ForeColor = Color.RoyalBlue; break;
+                case FileMark.Incoming: glyph = "⬇ "; node.ForeColor = Color.RoyalBlue; break;
+                case FileMark.Changed: glyph = "⚠ "; node.ForeColor = Color.DarkOrange; break;
+                default: glyph = ""; break;
             }
-            else if (snapshot.Locks.TryGetValue(full, out owner))
-            {
-                node.ForeColor = Color.Firebrick;
-                node.Text = "🔒 " + node.Text;
-                node.ToolTipText = owner + " is editing this" + (snapshot.LockedSince.TryGetValue(full, out since)
-                    ? " since " + (since.Date == DateTime.Now.Date ? since.ToString("h:mm tt") : since.ToString("ddd MMM d, h:mm tt")) : "");
-            }
-            else if (snapshot.New.Contains(full))
-            {
-                node.ForeColor = Color.RoyalBlue;
-                node.Text = "● " + node.Text;
-                node.ToolTipText = "New file: it goes to the team with your next Submit";
-            }
-            else if (snapshot.Changed.Contains(full))
-                node.ToolTipText = "Changed here, not submitted yet";
+            node.Text = glyph + node.Text;
+            var detail = new[] { status.Detail, folder }.Where(x => !String.IsNullOrEmpty(x)).ToList();
+            if (detail.Count > 0) details[node] = String.Join(" · ", detail);
+            node.ToolTipText = Path.GetFileName(relative) + (status.Tip.Length > 0 ? "\n" + status.Tip : "");
             return node;
         }
 
-        // Text only (the theme draws the row, icon and selection): search results get their folder in grey after the name.
+        private static string Describe(FolderSummary summary)
+        {
+            var lines = new List<string>();
+            if (summary.Mine > 0) lines.Add("✎ " + summary.Mine + " you're editing");
+            if (summary.Theirs > 0) lines.Add("🔒 " + summary.Theirs + " teammates are editing");
+            if (summary.New > 0) lines.Add("● " + summary.New + " new, not submitted");
+            if (summary.Incoming > 0) lines.Add("⬇ " + summary.Incoming + " with newer versions on the server");
+            return String.Join("\n", lines);
+        }
+
+        // Text only (the theme draws the row, icon and selection): the name, then its detail in grey. When space runs out the
+        // name shortens first, so who's editing a file stays readable.
         private void DrawNode(object sender, DrawTreeNodeEventArgs e)
         {
             if (e.Node == null || e.Bounds.IsEmpty) return;
-            string text = e.Node.Text;
-            int split = e.Node.Name == "file" ? text.IndexOf(Separator, StringComparison.Ordinal) : -1;
             var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
             var color = e.Node.ForeColor.IsEmpty ? tree.ForeColor : e.Node.ForeColor;
             var bounds = new Rectangle(e.Bounds.X + 2, e.Bounds.Y, Math.Max(0, tree.ClientSize.Width - e.Bounds.X - 2), e.Bounds.Height);
-            if (split < 0)
+            string detail;
+            if (!details.TryGetValue(e.Node, out detail))
             {
-                TextRenderer.DrawText(e.Graphics, text, tree.Font, bounds, color, flags | TextFormatFlags.EndEllipsis);
+                TextRenderer.DrawText(e.Graphics, e.Node.Text, tree.Font, bounds, color, flags | TextFormatFlags.EndEllipsis);
                 return;
             }
-            string name = text.Substring(0, split), folder = text.Substring(split + Separator.Length);
-            TextRenderer.DrawText(e.Graphics, name, tree.Font, bounds, color, flags);
-            int width = TextRenderer.MeasureText(e.Graphics, name, tree.Font, bounds.Size, flags).Width + 10;
-            if (width < bounds.Width)
+            using (var small = new Font(tree.Font.FontFamily, tree.Font.Size - 0.5f))
             {
-                using (var small = new Font(tree.Font.FontFamily, tree.Font.Size - 0.5f))
-                    TextRenderer.DrawText(e.Graphics, folder, small, new Rectangle(bounds.X + width, bounds.Y, bounds.Width - width, bounds.Height),
+                int detailWidth = TextRenderer.MeasureText(e.Graphics, detail, small, bounds.Size, flags).Width;
+                int nameWidth = TextRenderer.MeasureText(e.Graphics, e.Node.Text, tree.Font, bounds.Size, flags).Width;
+                int room = Math.Max(bounds.Width * 2 / 5, bounds.Width - detailWidth - 10);
+                int shown = Math.Min(nameWidth, room);
+                TextRenderer.DrawText(e.Graphics, e.Node.Text, tree.Font, new Rectangle(bounds.X, bounds.Y, shown, bounds.Height), color, flags | TextFormatFlags.EndEllipsis);
+                if (shown + 10 < bounds.Width)
+                    TextRenderer.DrawText(e.Graphics, detail, small, new Rectangle(bounds.X + shown + 10, bounds.Y, bounds.Width - shown - 10, bounds.Height),
                         SystemColors.GrayText, flags | TextFormatFlags.EndEllipsis);
             }
         }

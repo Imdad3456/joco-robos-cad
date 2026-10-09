@@ -394,6 +394,9 @@ namespace JocoRobos.Cad
                         if (e.ChangedPaths == null || e.ChangedPaths.Count == 0 || e.ChangedPaths.All(c => AlreadyHere(c, e.Revision, here))) return;
                         string who = e.Author == login.UserName ? "you (another computer)" : e.Author;
                         snapshot.Incoming.Add("#" + e.Revision + " " + who + ": " + (e.LogMessage ?? "").Trim().Split('\n')[0]);
+                        // Which files it brings, for the file tree (the log runs oldest first, so the latest author wins).
+                        foreach (var change in e.ChangedPaths.Where(c => !AlreadyHere(c, e.Revision, here)))
+                            snapshot.IncomingFiles[LocalPath(change)] = who;
                     });
                 snapshot.PendingSubmit = File.Exists(JournalPath);
                 foreach (var item in statuses)
@@ -501,9 +504,14 @@ namespace JocoRobos.Cad
             }
         }
 
+        private string LocalPath(SvnChangeItem change)
+        {
+            return Path.GetFullPath(Path.Combine(Root, change.Path.TrimStart('/').Replace('/', '\\'))).TrimEnd('\\');
+        }
+
         private bool AlreadyHere(SvnChangeItem change, long revision, IDictionary<string, long> here)
         {
-            string local = Path.GetFullPath(Path.Combine(Root, change.Path.TrimStart('/').Replace('/', '\\'))).TrimEnd('\\');
+            string local = LocalPath(change);
             if (change.Action == SvnChangeAction.Delete) return !File.Exists(local) && !Directory.Exists(local);
             long have;
             return here.TryGetValue(local, out have) && have >= revision;

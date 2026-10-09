@@ -5,6 +5,107 @@ using System.Linq;
 
 namespace JocoRobos.Cad
 {
+    internal enum FileMark { None, Mine, MineElsewhere, Theirs, New, Incoming, Changed }
+
+    /// <summary>How one robot file shows in the tree: a mark, a short word after the name, and the full story on hover.</summary>
+    internal sealed class FileStatus
+    {
+        internal FileMark Mark;
+        internal string Detail = "";
+        internal string Tip = "";
+        internal string Owner;      // who to ask for it (Theirs only)
+    }
+
+    /// <summary>What's going on inside a folder, so ownership shows without expanding it.</summary>
+    internal sealed class FolderSummary
+    {
+        internal int Mine, Theirs, Incoming, New;
+
+        internal string Text
+        {
+            get
+            {
+                var parts = new List<string>();
+                if (Mine > 0) parts.Add("✎" + Mine);
+                if (Theirs > 0) parts.Add("🔒" + Theirs);
+                if (New > 0) parts.Add("●" + New);
+                if (Incoming > 0) parts.Add("⬇" + Incoming);
+                return String.Join("  ", parts);
+            }
+        }
+    }
+
+    /// <summary>Robot file statuses from the last status check (no extra server request). Pure, so it's tested directly.</summary>
+    internal static class RobotFileStatus
+    {
+        internal static string Since(DateTime since, DateTime now)
+        {
+            return since.Date == now.Date ? since.ToString("h:mm tt") : since.ToString("ddd MMM d, h:mm tt");
+        }
+
+        internal static FileStatus Of(WorkspaceSnapshot snapshot, string full, string user, DateTime now)
+        {
+            var status = new FileStatus();
+            if (snapshot == null) return status;
+            string owner, who;
+            DateTime since;
+            string when = snapshot.LockedSince.TryGetValue(full, out since) ? " since " + Since(since, now) : "";
+            bool incoming = snapshot.IncomingFiles.TryGetValue(full, out who);
+            string newer = incoming ? "\n" + who + " submitted a newer version; it comes in with the next update." : "";
+            if (snapshot.Mine.Contains(full))
+            {
+                status.Mark = FileMark.Mine;
+                status.Detail = snapshot.Changed.Contains(full) ? "you · not submitted" : "you";
+                status.Tip = "You're editing this" + when + (snapshot.Changed.Contains(full) ? ". Your changes aren't submitted yet." : ".");
+            }
+            else if (snapshot.Locks.TryGetValue(full, out owner) && owner == user)
+            {
+                status.Mark = FileMark.MineElsewhere;
+                status.Detail = "you, other computer";
+                status.Tip = "You're editing this on another computer" + when + ". Submit it there, or ask a mentor to release it.";
+            }
+            else if (snapshot.Locks.TryGetValue(full, out owner))
+            {
+                status.Mark = FileMark.Theirs;
+                status.Owner = owner;
+                status.Detail = owner;
+                status.Tip = owner + " is editing this" + when + ". Right-click → Ask " + owner + " for it." + newer;
+            }
+            else if (snapshot.New.Contains(full))
+            {
+                status.Mark = FileMark.New;
+                status.Detail = "new · not submitted";
+                status.Tip = "New file: it goes to the team with your next Submit.";
+            }
+            else if (incoming)
+            {
+                status.Mark = FileMark.Incoming;
+                status.Detail = "newer from " + who;
+                status.Tip = newer.TrimStart('\n');
+            }
+            else if (snapshot.Changed.Contains(full))
+            {
+                status.Mark = FileMark.Changed;
+                status.Detail = "changed here";
+                status.Tip = "Changed on this computer but not locked by you, so it can't be submitted. Tools → CAD Hub → Set Aside My Changes keeps a copy.";
+            }
+            return status;
+        }
+
+        internal static FolderSummary Summarize(WorkspaceSnapshot snapshot, string folderFull, string user)
+        {
+            var summary = new FolderSummary();
+            if (snapshot == null) return summary;
+            string prefix = folderFull.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            Func<string, bool> inside = p => p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+            summary.Mine = snapshot.Mine.Count(inside);
+            summary.Theirs = snapshot.Locks.Count(l => inside(l.Key) && l.Value != user);
+            summary.New = snapshot.New.Count(inside);
+            summary.Incoming = snapshot.IncomingFiles.Keys.Count(p => inside(p) && WorkspacePolicy.IsSubmittableCad(p));
+            return summary;
+        }
+    }
+
     /// <summary>
     /// The Robot tab's file list: every SOLIDWORKS file in one robot folder, as paths relative to it. Built off the UI thread
     /// (plain file listing, never SOLIDWORKS), then searched and turned into tree nodes on demand. Pure, so it's tested directly.

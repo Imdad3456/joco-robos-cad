@@ -34,6 +34,8 @@ namespace JocoRobos.Cad
 
         // Set while CAD Hub saves a copy elsewhere (recovery and safety copies): the document itself wasn't saved.
         internal bool Quiet;
+        // A watched team document went from saved to changed (the panel's "unsaved").
+        internal Action Dirtied;
 
         internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed, Action<string> saved)
         {
@@ -148,6 +150,7 @@ namespace JocoRobos.Cad
         {
             try
             {
+                if (!watched.Doc.IsOpenedReadOnly() && IsTeam(watched)) Dirtied?.Invoke();
                 if (watched.Reported || !watched.Doc.IsOpenedReadOnly() || !IsTeam(watched)) return 0;
                 if (DateTime.UtcNow - watched.LoadedAt < Settle) { watched.ChangedWhileSettling = true; return 0; }
                 watched.Reported = true;
