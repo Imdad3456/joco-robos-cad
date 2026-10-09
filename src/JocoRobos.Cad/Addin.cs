@@ -53,6 +53,7 @@ namespace JocoRobos.Cad
         [DispId(35)] void MakeShaft();
         [DispId(37)] void GearRatio();
         [DispId(43)] void MountingPattern();
+        [DispId(44)] void RecoveryCopies();
     }
 
     [ComVisible(true)]
@@ -67,10 +68,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591913; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912 };
+        private const int GroupId = 591914; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912, 591913 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591931;
+        private const int LayoutVersion = 591932;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -144,6 +145,8 @@ namespace JocoRobos.Cad
                 // The pane is a convenience; the toolbar must still work if it cannot be created.
                 try { CreatePane(); }
                 catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
+                try { StartRecovery(); }
+                catch (Exception exception) { ErrorLog.Write("recovery: start", exception); }
                 return true;
             }
             catch (Exception exception)
@@ -204,6 +207,7 @@ namespace JocoRobos.Cad
                 Add(group, "Copy Diagnostics", "Copy a report (no passwords) to send a mentor when something's wrong", nameof(CopyDiagnostics), 21, menu);
                 group.AddSpacer2(-1, menu);
                 Add(group, "Set Aside My Changes", "Recovery: keep your version of changed files as a copy and restore the team's", nameof(SetAsideChanges), 12, menu, 11);
+                Add(group, "Recovery Copies", "Recovery: copies CAD Hub keeps every few minutes of files you're editing and haven't saved", nameof(RecoveryCopies), 44, menu);
                 Add(group, "Restore Deleted Files", "Recovery: bring back team files deleted on this computer", nameof(RestoreDeletedFiles), 13, menu, 12);
                 Add(group, "Import Outside References", "Recovery: copy parts this assembly uses from outside the robot into it", nameof(ImportOutsideReferences), 15, menu, 14);
                 Add(group, "Repair Moved References", "Recovery: after reorganizing folders, repoint every file's links to the same-named file", nameof(RepairMovedReferences), 16, menu, 16);
@@ -1663,6 +1667,7 @@ namespace JocoRobos.Cad
                 try { login = CredentialStore.Read(); } catch (Exception exception) { line("Saved sign-in", "unreadable: " + exception.Message); }
                 line("CAD username", login?.UserName ?? "(not signed in)");
                 line("Robot folder", WorkspaceInfo.BaseFolder);
+                try { line("Recovery copies", RecoverySummary()); } catch (Exception exception) { line("Recovery copies", "unreadable: " + exception.Message); }
                 line("Server", TeamServer.Address?.AbsoluteUri ?? "not set yet");
                 if (login != null)
                 {
@@ -1865,14 +1870,26 @@ namespace JocoRobos.Cad
             string path = doc.GetPathName();
             string copy = Path.Combine(WorkspacePolicy.UniqueFolder(Path.Combine(WorkspaceInfo.BaseFolder, "Set Aside"), DateTime.Now), workspace.Name,
                 path.Substring(workspace.Root.Length + 1));
-            Directory.CreateDirectory(Path.GetDirectoryName(copy));
-            int errors = 0, warnings = 0;
-            bool saved = doc.Extension.SaveAs3(copy, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
-                (int)(swSaveAsOptions_e.swSaveAsOptions_Silent | swSaveAsOptions_e.swSaveAsOptions_Copy), null, null, ref errors, ref warnings);
-            if (!saved || !File.Exists(copy))
+            int errors = SaveCopy(doc, copy);
+            if (errors != 0)
                 throw new InvalidOperationException("Could not save a backup of your unsaved changes (error " + errors + "). Nothing was changed.\n\n" +
                     "Use File → Save As to save your work somewhere else first.");
             return copy;
+        }
+
+        // Saves the in-memory document to another file; it stays open, unsaved and where it was. 0 if saved, else SOLIDWORKS' error.
+        private int SaveCopy(ModelDoc2 doc, string copy)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(copy));
+            int errors = 0, warnings = 0;
+            if (watcher != null) watcher.Quiet = true;
+            try
+            {
+                bool saved = doc.Extension.SaveAs3(copy, (int)swSaveAsVersion_e.swSaveAsCurrentVersion,
+                    (int)(swSaveAsOptions_e.swSaveAsOptions_Silent | swSaveAsOptions_e.swSaveAsOptions_Copy), null, null, ref errors, ref warnings);
+                return saved && File.Exists(copy) ? 0 : (errors == 0 ? -1 : errors);
+            }
+            finally { if (watcher != null) watcher.Quiet = false; }
         }
 
         public void SetAsideChanges()
@@ -3007,6 +3024,7 @@ namespace JocoRobos.Cad
             {
                 if (submitWindow != null && !submitWindow.IsDisposed) submitWindow.Close();
                 submitWindow = null;
+                StopRecovery();
                 watcher?.Dispose();
                 watcher = null;
                 savedTimer?.Dispose();

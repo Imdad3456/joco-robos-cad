@@ -32,6 +32,9 @@ namespace JocoRobos.Cad
         private readonly List<Watched> documents = new List<Watched>();
         private readonly System.Windows.Forms.Timer settleCheck = new System.Windows.Forms.Timer { Interval = 2000 };
 
+        // Set while CAD Hub saves a copy elsewhere (recovery and safety copies): the document itself wasn't saved.
+        internal bool Quiet;
+
         internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed, Action<string> saved)
         {
             this.application = application;
@@ -171,6 +174,7 @@ namespace JocoRobos.Cad
         {
             try
             {
+                if (Quiet) return 0;
                 // After Save As the document has its new name; a "save as copy" leaves it unchanged.
                 string path = watched.Doc.GetPathName();
                 if (String.IsNullOrEmpty(path)) path = fileName;

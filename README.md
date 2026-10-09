@@ -30,7 +30,9 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 
 In search, **⚡** marks FRCDesignLib parts the team Library already has (instant); with nothing typed, the Library tab shows the team's most-used parts. The **×** box next to Insert adds several at once.
 
-Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List, Where Used), your account (Sign In, Change Password, Test Connection, Check This Computer, Copy Diagnostics), and recovery tools (Set Aside My Changes, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
+Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List, Where Used), your account (Sign In, Change Password, Test Connection, Check This Computer, Copy Diagnostics), and recovery tools (Set Aside My Changes, Recovery Copies, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
+
+**Recovery copies:** while you're editing a part or assembly and haven't saved, CAD Hub quietly keeps a copy every few minutes (only when you pause), outside the robot folder. If SOLIDWORKS closes unexpectedly, the next start tells you which files had unsaved work and opens the copies. Tools → CAD Hub → **Recovery Copies** opens them any time; they're kept 14 days.
 
 **Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or codes.
 

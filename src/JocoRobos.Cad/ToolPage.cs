@@ -95,6 +95,7 @@ namespace JocoRobos.Cad
         // The page on screen, if any: SOLIDWORKS can crash when a second PropertyManager page is opened over one that's still up.
         private static ToolPage open;
         private object preselected;
+        internal static bool IsOpen { get { return open != null; } }
 
         internal void Show()
         {

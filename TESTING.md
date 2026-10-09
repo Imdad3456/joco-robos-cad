@@ -143,6 +143,23 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 
 | 5.9 | A | Make a new part in a **new folder**, Submit with the network off (it fails), turn the network on, Submit again | The second Submit succeeds (new folders marked by the failed try are included); Open Robot / Update work afterwards | ☐ |
 
+## 5b. Recovery copies (1.14)
+
+Copies go to `%LOCALAPPDATA%\JocoRobos.Cad\Recovery\<Season>\<time>\<path in robot>`. Paste that path in Explorer to watch them appear.
+
+| # | Who | Do | Expect | ✓ |
+|---|---|---|---|---|
+| 5b.1 | A | **Edit** a part, change it (don't save), keep working for 5 minutes, then leave the mouse and keyboard alone for 30 s | A copy of the part appears under Recovery. SOLIDWORKS doesn't pause while you're moving the mouse; the part is still unsaved (title has `*`) and the panel doesn't count it as saved | ☐ |
+| 5b.2 | A | Leave SOLIDWORKS alone 10 more minutes | No new copy (nothing changed since the last one) | ☐ |
+| 5b.3 | A | Open a sketch on the part, change it, pause 30 s after 5 minutes. Then do the same with an Extrude PropertyManager open, then with a CAD Hub side panel (Spur Gear) open | No copy while the sketch, the PropertyManager, or the side panel is open; one appears after you close it and pause again. The sketch/feature isn't closed or changed by CAD Hub | ☐ |
+| 5b.4 | A | Edit the robot assembly, move a component, pause after 5 minutes. Also edit a part **in context** (Edit Part inside the assembly) | Assembly copy appears; nothing is copied while you're editing a part inside the assembly | ☐ |
+| 5b.5 | A | Change a part you **haven't** clicked Edit on (read-only) and pause | No copy (only files you're editing) | ☐ |
+| 5b.6 | A | With an unsaved change copied (5b.1), end SOLIDWORKS in Task Manager. Restart | About 5 s after start: "SOLIDWORKS closed unexpectedly last time…" naming the part and the copy's time. **Yes** opens Explorer on it. The part's lock is still yours | ☐ |
+| 5b.7 | A | Close the part in SOLIDWORKS, copy the recovery file over the robot's part, open it | Your unsaved change is there; Save → Submit works as usual | ☐ |
+| 5b.8 | A | Close SOLIDWORKS normally (Don't Save), restart | No recovery message | ☐ |
+| 5b.9 | Both | Tools → CAD Hub → **Recovery Copies**; then panel → **Diagnostics** | Opens Explorer on the newest copy (or explains there are none). Diagnostics has a "Recovery copies" line | ☐ |
+| 5b.10 | A | On a big assembly, note how long SOLIDWORKS pauses when a copy is taken (errors.log has "slow: recovery copies" over 5 s) | A pause only when idle; if copies are slow, they're spaced further apart | ☐ |
+
 ## 6. Timing on the real robot (A)
 
 Write the times down; anything that makes SOLIDWORKS look stuck for more than a few seconds is a 1.0 bug. Slow operations are also logged automatically (see Copy Diagnostics).

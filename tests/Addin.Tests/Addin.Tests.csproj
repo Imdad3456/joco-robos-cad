@@ -21,6 +21,7 @@
     <Compile Include="../../src/JocoRobos.Cad/PartsSheet.cs" Link="PartsSheet.cs" />
     <Compile Include="../../src/JocoRobos.Cad/WhereUsed.cs" Link="WhereUsed.cs" />
     <Compile Include="../../src/JocoRobos.Cad/HealthCheck.cs" Link="HealthCheck.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/Recovery.cs" Link="Recovery.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Timings.cs" Link="Timings.cs" />
     <Compile Include="../../src/JocoRobos.Cad/StockParts.cs" Link="StockParts.cs" />
     <Compile Include="../../src/JocoRobos.Cad/BeltChain.cs" Link="BeltChain.cs" />

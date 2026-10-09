@@ -150,10 +150,84 @@ static class Program
             PowertrainChecks();
             MountingChecks();
             HealthChecks();
+            RecoveryChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
 
         finally { Directory.Delete(temp, true); }
+    }
+
+    // Recovery copies: only robot files, kept outside the robot, taken when the student pauses, pruned, and offered after a crash.
+    static void RecoveryChecks(string temp)
+    {
+        string robotBase = Path.Combine(temp, "JOCO-ROBOS"), recovery = Path.Combine(temp, "Recovery");
+        string season, seasonRoot;
+        string plate = Path.Combine(robotBase, "2027-Robot", "20_Intake", "Plate.SLDPRT");
+        Check(Recovery.Locate(robotBase, plate, out season, out seasonRoot) && season == "2027-Robot" && seasonRoot == Path.Combine(robotBase, "2027-Robot"), "Robot file not located");
+        Check(Recovery.Locate(robotBase, Path.Combine(robotBase, "Library", "Motors", "NEO.SLDPRT"), out season, out seasonRoot) && season == "Library", "Library file not located");
+        Check(!Recovery.Locate(robotBase, Path.Combine(robotBase, "Set Aside", "x", "Plate.SLDPRT"), out season, out seasonRoot), "Set Aside copy treated as robot work");
+        Check(!Recovery.Locate(robotBase, Path.Combine(robotBase, "2027-Robot", "notes.txt"), out season, out seasonRoot), "Non-CAD file copied");
+        Check(!Recovery.Locate(robotBase, Path.Combine(robotBase, "2027-Robot", "~$Plate.SLDPRT"), out season, out seasonRoot), "Owner file copied");
+        Check(!Recovery.Locate(robotBase, Path.Combine(temp, "JOCO-ROBOS-old", "2027-Robot", "Plate.SLDPRT"), out season, out seasonRoot), "Sibling-prefix folder accepted");
+        Check(!Recovery.Locate(robotBase, Path.Combine(robotBase, "2027-Robot", ".svn", "pristine", "Plate.SLDPRT"), out season, out seasonRoot), "SVN bookkeeping copied");
+        Recovery.Locate(robotBase, plate, out season, out seasonRoot);
+        var at = new DateTime(2027, 2, 10, 14, 5, 9);
+        string copy = Recovery.CopyPath(recovery, season, seasonRoot, plate, at);
+        Check(copy == Path.Combine(recovery, "2027-Robot", "2027-02-10 140509", "20_Intake", "Plate.SLDPRT"), "Copy path: " + copy);
+
+        // Due: only after activity, after the interval, once the student has paused; slow copies wait longer.
+        var round = at;
+        Check(!Recovery.Due(round.AddMinutes(10), round, round.AddSeconds(-1), TimeSpan.Zero), "Copy taken with nothing done since");
+        Check(!Recovery.Due(round.AddMinutes(4), round, round.AddMinutes(1), TimeSpan.Zero), "Copy before the interval");
+        Check(!Recovery.Due(round.AddMinutes(6), round, round.AddMinutes(6).AddSeconds(-5), TimeSpan.Zero), "Copy while the student is working");
+        Check(Recovery.Due(round.AddMinutes(6), round, round.AddMinutes(5), TimeSpan.Zero), "Copy not taken after a pause");
+        Check(!Recovery.Due(round.AddMinutes(6), round, round.AddMinutes(5), TimeSpan.FromSeconds(30)), "Slow copies not spaced out");
+        Check(Recovery.Due(round.AddMinutes(11), round, round.AddMinutes(5), TimeSpan.FromSeconds(30)), "Slow copies never taken again");
+
+        // Listing, pruning, and what's newer than the saved file.
+        Func<DateTime, string, string> make = (when, relative) =>
+        {
+            string file = Path.Combine(recovery, "2027-Robot", when.ToString("yyyy-MM-dd HHmmss"), relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file, "cad");
+            return file;
+        };
+        for (int i = 0; i < 7; i++) make(at.AddMinutes(5 * i), Path.Combine("20_Intake", "Plate.SLDPRT"));
+        make(at.AddDays(-20), Path.Combine("30_Shooter", "Hood.SLDPRT"));
+        make(at.AddMinutes(20), Path.Combine("00_Master", "Robot.SLDASM"));
+        Directory.CreateDirectory(Path.Combine(recovery, "Not a season", "2027-02-10 140509"));
+        File.WriteAllText(Path.Combine(recovery, "Not a season", "2027-02-10 140509", "Keep.SLDPRT"), "not ours");
+        var all = Recovery.List(recovery, robotBase);
+        Check(all.Count == 9 && all[0].TakenAt == at.AddMinutes(30) && all[0].Original == plate, "Copies listed newest first with their robot file");
+        Check(Recovery.Prune(recovery, robotBase, at.AddMinutes(31)) == 3, "Prune keeps the newest five per file and drops old ones");
+        var kept = Recovery.List(recovery, robotBase);
+        Check(kept.Count(c => c.Relative.EndsWith("Plate.SLDPRT")) == Recovery.KeepPerFile && kept.Min(c => c.TakenAt) >= at.AddMinutes(10), "Wrong copies pruned");
+        Check(!Directory.Exists(Path.Combine(recovery, "2027-Robot", at.AddDays(-20).ToString("yyyy-MM-dd HHmmss"))), "Empty folders left behind");
+        Check(File.Exists(Path.Combine(recovery, "Not a season", "2027-02-10 140509", "Keep.SLDPRT")), "Prune touched a folder that isn't CAD Hub's");
+        // The plate was saved after its last copy; the robot assembly wasn't; the hood copy is from before this session.
+        string robot = Path.Combine(robotBase, "2027-Robot", "00_Master", "Robot.SLDASM");
+        var saved = new System.Collections.Generic.Dictionary<string, DateTime?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [plate] = at.AddMinutes(31), [robot] = at.AddMinutes(1),
+        };
+        var lost = Recovery.Unsaved(kept, at, p => saved.TryGetValue(p, out var t) ? t : null);
+        Check(lost.Count == 1 && lost[0].Original == robot, "Only work newer than the saved file is offered");
+        saved[plate] = at.AddMinutes(29);
+        lost = Recovery.Unsaved(kept, at, p => saved.TryGetValue(p, out var t) ? t : null);
+        Check(lost.Count == 2 && lost.Any(c => c.Original == plate && c.TakenAt == at.AddMinutes(30)), "The newest copy of an unsaved file not offered");
+        Check(Recovery.Unsaved(kept, at.AddHours(1), p => null).Count == 0, "Copies from before the crashed session offered");
+
+        // Crash detection: a marker left by a process that's gone means the last session didn't close normally.
+        string markers = Path.Combine(temp, "Markers");
+        Check(Recovery.StartSession(markers, at, 100, pid => false) == null, "First start reported as a crash");
+        Recovery.EndSession(markers, 100);
+        Check(Recovery.StartSession(markers, at.AddHours(1), 101, pid => false) == null, "Normal close reported as a crash");
+        Check(Recovery.StartSession(markers, at.AddHours(2), 102, pid => false) == at.AddHours(1), "Crash not detected");
+        Check(Recovery.StartSession(markers, at.AddHours(3), 103, pid => pid == 102) == null, "A second SOLIDWORKS reported as a crash");
+        Recovery.EndSession(markers, 103);
+        Check(File.Exists(Path.Combine(markers, "running.txt")), "Another SOLIDWORKS's marker removed");
+        Recovery.EndSession(markers, 102);
+        Check(!File.Exists(Path.Combine(markers, "running.txt")), "Marker kept after a normal close");
     }
 
     // Any team's server: what a student types becomes https://host/, and nothing else gets through.
