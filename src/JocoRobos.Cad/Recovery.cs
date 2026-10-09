@@ -16,6 +16,55 @@ namespace JocoRobos.Cad
         internal DateTime TakenAt;
     }
 
+    /// <summary>What's true right now about a recovery copy and its robot file, checked just before a restore.</summary>
+    internal sealed class RestoreFacts
+    {
+        internal string Name;               // "Shooter Hood.SLDPRT"
+        internal bool CopyExists;
+        internal bool InCurrentRobot;       // the current robot or the Library, not an old season
+        internal bool OpenInSolidWorks;
+        internal bool LockedByMe;           // a fresh server check: this computer holds the lock
+        internal string LockedBy;           // who holds it otherwise (null: nobody)
+        internal string NewerFrom;          // someone submitted a version this computer doesn't have
+        internal bool ReadOnlyOnDisk;       // not checked out for editing here
+        internal DateTime? SavedAt;         // the robot file's last save (null: it doesn't exist)
+        internal DateTime CopyTakenAt;
+    }
+
+    /// <summary>
+    /// When putting a recovery copy back into the robot is safe. Restoring replaces one robot file on disk with the copy, so it's
+    /// allowed only when nobody else's work can be lost: the student still holds the lock, the server has nothing newer, the file
+    /// isn't open, and nothing was saved into it after the copy. Anything else is refused with what to do instead.
+    /// </summary>
+    internal static class RecoveryRestore
+    {
+        /// <summary>Null when the restore is safe; otherwise why not, in words a student can act on.</summary>
+        internal static string WhyNot(RestoreFacts f)
+        {
+            string name = Path.GetFileNameWithoutExtension(f.Name);
+            if (!f.CopyExists) return "The recovery copy of " + name + " is gone (copies are kept " + Recovery.KeepFor.Days + " days).";
+            if (!f.InCurrentRobot) return name + " isn't in your current robot. Save the copy somewhere else instead.";
+            if (f.OpenInSolidWorks) return "Close " + name + " in SOLIDWORKS first. Restoring replaces the file on disk, and it can't be open while that happens.";
+            if (f.LockedBy != null && !f.LockedByMe)
+                return f.LockedBy + " is editing " + name + " now, so restoring could overwrite their work. Save the copy somewhere else and show them.";
+            if (!f.LockedByMe)
+                return "You're not editing " + name + " any more (your lock was released). Save the copy somewhere else, then Edit " + name + " and redo your changes from it.";
+            if (f.NewerFrom != null)
+                return f.NewerFrom + " submitted a newer version of " + name + ". Save the copy somewhere else, Update, then redo your changes from it.";
+            if (f.ReadOnlyOnDisk) return name + " is read-only on this computer. Click Edit on it first, then restore.";
+            if (f.SavedAt != null && f.SavedAt.Value >= f.CopyTakenAt)
+                return name + " was saved at " + f.SavedAt.Value.ToString("h:mm tt") + ", after this copy was made, so the robot file may have newer work. " +
+                    "Save the copy somewhere else to compare instead.";
+            return null;
+        }
+
+        /// <summary>The name a preview or saved copy gets, so it's never mistaken for the robot file: "Shooter Hood (recovered 2-45 PM).SLDPRT".</summary>
+        internal static string RecoveredName(string original, DateTime takenAt)
+        {
+            return Path.GetFileNameWithoutExtension(original) + " (recovered " + takenAt.ToString("h-mm tt", CultureInfo.InvariantCulture) + ")" + Path.GetExtension(original);
+        }
+    }
+
     /// <summary>
     /// Automatic recovery copies of team files a student is editing and hasn't saved, so a SOLIDWORKS crash or a power cut costs
     /// minutes, not an afternoon. They live outside the robot (%LOCALAPPDATA%\JocoRobos.Cad\Recovery\Season\time\path in robot),

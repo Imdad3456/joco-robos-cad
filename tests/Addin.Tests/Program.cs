@@ -219,6 +219,36 @@ static class Program
         Check(lost.Count == 2 && lost.Any(c => c.Original == plate && c.TakenAt == at.AddMinutes(30)), "The newest copy of an unsaved file not offered");
         Check(Recovery.Unsaved(kept, at.AddHours(1), p => null).Count == 0, "Copies from before the crashed session offered");
 
+        // Restoring: only when nobody else's work can be lost, refused with what to do otherwise.
+        Func<RestoreFacts> safe = () => new RestoreFacts { Name = "Shooter Hood.SLDPRT", CopyExists = true, InCurrentRobot = true, LockedByMe = true,
+            SavedAt = at.AddMinutes(-30), CopyTakenAt = at };
+        Check(RecoveryRestore.WhyNot(safe()) == null, "A safe restore refused");
+        var unsafeCases = new Func<RestoreFacts, RestoreFacts>[]
+        {
+            f => { f.CopyExists = false; return f; },
+            f => { f.InCurrentRobot = false; return f; },
+            f => { f.OpenInSolidWorks = true; return f; },
+            f => { f.LockedByMe = false; f.LockedBy = "sarah"; return f; },
+            f => { f.LockedByMe = false; return f; },
+            f => { f.NewerFrom = "ben"; return f; },
+            f => { f.ReadOnlyOnDisk = true; return f; },
+            f => { f.SavedAt = at.AddMinutes(2); return f; },
+            f => { f.SavedAt = at; return f; },
+        };
+        var reasons = unsafeCases.Select(c => RecoveryRestore.WhyNot(c(safe()))).ToList();
+        Check(reasons.All(r => r != null && r.Contains("Shooter Hood")), "Every unsafe restore refused, naming the file");
+        Check(reasons[2].StartsWith("Close Shooter Hood") && reasons[3].StartsWith("sarah is editing") && reasons[4].Contains("lock was released") &&
+            reasons[5].StartsWith("ben submitted") && reasons[7].Contains("after this copy"), "Each refusal says what to do");
+        Check(RecoveryRestore.WhyNot(new RestoreFacts { Name = "New Part.SLDPRT", CopyExists = true, InCurrentRobot = true, LockedByMe = true, CopyTakenAt = at }) == null,
+            "A file that's gone from disk can be restored from its copy while locked");
+        Check(RecoveryRestore.RecoveredName(plate, new DateTime(2027, 2, 10, 14, 45, 0)) == "Plate (recovered 2-45 PM).SLDPRT", "Recovered copy name");
+        var pane = new PaneState { Sync = "✓ Up to date", CanAutoUpdate = true };
+        pane.ShowRecovered(0);
+        Check(pane.Sync == "✓ Up to date" && pane.CanAutoUpdate, "No recovered work: sync line untouched");
+        pane.ShowRecovered(2);
+        Check(pane.Sync == "⚠ Recovered work: 2 files" && pane.SyncAction == SyncAction.ReviewRecovery && !pane.CanAutoUpdate && pane.SyncTone == Tone.Bad,
+            "Recovered work leads the sync line with Review; updates wait");
+
         // Crash detection: a marker left by a process that's gone means the last session didn't close normally.
         string markers = Path.Combine(temp, "Markers");
         Check(Recovery.StartSession(markers, at, 100, pid => false) == null, "First start reported as a crash");

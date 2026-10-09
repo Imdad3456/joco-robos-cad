@@ -165,11 +165,16 @@ Copies go to `%LOCALAPPDATA%\JocoRobos.Cad\Recovery\<Season>\<time>\<path in rob
 | 5b.3 | A | Open a sketch on the part, change it, pause 30 s after 5 minutes. Then do the same with an Extrude PropertyManager open, then with a CAD Hub side panel (Spur Gear) open | No copy while the sketch, the PropertyManager, or the side panel is open; one appears after you close it and pause again. The sketch/feature isn't closed or changed by CAD Hub | ☐ |
 | 5b.4 | A | Edit the robot assembly, move a component, pause after 5 minutes. Also edit a part **in context** (Edit Part inside the assembly) | Assembly copy appears; nothing is copied while you're editing a part inside the assembly | ☐ |
 | 5b.5 | A | Change a part you **haven't** clicked Edit on (read-only) and pause | No copy (only files you're editing) | ☐ |
-| 5b.6 | A | With an unsaved change copied (5b.1), end SOLIDWORKS in Task Manager. Restart | About 5 s after start: "SOLIDWORKS closed unexpectedly last time…" naming the part and the copy's time. **Yes** opens Explorer on it. The part's lock is still yours | ☐ |
-| 5b.7 | A | Close the part in SOLIDWORKS, copy the recovery file over the robot's part, open it | Your unsaved change is there; Save → Submit works as usual | ☐ |
-| 5b.8 | A | Close SOLIDWORKS normally (Don't Save), restart | No recovery message | ☐ |
-| 5b.9 | Both | Tools → CAD Hub → **Recovery Copies**; then panel → **Diagnostics** | Opens Explorer on the newest copy (or explains there are none). Diagnostics has a "Recovery copies" line | ☐ |
-| 5b.10 | A | On a big assembly, note how long SOLIDWORKS pauses when a copy is taken (errors.log has "slow: recovery copies" over 5 s) | A pause only when idle; if copies are slow, they're spaced further apart | ☐ |
+| 5b.6 | A | With an unsaved change copied (5b.1), end SOLIDWORKS in Task Manager. Restart | No window pops up. A few seconds after start the panel's sync line says "⚠ Recovered work: 1 file" with **Review**; updates wait meanwhile. The part's lock is still yours | ☐ |
+| 5b.7 | A | **Review** → **Preview** | Opens read-only as "*Part* (recovered *time*)" (not the robot file's name), from outside the robot, with your unsaved change in it. The robot file isn't touched. For an assembly: first a note that it uses the robot's current parts | ☐ |
+| 5b.8 | A | Close the preview. **Restore** while the part is open | Refused: "Close *Part* in SOLIDWORKS first…" | ☐ |
+| 5b.9 | A | Close the part, **Restore** | Asks to confirm (default **No**) and says where the current file will be kept. **Yes**: "✓ Restored …"; open the part: your change is there; the old version is in `C:\JOCO-ROBOS\Set Aside\<time>\…`; Save → Submit works as usual | ☐ |
+| 5b.10 | A | Repeat 5b.6, but before restoring have a mentor release your lock (mentor page → Locks) and B Edit the part. **Restore** | Refused: "B is editing *Part* now…"; **Save a copy** puts it on the Desktop as "*Part* (recovered *time*)" and refuses the robot folder | ☐ |
+| 5b.11 | A | Recover a copy, then Save the robot part normally, then **Restore** the older copy | Refused: saved after this copy was made | ☐ |
+| 5b.12 | A | **Done** | The sync line goes back to normal; updates come in again | ☐ |
+| 5b.13 | A | Close SOLIDWORKS normally (Don't Save), restart | No recovered-work line | ☐ |
+| 5b.14 | Both | Tools → CAD Hub → **Recovery Copies**; then panel → **Diagnostics** | The same Review window for any copy newer than its file (or says there's nothing to recover). Diagnostics has a "Recovery copies" line | ☐ |
+| 5b.15 | A | On a big assembly, note how long SOLIDWORKS pauses when a copy is taken (errors.log has "slow: recovery copies" over 5 s) | A pause only when idle; if copies are slow, they're spaced further apart | ☐ |
 
 ## 6. Timing on the real robot (A)
 

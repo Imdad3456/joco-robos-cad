@@ -103,6 +103,20 @@ namespace JocoRobos.Cad
 
         internal bool AnyoneWaiting { get { return Requests.Length > 0; } }
 
+        /// <summary>
+        /// Recovery copies hold work the robot doesn't (after a crash): that comes first on the sync line until it's reviewed. Updates
+        /// wait meanwhile, so the robot files being compared with the copies don't change underneath the student.
+        /// </summary>
+        internal void ShowRecovered(int files)
+        {
+            if (files <= 0) return;
+            Sync = "⚠ Recovered work: " + files + (files == 1 ? " file" : " files");
+            SyncTone = Tone.Bad;
+            SyncNote = "Saved from before SOLIDWORKS closed. Review it before you keep editing those files.";
+            SyncAction = SyncAction.ReviewRecovery;
+            CanAutoUpdate = false;
+        }
+
         internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
             string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false, bool robotOpen = false,
             IEnumerable<EditRequests.Request> requests = null, ICollection<string> unsaved = null)

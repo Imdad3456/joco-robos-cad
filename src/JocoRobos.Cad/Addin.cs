@@ -328,7 +328,7 @@ namespace JocoRobos.Cad
                 History = FileHistory, Diagnostics = CopyDiagnostics,
                 OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path), WhereUsedOf = path => WhereUsedFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
-                AskForFile = AskForActiveFile, AskFor = AskFor, DismissRequests = DismissRequests,
+                AskForFile = AskForActiveFile, AskFor = AskFor, DismissRequests = DismissRequests, ReviewRecovery = ReviewRecovery,
                 SetCopies = count => nextCopies = Math.Max(1, Math.Min(20, count)),
                 BeltChain = BeltChainCalculator,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
@@ -402,6 +402,7 @@ namespace JocoRobos.Cad
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
                 var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
                     doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork());
+                state.ShowRecovered(recoveredWork?.Count ?? 0);
                 state.Working = working;
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
                 if (state.Warning != null && state.ActiveAction == FileAction.Edit) { state.ActiveAction = FileAction.None; state.EditTarget = null; }
