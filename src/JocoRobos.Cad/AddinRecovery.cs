@@ -157,8 +157,9 @@ namespace JocoRobos.Cad
                 (lost.Count > 8 ? "\n  â€¢ â€¦" : "");
             if (MessageBox.Show(new SolidWorksWindow(),
                 "SOLIDWORKS closed unexpectedly last time. CAD Hub kept recovery copies of work you hadn't saved:\n\n" + list +
-                "\n\nTo use one: open it from the folder and compare, or close that file in SOLIDWORKS and copy the recovery file over it " +
-                "(only for files you're still editing). Your edit locks are still yours.\n\nOpen the folder now?",
+                "\n\nTo use one, close that file in SOLIDWORKS first (SOLIDWORKS can't open two files with the same name), then copy the " +
+                "recovery file over the robot's file. Only for files you're still editing; your edit locks are still yours. " +
+                "Nothing is replaced automatically.\n\nOpen the folder now?",
                 Title, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes)
                 Process.Start("explorer.exe", "/select,\"" + lost[0].Copy + "\"");
         }
