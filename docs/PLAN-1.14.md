@@ -96,7 +96,16 @@ Reuse `SubmitCheck` (missing, temporary and outside references, rebuild problems
   the attention strip.
 * No new "run the checker" button.
 
-## Order of work
+## Status (2026-10-09)
+Approved and built in this order, each tested (unit tests, add-in build, and the pane rendered at 250, 300 and 380 px):
+1. **Layout**: fixed top, sync states with what to do, one-row open file (two lines when narrow), My work collapsed by
+   default (remembered; requests always visible), File History on right-click, the tree fills the rest.
+2. **Recovery review and restore** (above), with the assembly-preview warning and server-checked, confirmed restores.
+3. **Bell** for actionable events only (requests, freed files). No Activity tab.
+
+Still to do: assembly selection in the open-file row; health on save in My work.
+
+## Order of work (original proposal)
 1. **Robot tab** (this step): data for incoming files; PaneState rebuilt around the next step, This file, My work;
    StatusPane redrawn; file tree with owners, incoming, folder summaries, follow-active, Ask from the tree. Tests for
    every state.

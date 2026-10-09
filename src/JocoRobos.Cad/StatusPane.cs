@@ -28,6 +28,8 @@ namespace JocoRobos.Cad
         internal Action AskForFile, DismissRequests;
         // Recovered work after a crash: review it.
         internal Action ReviewRecovery;
+        // The bell: answer one request "not yet" (by id); open or put away a file that's free now (by path).
+        internal Action<string> DismissRequest, OpenFreed, DismissFreed;
     }
 
     /// <summary>
@@ -54,6 +56,13 @@ namespace JocoRobos.Cad
         private readonly Label robot = Caption(11.5f, FontStyle.Bold);
         private readonly Label refresh = new Label { Text = "", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(6, 3, 0, 0),
             Font = new Font("Segoe MDL2 Assets", 9f), ForeColor = SystemColors.GrayText };
+        // The bell and how many things are waiting on the student; hidden when there's nothing to act on.
+        private readonly Label bell = new Label { AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(6, 2, 0, 0), ForeColor = Color.DarkOrange,
+            Font = new Font("Segoe UI Emoji", 9f, FontStyle.Bold) };
+        private readonly FlowLayoutPanel notices = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 6, 0, 0), Padding = new Padding(8, 4, 8, 4), BackColor = Color.FromArgb(250, 246, 238) };
+        private bool noticesOpen;
+        private string noticesShown;
         private readonly Label sync = Caption(9.5f, FontStyle.Bold);
         private readonly LinkLabel syncAction = Link("", 9f);
         private readonly Label syncNote = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
@@ -114,11 +123,15 @@ namespace JocoRobos.Cad
             workExpanded = ReadExpanded();
 
             // The robot on the left, ↻ on the right; under it the sync state and its one action.
+            header.ColumnCount = 3;
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             robot.Margin = new Padding(0);
             header.Controls.Add(robot, 0, 0);
-            header.Controls.Add(refresh, 1, 0);
+            header.Controls.Add(bell, 1, 0);
+            header.Controls.Add(refresh, 2, 0);
+            bell.Click += (s, e) => { noticesOpen = !noticesOpen; notices.Visible = noticesOpen && notices.Controls.Count > 0; FitWidth(); };
             syncRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             syncRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             sync.Margin = new Padding(0);
@@ -150,7 +163,7 @@ namespace JocoRobos.Cad
             workFooter.Controls.Add(release, 0, 0);
             interrupted.Margin = new Padding(0, 3, 0, 0);
 
-            foreach (var control in new Control[] { header, syncRow, syncNote, update, install, warning, flash, working, open, active, activeHint,
+            foreach (var control in new Control[] { header, notices, syncRow, syncNote, update, install, warning, flash, working, open, active, activeHint,
                 workHeader, requestsRow, interrupted, workRows, workFooter })
                 layout.Controls.Add(control);
 
@@ -203,9 +216,11 @@ namespace JocoRobos.Cad
             layout.SuspendLayout();
             foreach (Control control in new Control[] { header, syncRow, workHeader, requestsRow, workFooter })
                 control.MinimumSize = control.MaximumSize = new Size(width, 0);
+            notices.MinimumSize = notices.MaximumSize = new Size(width, 0);
+            foreach (Control row in notices.Controls) row.MinimumSize = row.MaximumSize = new Size(width - notices.Padding.Horizontal, 0);
             // A painted row, not a sized-to-fit one: give it its size directly (size limits would squash its height to 0).
             active.Size = new Size(width, active.HeightFor(width));
-            robot.MaximumSize = new Size(Math.Max(60, width - refresh.PreferredSize.Width - 8), 0);
+            robot.MaximumSize = new Size(Math.Max(60, width - refresh.PreferredSize.Width - (bell.Visible ? bell.PreferredSize.Width + 6 : 0) - 8), 0);
             sync.MaximumSize = new Size(Math.Max(60, width - (syncAction.Visible ? syncAction.PreferredSize.Width + 8 : 0)), 0);
             foreach (var label in new[] { syncNote, update, warning, flash, working, activeHint, interrupted })
                 label.MaximumSize = new Size(width, 0);
@@ -332,8 +347,66 @@ namespace JocoRobos.Cad
             workFooter.Visible = workExpanded && state.Unchanged > 0;
             ShowWork(state.Work);
             workRows.Visible = workExpanded && state.Work.Count > 0;
+            ShowNotices(state.Notices);
             layout.ResumeLayout();
             FitWidth();
+        }
+
+        // The bell's list: one row per thing to act on, each with its own answer. New ones only change the count; the list
+        // opens when the student clicks the bell, so nothing jumps around while they model.
+        private void ShowNotices(List<Notice> items)
+        {
+            bell.Text = "\U0001F514 " + items.Count;
+            bell.Visible = items.Count > 0;
+            tips.SetToolTip(bell, items.Count == 0 ? "" : String.Join("\n", items.Select(n => n.Text)) + "\n\nClick to " + (noticesOpen ? "hide" : "answer") + " them here");
+            string shown = String.Join("|", items.Select(n => n.Kind + ":" + n.Path + ":" + n.RequestId));
+            if (shown != noticesShown)
+            {
+                noticesShown = shown;
+                notices.SuspendLayout();
+                foreach (Control old in notices.Controls.Cast<Control>().ToList()) { notices.Controls.Remove(old); old.Dispose(); }
+                foreach (var notice in items) notices.Controls.Add(NoticeRow(notice));
+                notices.ResumeLayout();
+            }
+            if (items.Count == 0) noticesOpen = false;
+            notices.Visible = noticesOpen && items.Count > 0;
+        }
+
+        // ✋ sarah is waiting for Shooter Hood ........ Not yet
+        // ✓ Gearbox Plate is free now (sarah gave it back) ........ Open  ×
+        private Control NoticeRow(Notice notice)
+        {
+            var row = new TableLayoutPanel { ColumnCount = 3, AutoSize = true, Margin = new Padding(0, 1, 0, 1) };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bool request = notice.Kind == NoticeKind.Request;
+            var text = new Label { Text = (request ? "✋ " : "✓ ") + notice.Text, AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, Height = 20,
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0), ForeColor = request ? Color.DarkOrange : Color.ForestGreen,
+                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f, FontStyle.Bold) };
+            tips.SetToolTip(text, notice.Text + (request ? "\nSubmit it (or give it back) when you're done, or tell them Not yet." : "\nOpen it and click Edit."));
+            row.Controls.Add(text, 0, 0);
+            string path = notice.Path, id = notice.RequestId;
+            if (request)
+            {
+                var notYet = Link("Not yet", 8.5f);
+                notYet.Margin = new Padding(6, 2, 0, 0);
+                notYet.LinkClicked += (s, e) => actions.DismissRequest?.Invoke(id);
+                row.Controls.Add(notYet, 1, 0);
+            }
+            else
+            {
+                var openIt = Link("Open", 8.5f);
+                openIt.Margin = new Padding(6, 2, 0, 0);
+                openIt.LinkClicked += (s, e) => actions.OpenFreed?.Invoke(path);
+                var dismiss = Link("×", 9f);
+                dismiss.Margin = new Padding(8, 1, 0, 0);
+                dismiss.LinkClicked += (s, e) => actions.DismissFreed?.Invoke(path);
+                tips.SetToolTip(dismiss, "Remove this from the list");
+                row.Controls.Add(openIt, 1, 0);
+                row.Controls.Add(dismiss, 2, 0);
+            }
+            return row;
         }
 
         private void ToggleWork()

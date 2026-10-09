@@ -617,6 +617,21 @@ static class Program
         Check(s.ActiveHint == "" && s.Unchanged == 2, "No save tip when nothing's unsaved; locked untouched files can be given back");
         Check(s.Work.Last().State == "unchanged" && s.Work.Last().Tone == Tone.Muted && s.WorkSummary == "1 ready · 1 new · 2 unchanged", "Untouched locked files last, muted");
 
+        // The bell: only what can be acted on, and only while it still can be.
+        s = PaneState.Describe("sam", snap, null, null, false, null, now, requests: requests);
+        Check(s.Notices.Count == 1 && s.Notices[0].Kind == NoticeKind.Request && s.Notices[0].RequestId == "r1" && s.Notices[0].Text == "sarah is waiting for Hood",
+            "A teammate's request is under the bell");
+        string gearbox = Path.Combine(season.Root, "10_Drivetrain", "Gearbox Plate.SLDPRT"), taken = Path.Combine(season.Root, "10_Drivetrain", "Bellypan.SLDPRT");
+        snap.Locks[taken] = "ben";
+        var freed = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { [gearbox] = "sarah", [taken] = "sarah" };
+        s = PaneState.Describe("sam", snap, null, null, false, null, now, requests: requests, freed: freed);
+        Check(s.Notices.Count == 2 && s.Notices[1].Kind == NoticeKind.Freed && s.Notices[1].Path == gearbox && s.Notices[1].Text == "Gearbox Plate is free now (sarah gave it back)",
+            "A freed file is under the bell until someone else takes it");
+        snap.Mine.Remove(hood);
+        s = PaneState.Describe("sam", snap, null, null, false, null, now, requests: requests, freed: freed);
+        Check(s.Notices.All(n => n.Kind == NoticeKind.Freed), "A request goes once the file isn't this student's any more");
+        Check(PaneState.Describe("sam", fresh(), null, null, false, null, now).Notices.Count == 0, "Nothing to act on: no notices");
+
         // A teammate's newer version: on the open file and in the tree.
         snap = fresh();
         snap.Head = 11;

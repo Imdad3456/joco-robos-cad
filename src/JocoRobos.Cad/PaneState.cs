@@ -40,6 +40,22 @@ namespace JocoRobos.Cad
     /// <summary>The one thing the open file's row can offer to do.</summary>
     internal enum FileAction { None, Edit, Ask }
 
+    internal enum NoticeKind { Request, Freed }
+
+    /// <summary>
+    /// Something to act on, kept under the panel's bell until it's handled: a teammate waiting for one of this student's files
+    /// (gone once they Submit or give it back, or say "Not yet"), or a file they asked for that's free now (gone once opened or
+    /// dismissed, or if someone else takes it first).
+    /// </summary>
+    internal sealed class Notice
+    {
+        internal NoticeKind Kind;
+        internal string Path;
+        internal string Who;
+        internal string RequestId;  // Request only: what "Not yet" answers
+        internal string Text;
+    }
+
     /// <summary>One line of My work: a file this student is editing, changed, or added.</summary>
     internal sealed class WorkItem
     {
@@ -103,6 +119,9 @@ namespace JocoRobos.Cad
 
         internal bool AnyoneWaiting { get { return Requests.Length > 0; } }
 
+        // The bell: requests first (someone is waiting on this student), then freed files.
+        internal readonly List<Notice> Notices = new List<Notice>();
+
         /// <summary>
         /// Recovery copies hold work the robot doesn't (after a crash): that comes first on the sync line until it's reviewed. Updates
         /// wait meanwhile, so the robot files being compared with the copies don't change underneath the student.
@@ -119,7 +138,7 @@ namespace JocoRobos.Cad
 
         internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
             string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false, bool robotOpen = false,
-            IEnumerable<EditRequests.Request> requests = null, ICollection<string> unsaved = null)
+            IEnumerable<EditRequests.Request> requests = null, ICollection<string> unsaved = null, IDictionary<string, string> freed = null)
         {
             var state = new PaneState();
             var now = DateTime.Now;
@@ -146,8 +165,33 @@ namespace JocoRobos.Cad
             if (robotSnapshot.Local > 0 && activePath == null && !robotOpen) state.ShowOpen = true;
             if (activePath != null) DescribeActive(state, user, snapshots, activePath, activeReadOnly, activeDirty, now);
             DescribeWork(state, snapshots, requests, unsaved, activePath, activeDirty);
+            DescribeNotices(state, user, snapshots, requests, freed);
             state.InterruptedSubmit = snapshots.Any(x => x.PendingSubmit);
             return state;
+        }
+
+        // Only what the student can act on now, from the latest check: nothing here is a history.
+        private static void DescribeNotices(PaneState state, string user, List<WorkspaceSnapshot> snapshots, IEnumerable<EditRequests.Request> requests,
+            IDictionary<string, string> freed)
+        {
+            foreach (var r in requests ?? Enumerable.Empty<EditRequests.Request>())
+            {
+                // Still theirs to wait for only while this student holds the file.
+                string path = snapshots.SelectMany(x => x.Mine)
+                    .FirstOrDefault(m => m.Replace('\\', '/').EndsWith("/" + r.Season + "/" + r.Path, StringComparison.OrdinalIgnoreCase));
+                if (path == null) continue;
+                state.Notices.Add(new Notice { Kind = NoticeKind.Request, Path = path, Who = r.From, RequestId = r.Id,
+                    Text = r.From + " is waiting for " + Path.GetFileNameWithoutExtension(path) });
+            }
+            foreach (var f in freed ?? new Dictionary<string, string>())
+            {
+                // Someone else took it meanwhile: nothing to act on any more.
+                string owner;
+                var snapshot = snapshots.FirstOrDefault(x => x.Info.Contains(f.Key));
+                if (snapshot == null || (snapshot.Locks.TryGetValue(f.Key, out owner) && owner != user)) continue;
+                state.Notices.Add(new Notice { Kind = NoticeKind.Freed, Path = f.Key, Who = f.Value,
+                    Text = Path.GetFileNameWithoutExtension(f.Key) + " is free now (" + f.Value + " gave it back)" });
+            }
         }
 
         // Up to date · updates waiting (and why, and what to do) · offline. Recovered work is added by the add-in, which knows about it.

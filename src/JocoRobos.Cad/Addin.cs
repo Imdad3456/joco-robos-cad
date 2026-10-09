@@ -329,6 +329,7 @@ namespace JocoRobos.Cad
                 OpenFile = OpenRobotFile, RevealFile = RevealRobotFile, FileHistoryOf = path => FileHistoryFor(path), WhereUsedOf = path => WhereUsedFor(path),
                 InsertFrc = InsertFromFrcDesign, SearchTeam = SearchTeamLibrary, InsertTeam = path => InsertTeamPart(path),
                 AskForFile = AskForActiveFile, AskFor = AskFor, DismissRequests = DismissRequests, ReviewRecovery = ReviewRecovery,
+                DismissRequest = DismissRequest, OpenFreed = OpenFreedFile, DismissFreed = DismissFreedFile,
                 SetCopies = count => nextCopies = Math.Max(1, Math.Min(20, count)),
                 BeltChain = BeltChainCalculator,
                 BrowseTeam = InsertFromLibrary, ImportDownloaded = InsertExternalPart,
@@ -401,7 +402,7 @@ namespace JocoRobos.Cad
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
                 var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
-                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork());
+                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork(), freedFiles);
                 state.ShowRecovered(recoveredWork?.Count ?? 0);
                 state.Working = working;
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
@@ -426,7 +427,7 @@ namespace JocoRobos.Cad
                 string askedOwner;
                 if (path != null && state.AskOwner != null && askedFor.TryGetValue(path, out askedOwner) && askedOwner == state.AskOwner)
                 {
-                    state.ActiveHint = "You asked " + askedOwner + " for it. This panel tells you when it's free.";
+                    state.ActiveHint = "You asked " + askedOwner + " for it. The bell tells you when it's free.";
                     state.ActiveAction = FileAction.None;
                     state.AskOwner = null;
                 }
@@ -816,8 +817,37 @@ namespace JocoRobos.Cad
                 string owner;
                 if (snapshot == null || (snapshot.Locks.TryGetValue(asked.Key, out owner) && owner == asked.Value)) continue;
                 askedFor.Remove(asked.Key);
+                freedFiles[asked.Key] = asked.Value; // Under the bell until opened or dismissed.
                 ShowFlash("✓ " + Path.GetFileName(asked.Key) + " is free now: " + asked.Value + " gave it back. Open it and click Edit.");
             }
+        }
+
+        // Files this student asked for that are free now (path → who gave it back), until they open or dismiss them.
+        private readonly Dictionary<string, string> freedFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        // The bell's actions: answer one request "not yet", open a freed file, or put a freed file away.
+        private void DismissRequest(string id)
+        {
+            Execute(() =>
+            {
+                var login = GetLogin(false);
+                if (login == null) return;
+                OperationDialog.Run("Letting them know…", () => { EditRequests.Dismiss(login, id); return true; });
+                editRequests = editRequests.Where(r => r.Id != id).ToList();
+            });
+        }
+
+        private void OpenFreedFile(string path)
+        {
+            freedFiles.Remove(path);
+            OpenRobotFile(path);
+            RenderStatus();
+        }
+
+        private void DismissFreedFile(string path)
+        {
+            freedFiles.Remove(path);
+            RenderStatus();
         }
 
         // The panel's "Ask … for it" on the active file.
@@ -840,7 +870,7 @@ namespace JocoRobos.Cad
                 string relative = path.Substring(snapshot.Info.Root.Length + 1).Replace('\\', '/');
                 string owner = OperationDialog.Run("Asking…", () => EditRequests.Ask(login, snapshot.Info.Name, relative));
                 askedFor[path] = owner;
-                ShowFlash("✓ Asked " + owner + " for " + Path.GetFileName(path) + ". This panel tells you when it's free.");
+                ShowFlash("✓ Asked " + owner + " for " + Path.GetFileName(path) + ". The bell tells you when it's free.");
             });
         }
 
