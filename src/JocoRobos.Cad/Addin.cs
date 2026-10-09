@@ -349,6 +349,7 @@ namespace JocoRobos.Cad
                 path => OnUi("saved", () => OnDocumentSaved(path)));
             // Redraw after the change has finished, not inside SOLIDWORKS' own event.
             watcher.Dirtied = () => { try { closedTimer?.Stop(); closedTimer?.Start(); } catch (Exception) { } };
+            watcher.SelectionChanged = watcher.Dirtied;
             // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
             savedTimer = new Timer { Interval = 1000 };
             savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
@@ -401,8 +402,26 @@ namespace JocoRobos.Cad
             {
                 var doc = application.ActiveDoc as ModelDoc2;
                 string path = doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : Path.GetFullPath(doc.GetPathName());
-                var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, doc != null && doc.IsOpenedReadOnly(), paneError, checkedAt,
-                    doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork(), freedFiles);
+                bool readOnly = doc != null && doc.IsOpenedReadOnly(), dirty = doc != null && doc.GetSaveFlag();
+                // One component selected in an assembly: the row is about that part (its owner, Edit or Ask), as Edit would lock it.
+                string assemblyName = null;
+                var selected = SelectedComponent(doc);
+                if (selected != null)
+                {
+                    assemblyName = Path.GetFileNameWithoutExtension(path);
+                    path = Path.GetFullPath(selected.GetPathName());
+                    var part = selected.GetModelDoc2() as ModelDoc2; // null while lightweight: nothing is loaded to find out
+                    readOnly = part == null || part.IsOpenedReadOnly();
+                    dirty = part != null && part.GetSaveFlag();
+                }
+                paneActivePath = path;
+                var state = PaneState.Describe(paneUser, robotSnapshot, librarySnapshot, path, readOnly, paneError, checkedAt,
+                    dirty, robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork(), freedFiles, fileHealth);
+                if (selected != null && state.ActiveFile.Length > 0)
+                {
+                    state.ActiveFile += " (selected)";
+                    state.ActiveTip = "Selected in " + assemblyName + ". " + state.ActiveTip + "\nClear the selection to see the assembly itself.";
+                }
                 state.ShowRecovered(recoveredWork?.Count ?? 0);
                 state.Working = working;
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
@@ -438,6 +457,55 @@ namespace JocoRobos.Cad
                 pane.ShowRobotFiles(robotSnapshot ?? OfflineRobot(), paneUser, path);
             }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO status pane: " + exception); }
+        }
+
+        // What each My work file's last save showed (FileHealth): the same SOLIDWORKS checks Submit makes, run on one file as it's saved.
+        private readonly Dictionary<string, FileHealth> fileHealth = new Dictionary<string, FileHealth>(StringComparer.OrdinalIgnoreCase);
+
+        // Cheap enough to run on every save: one What's Wrong count, and for an assembly its direct references (cached by save time,
+        // the same cache Submit reads, so Submit is quicker afterwards). Only ever a heads-up on the file's row.
+        private void CheckSavedFile(string path)
+        {
+            try
+            {
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var health = new FileHealth();
+                var doc = FindOpen(path);
+                if (doc != null)
+                    try { health.RebuildProblems = doc.Extension.GetWhatsWrongCount(); } catch (Exception) { } // Older documents or drawings: skip.
+                if (path.EndsWith(".sldasm", StringComparison.OrdinalIgnoreCase))
+                    health.Missing.AddRange(CachedDependencies(path).Where(r => WorkspacePolicy.IsCad(r) && !WorkspacePolicy.IsVirtualComponent(r) && !File.Exists(r)));
+                fileHealth[path] = health;
+                ErrorLog.Slow("health check on save of " + Path.GetFileName(path), clock.ElapsedMilliseconds, 2000);
+            }
+            catch (Exception exception) { ErrorLog.Write("health check on save", exception); }
+        }
+
+        // The open file, or the component selected in it, that the panel's row is about (Ask asks for this one).
+        private string paneActivePath;
+
+        // The one component selected in the active assembly, read without loading or changing anything; null for none, several, a
+        // virtual component (saved inside the assembly), or one outside the robot.
+        private Component2 SelectedComponent(ModelDoc2 doc)
+        {
+            try
+            {
+                if (doc == null || doc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY) return null;
+                var selection = (SelectionMgr)doc.SelectionManager;
+                Component2 found = null;
+                for (int i = 1; i <= selection.GetSelectedObjectCount2(-1); i++)
+                {
+                    var component = selection.GetSelectedObjectsComponent4(i, -1) as Component2;
+                    if (component == null) continue;
+                    if (found != null && !String.Equals(found.GetPathName(), component.GetPathName(), StringComparison.OrdinalIgnoreCase)) return null;
+                    found = component;
+                }
+                string componentPath = found?.GetPathName();
+                if (String.IsNullOrEmpty(componentPath) || WorkspacePolicy.IsVirtualComponent(componentPath) || !WorkspacePolicy.IsRobotFile(WorkspaceInfo.BaseFolder, componentPath))
+                    return null;
+                return found;
+            }
+            catch (COMException) { return null; } // Selection changing right now.
         }
 
         // My work's files that are open with unsaved changes. Asks SOLIDWORKS only about those few files, never every open
@@ -853,8 +921,9 @@ namespace JocoRobos.Cad
         // The panel's "Ask … for it" on the active file.
         private void AskForActiveFile()
         {
+            // The file the row is about: the open document, or the component selected in it.
             var doc = application.ActiveDoc as ModelDoc2;
-            AskFor(doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : doc.GetPathName());
+            AskFor(paneActivePath ?? (doc == null || String.IsNullOrEmpty(doc.GetPathName()) ? null : doc.GetPathName()));
         }
 
         // "Ask … for it", from the panel (the open file) or the file tree (any robot file someone else is editing).
@@ -1478,6 +1547,7 @@ namespace JocoRobos.Cad
                     else if (!snapshot.Locks.ContainsKey(path) && !snapshot.Changed.Contains(path) && CredentialStore.Read() is NetworkCredential login &&
                              new SvnWorkspace(login, snapshot.Info).IsNewFile(path))
                         snapshot.New.Add(path);
+                    if (snapshot.Mine.Contains(path) || snapshot.New.Contains(path)) CheckSavedFile(path);
                     RenderStatus();
                 }
             }

@@ -50,6 +50,11 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 2.15 | Both | Right-click the open file in Robot Files | **File History** and **Where Used** are there (the History link left the panel) | ☐ |
 | 2.16 | Both | Look at the panel with a monochrome / grayscale filter (Windows Settings → Accessibility → Color filters) | Every state still reads: ✓ ⬇ ⚠ ✎ ● ✋ icons and words, never color alone | ☐ |
 | 2.17 | Both | Select a file in Robot Files, then widen and narrow the pane | No leftover text next to the selected row (seen faintly in the test harness) | ☐ |
+| 2.18 | Both | Make the pane 250 px wide. Select a long-named file in Robot Files | Under the tree: its full name, folder, who has it, and Open · Ask *owner* (when someone else has it) · History · Where used. Hovering any shortened name shows it in full. With My work expanded in a short pane, the strip steps aside so the tree keeps its rows | ☐ |
+| 2.19 | Both | Open an assembly; click one component (graphics area or FeatureManager tree) that a teammate is editing; then a free one; then click empty space | The row becomes "*Part* (selected) · Locked by *owner* · Ask *owner*", then "Free to edit · Edit" (Edit locks that part, as before), then back to the assembly. The tree selects the component. The assembly title gets no `*` and nothing in its tree changes; selecting stays instant on the full robot | ☐ |
+| 2.20 | Both | Select two different components, then a virtual (^) component | The row stays on the assembly (Edit and Ask need one robot file) | ☐ |
+| 2.21 | A | Edit a part, add a feature that fails to rebuild (e.g. a fillet too big), Save | Its My work row shows "⚠ 1 rebuild problem" (hover: what to do), and collapsed My work starts "⚠ 1 to check". Submit still works (its window warns as before). Fix it and Save: the warning goes | ☐ |
+| 2.22 | A | Edit an assembly, delete one of its part files in Explorer, reopen it, Save | "⚠ 1 missing file" on its row, naming the file on hover. Saving doesn't get slower on the full robot (errors.log has no "slow: health check" over 2 s) | ☐ |
 | 2.13 | Both | Make the task pane narrow, then wide | Nothing is cut off on the right; long file names shorten (…) before the owner's name does | ☐ |
 
 ## 3. Library tab
@@ -166,12 +171,14 @@ Copies go to `%LOCALAPPDATA%\JocoRobos.Cad\Recovery\<Season>\<time>\<path in rob
 | 5b.3 | A | Open a sketch on the part, change it, pause 30 s after 5 minutes. Then do the same with an Extrude PropertyManager open, then with a CAD Hub side panel (Spur Gear) open | No copy while the sketch, the PropertyManager, or the side panel is open; one appears after you close it and pause again. The sketch/feature isn't closed or changed by CAD Hub | ☐ |
 | 5b.4 | A | Edit the robot assembly, move a component, pause after 5 minutes. Also edit a part **in context** (Edit Part inside the assembly) | Assembly copy appears; nothing is copied while you're editing a part inside the assembly | ☐ |
 | 5b.5 | A | Change a part you **haven't** clicked Edit on (read-only) and pause | No copy (only files you're editing) | ☐ |
+| 5b.5b | A | After a copy is taken (5b.1), look next to it in the Recovery folder | A `.base` file beside each copy (which saved version it was made from) | ☐ |
 | 5b.6 | A | With an unsaved change copied (5b.1), end SOLIDWORKS in Task Manager. Restart | No window pops up. A few seconds after start the panel's sync line says "⚠ Recovered work: 1 file" with **Review**; updates wait meanwhile. The part's lock is still yours | ☐ |
 | 5b.7 | A | **Review** → **Preview** | Opens read-only as "*Part* (recovered *time*)" (not the robot file's name), from outside the robot, with your unsaved change in it. The robot file isn't touched. For an assembly: first a note that it uses the robot's current parts | ☐ |
 | 5b.8 | A | Close the preview. **Restore** while the part is open | Refused: "Close *Part* in SOLIDWORKS first…" | ☐ |
 | 5b.9 | A | Close the part, **Restore** | Asks to confirm (default **No**) and says where the current file will be kept. **Yes**: "✓ Restored …"; open the part: your change is there; the old version is in `C:\JOCO-ROBOS\Set Aside\<time>\…`; Save → Submit works as usual | ☐ |
 | 5b.10 | A | Repeat 5b.6, but before restoring have a mentor release your lock (mentor page → Locks) and B Edit the part. **Restore** | Refused: "B is editing *Part* now…"; **Save a copy** puts it on the Desktop as "*Part* (recovered *time*)" and refuses the robot folder | ☐ |
-| 5b.11 | A | Recover a copy, then Save the robot part normally, then **Restore** the older copy | Refused: saved after this copy was made | ☐ |
+| 5b.11 | A | Recover a copy, then Save the robot part normally, then open **Recovery Copies** | That part isn't listed (its copy is older than what's saved, compared by content); the window says how many such files it left out | ☐ |
+| 5b.11b | A | In Review, look at a row for a file a teammate now holds (5b.10) | **Restore** is greyed out and the row says why; **Save a copy** works. A row that can be restored still checks with the server when clicked | ☐ |
 | 5b.12 | A | **Done** | The sync line goes back to normal; updates come in again | ☐ |
 | 5b.13 | A | Close SOLIDWORKS normally (Don't Save), restart | No recovered-work line | ☐ |
 | 5b.14 | Both | Tools → CAD Hub → **Recovery Copies**; then panel → **Diagnostics** | The same Review window for any copy newer than its file (or says there's nothing to recover). Diagnostics has a "Recovery copies" line | ☐ |

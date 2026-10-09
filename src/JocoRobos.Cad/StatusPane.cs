@@ -429,7 +429,7 @@ namespace JocoRobos.Cad
         // One row per file: mark and name (click to open), its state on the right in words, who's waiting for it underneath.
         private void ShowWork(List<WorkItem> items)
         {
-            string shown = String.Join("|", items.Select(w => w.Path + ":" + w.State + ":" + w.WaitingFor));
+            string shown = String.Join("|", items.Select(w => w.Path + ":" + w.State + ":" + w.WaitingFor + ":" + w.Health?.Summary));
             if (shown == workShown) return;
             workShown = shown;
             workRows.SuspendLayout();
@@ -445,12 +445,22 @@ namespace JocoRobos.Cad
                     Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f) };
                 string path = item.Path;
                 name.LinkClicked += (s, e) => actions.OpenFile?.Invoke(path);
-                tips.SetToolTip(name, item.Name + (item.WaitingFor != null ? "\n" + item.WaitingFor + " is waiting for it" : "") + "\nClick to open");
+                tips.SetToolTip(name, item.Name + (item.WaitingFor != null ? "\n" + item.WaitingFor + " is waiting for it" : "") +
+                    (item.Health != null ? "\n" + item.Health.Advice : "") + "\nClick to open");
                 var state = Caption(8.5f, FontStyle.Regular, item.State, ColorOf(item.Tone));
                 state.Anchor = AnchorStyles.Right;
                 state.Margin = new Padding(6, 2, 0, 0);
                 row.Controls.Add(name, 0, 0);
                 row.Controls.Add(state, 1, 0);
+                if (item.Health != null)
+                {
+                    // Under the name: what its last save showed. Hover for what to do; Submit still decides what blocks.
+                    var health = new Label { Text = "⚠ " + item.Health.Summary, AutoSize = true, Margin = new Padding(14, 0, 0, 2), ForeColor = Color.DarkOrange,
+                        Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f) };
+                    tips.SetToolTip(health, item.Health.Advice);
+                    row.Controls.Add(health, 0, 1);
+                    row.SetColumnSpan(health, 2);
+                }
                 workRows.Controls.Add(row);
             }
             if (items.Count > MaxWorkRows)

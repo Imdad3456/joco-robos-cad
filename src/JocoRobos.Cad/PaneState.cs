@@ -56,6 +56,40 @@ namespace JocoRobos.Cad
         internal string Text;
     }
 
+    /// <summary>
+    /// What the last save of a My work file showed, from the same SOLIDWORKS checks Submit uses: its What's Wrong count, and for an
+    /// assembly, the files it uses that aren't on this computer. A heads-up on the file's row, never a block (Submit decides that).
+    /// </summary>
+    internal sealed class FileHealth
+    {
+        internal int RebuildProblems;
+        internal readonly List<string> Missing = new List<string>();
+
+        internal string Summary
+        {
+            get
+            {
+                var parts = new List<string>();
+                if (RebuildProblems > 0) parts.Add(RebuildProblems + " rebuild " + (RebuildProblems == 1 ? "problem" : "problems"));
+                if (Missing.Count > 0) parts.Add(Missing.Count + " missing " + (Missing.Count == 1 ? "file" : "files"));
+                return String.Join(", ", parts);
+            }
+        }
+
+        internal string Advice
+        {
+            get
+            {
+                var lines = new List<string>();
+                if (RebuildProblems > 0) lines.Add("Rebuild problems travel with the file: teammates open it to the same red flags. Tools → Evaluate → What's Wrong shows them.");
+                if (Missing.Count > 0)
+                    lines.Add("It uses files that aren't on this computer: " + String.Join(", ", Missing.Take(4).Select(System.IO.Path.GetFileName)) + (Missing.Count > 4 ? ", …" : "") +
+                        ". Teammates would see them missing too. Fix or remove those components.");
+                return String.Join("\n", lines);
+            }
+        }
+    }
+
     /// <summary>One line of My work: a file this student is editing, changed, or added.</summary>
     internal sealed class WorkItem
     {
@@ -65,6 +99,7 @@ namespace JocoRobos.Cad
         internal string State;      // unsaved · ready · new · unchanged · not locked
         internal Tone Tone;
         internal string WaitingFor; // teammates who asked for it ("sarah", "sarah, ben"), or null
+        internal FileHealth Health; // what its last save showed, when there's something to look at
     }
 
     /// <summary>
@@ -138,7 +173,8 @@ namespace JocoRobos.Cad
 
         internal static PaneState Describe(string user, WorkspaceSnapshot robotSnapshot, WorkspaceSnapshot librarySnapshot,
             string activePath, bool activeReadOnly, string error, DateTime checkedAt, bool activeDirty = false, bool robotOpen = false,
-            IEnumerable<EditRequests.Request> requests = null, ICollection<string> unsaved = null, IDictionary<string, string> freed = null)
+            IEnumerable<EditRequests.Request> requests = null, ICollection<string> unsaved = null, IDictionary<string, string> freed = null,
+            IDictionary<string, FileHealth> health = null)
         {
             var state = new PaneState();
             var now = DateTime.Now;
@@ -164,7 +200,7 @@ namespace JocoRobos.Cad
             DescribeSync(state, robotSnapshot, librarySnapshot, error, checkedAt, robotOpen);
             if (robotSnapshot.Local > 0 && activePath == null && !robotOpen) state.ShowOpen = true;
             if (activePath != null) DescribeActive(state, user, snapshots, activePath, activeReadOnly, activeDirty, now);
-            DescribeWork(state, snapshots, requests, unsaved, activePath, activeDirty);
+            DescribeWork(state, snapshots, requests, unsaved, activePath, activeDirty, health);
             DescribeNotices(state, user, snapshots, requests, freed);
             state.InterruptedSubmit = snapshots.Any(x => x.PendingSubmit);
             return state;
@@ -345,7 +381,7 @@ namespace JocoRobos.Cad
 
         // Everything this student is responsible for: locked, changed, or new. Unsaved first, then what Submit sends, then the rest.
         private static void DescribeWork(PaneState state, List<WorkspaceSnapshot> snapshots, IEnumerable<EditRequests.Request> requests,
-            ICollection<string> unsaved, string activePath, bool activeDirty)
+            ICollection<string> unsaved, string activePath, bool activeDirty, IDictionary<string, FileHealth> health)
         {
             var dirty = new HashSet<string>(unsaved ?? new string[0], StringComparer.OrdinalIgnoreCase);
             if (activePath != null && activeDirty) dirty.Add(activePath);
@@ -363,6 +399,8 @@ namespace JocoRobos.Cad
                     var waiting = asked.Where(r => path.Replace('\\', '/').EndsWith("/" + r.Season + "/" + r.Path, StringComparison.OrdinalIgnoreCase))
                         .Select(r => r.From).Distinct().ToList();
                     if (waiting.Count > 0) item.WaitingFor = String.Join(", ", waiting);
+                    FileHealth found;
+                    if (health != null && health.TryGetValue(path, out found) && found.Summary.Length > 0) item.Health = found;
                     state.Work.Add(item);
                 }
             var order = new[] { "unsaved", "ready", "new", "not locked", "unchanged" };
@@ -372,6 +410,8 @@ namespace JocoRobos.Cad
                 return byState != 0 ? byState : String.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
             });
             state.WorkSummary = String.Join(" · ", order.Select(s => new { s, n = state.Work.Count(w => w.State == s) }).Where(x => x.n > 0).Select(x => x.n + " " + x.s));
+            int toCheck = state.Work.Count(w => w.Health != null);
+            if (toCheck > 0) state.WorkSummary = "⚠ " + toCheck + " to check · " + state.WorkSummary;
             var wanted = state.Work.Where(w => w.WaitingFor != null).ToList();
             if (wanted.Count == 1)
                 state.Requests = "✋ " + wanted[0].WaitingFor + (wanted[0].WaitingFor.Contains(",") ? " are" : " is") + " waiting for " +

@@ -15,13 +15,13 @@ namespace JocoRobos.Cad
     {
         private readonly FlowLayoutPanel rows = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true,
             Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 4) };
-        private readonly Func<RecoveryCopy, string> status;
+        private readonly Func<RecoveryCopy, Tuple<string, bool>> status;
         private readonly Action<RecoveryCopy> preview, saveCopy;
         private readonly Func<RecoveryCopy, bool> restore;
 
-        /// <param name="status">What the row says about the robot file right now, e.g. "You're still editing it".</param>
+        /// <param name="status">What the row says about the robot file right now, and whether Restore is safe as far as is known.</param>
         /// <param name="restore">Runs every check and the confirmation; true once the file was restored.</param>
-        internal RecoveryDialog(string explanation, IList<RecoveryCopy> copies, Func<RecoveryCopy, string> status,
+        internal RecoveryDialog(string explanation, IList<RecoveryCopy> copies, Func<RecoveryCopy, Tuple<string, bool>> status,
             Action<RecoveryCopy> preview, Func<RecoveryCopy, bool> restore, Action<RecoveryCopy> saveCopy, Action openFolder)
         {
             this.status = status;
@@ -102,18 +102,22 @@ namespace JocoRobos.Cad
             var saveButton = Small("Save a copy");
             saveButton.Click += (s, e) => saveCopy(copy);
             var state = new Label { AutoSize = true, MaximumSize = new Size(500, 0), Margin = new Padding(0, 1, 0, 0) };
+            var tip = new ToolTip();
+            bool restored = false;
+            // Restore is offered only when it's safe as far as is known; the row says why not. Clicking checks again with the server.
             Action refresh = () =>
             {
-                string now = status(copy);
-                bool fine = now.StartsWith("✓");
-                state.Text = now;
-                state.ForeColor = fine ? Color.ForestGreen : Color.DarkOrange;
+                var now = status(copy);
+                state.Text = restored ? "✓ Restored. Open it to check, then Save and Submit as usual." : now.Item2 ? now.Item1 : "⚠ " + now.Item1;
+                state.ForeColor = restored || now.Item2 ? Color.ForestGreen : Color.DarkOrange;
+                restoreButton.Enabled = !restored && now.Item2;
+                tip.SetToolTip(restoreButton, now.Item2 ? "Checks with the team server, then asks before replacing anything" : now.Item1);
             };
             restoreButton.Click += (s, e) =>
             {
                 if (restore(copy))
                 {
-                    restoreButton.Enabled = false;
+                    restored = true;
                     restoreButton.Text = "Restored";
                 }
                 refresh();

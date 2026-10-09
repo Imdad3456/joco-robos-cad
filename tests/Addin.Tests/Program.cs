@@ -212,16 +212,38 @@ static class Program
         {
             [plate] = at.AddMinutes(31), [robot] = at.AddMinutes(1),
         };
-        var lost = Recovery.Unsaved(kept, at, p => saved.TryGetValue(p, out var t) ? t : null);
+        // These copies have no recorded base (made before it was recorded): their time against the file's last save decides.
+        Func<RecoveryCopy, CopyState> legacy = c => Recovery.Classify(c, saved.TryGetValue(c.Original, out var t) && t != null
+            ? new FileFingerprint { Length = 1, WrittenUtcTicks = t.Value.ToUniversalTime().Ticks } : null);
+        var lost = Recovery.Unsaved(kept, at, legacy);
         Check(lost.Count == 1 && lost[0].Original == robot, "Only work newer than the saved file is offered");
         saved[plate] = at.AddMinutes(29);
-        lost = Recovery.Unsaved(kept, at, p => saved.TryGetValue(p, out var t) ? t : null);
+        lost = Recovery.Unsaved(kept, at, legacy);
         Check(lost.Count == 2 && lost.Any(c => c.Original == plate && c.TakenAt == at.AddMinutes(30)), "The newest copy of an unsaved file not offered");
-        Check(Recovery.Unsaved(kept, at.AddHours(1), p => null).Count == 0, "Copies from before the crashed session offered");
+        Check(Recovery.Unsaved(kept, at.AddHours(1), c => CopyState.RobotFileGone).Count == 0, "Copies from before the crashed session offered");
+
+        // With a recorded base, the robot file's content decides, never the clock.
+        string robotFile = Path.Combine(temp, "Base", "Arm.SLDPRT"), copyFile = Path.Combine(temp, "Base", "copy", "Arm.SLDPRT");
+        Directory.CreateDirectory(Path.GetDirectoryName(copyFile));
+        File.WriteAllText(robotFile, "saved version 1");
+        File.WriteAllText(copyFile, "saved version 1 + unsaved changes");
+        Recovery.RecordBase(copyFile, robotFile);
+        var armCopy = new RecoveryCopy { Copy = copyFile, Original = robotFile, TakenAt = DateTime.Now.AddHours(-3),
+            Base = FileFingerprint.Decode(File.ReadAllText(copyFile + Recovery.BaseSuffix)) };
+        Check(armCopy.Base != null && armCopy.Base.Sha256 != null, "The base is recorded with its content hash");
+        File.SetLastWriteTime(robotFile, DateTime.Now.AddHours(1)); // touched later, same content (an Update that changed nothing, a copy back)
+        Check(Recovery.Classify(armCopy, FileFingerprint.Of(robotFile)) == CopyState.UnsavedWork, "Same content: the copy still holds unsaved work, whatever the times say");
+        var stamp = File.GetLastWriteTimeUtc(robotFile);
+        File.WriteAllText(robotFile, "saved version 2");  // same length, saved again
+        File.SetLastWriteTimeUtc(robotFile, stamp);       // and even the same time
+        Check(Recovery.Classify(armCopy, FileFingerprint.Of(robotFile)) == CopyState.OlderThanSaved, "Saved again (same size and time): the copy is older, by content");
+        File.Delete(robotFile);
+        Check(Recovery.Classify(armCopy, FileFingerprint.Of(robotFile)) == CopyState.RobotFileGone, "Robot file gone: the copy is all there is");
+        Check(FileFingerprint.Decode("12 34 -").Sha256 == null && FileFingerprint.Decode("junk") == null, "Unreadable bases are ignored");
 
         // Restoring: only when nobody else's work can be lost, refused with what to do otherwise.
         Func<RestoreFacts> safe = () => new RestoreFacts { Name = "Shooter Hood.SLDPRT", CopyExists = true, InCurrentRobot = true, LockedByMe = true,
-            SavedAt = at.AddMinutes(-30), CopyTakenAt = at };
+            SavedAt = at.AddMinutes(-30), State = CopyState.UnsavedWork };
         Check(RecoveryRestore.WhyNot(safe()) == null, "A safe restore refused");
         var unsafeCases = new Func<RestoreFacts, RestoreFacts>[]
         {
@@ -232,14 +254,14 @@ static class Program
             f => { f.LockedByMe = false; return f; },
             f => { f.NewerFrom = "ben"; return f; },
             f => { f.ReadOnlyOnDisk = true; return f; },
-            f => { f.SavedAt = at.AddMinutes(2); return f; },
-            f => { f.SavedAt = at; return f; },
+            f => { f.State = CopyState.OlderThanSaved; return f; },
+            f => { f.State = CopyState.OlderThanSaved; f.SavedAt = null; return f; },
         };
         var reasons = unsafeCases.Select(c => RecoveryRestore.WhyNot(c(safe()))).ToList();
         Check(reasons.All(r => r != null && r.Contains("Shooter Hood")), "Every unsafe restore refused, naming the file");
         Check(reasons[2].StartsWith("Close Shooter Hood") && reasons[3].StartsWith("sarah is editing") && reasons[4].Contains("lock was released") &&
             reasons[5].StartsWith("ben submitted") && reasons[7].Contains("after this copy"), "Each refusal says what to do");
-        Check(RecoveryRestore.WhyNot(new RestoreFacts { Name = "New Part.SLDPRT", CopyExists = true, InCurrentRobot = true, LockedByMe = true, CopyTakenAt = at }) == null,
+        Check(RecoveryRestore.WhyNot(new RestoreFacts { Name = "New Part.SLDPRT", CopyExists = true, InCurrentRobot = true, LockedByMe = true, State = CopyState.RobotFileGone }) == null,
             "A file that's gone from disk can be restored from its copy while locked");
         Check(RecoveryRestore.RecoveredName(plate, new DateTime(2027, 2, 10, 14, 45, 0)) == "Plate (recovered 2-45 PM).SLDPRT", "Recovered copy name");
         var pane = new PaneState { Sync = "✓ Up to date", CanAutoUpdate = true };
@@ -616,6 +638,20 @@ static class Program
         s = PaneState.Describe("sam", snap, null, asm, false, null, now, robotOpen: true);
         Check(s.ActiveHint == "" && s.Unchanged == 2, "No save tip when nothing's unsaved; locked untouched files can be given back");
         Check(s.Work.Last().State == "unchanged" && s.Work.Last().Tone == Tone.Muted && s.WorkSummary == "1 ready · 1 new · 2 unchanged", "Untouched locked files last, muted");
+
+        // Health from the last save: on the file's row and first in the summary, never anything that stops Submit.
+        var health = new System.Collections.Generic.Dictionary<string, FileHealth>(StringComparer.OrdinalIgnoreCase)
+        {
+            [hood] = new FileHealth { RebuildProblems = 2 },
+            [mount] = new FileHealth(),
+        };
+        health[hood].Missing.Add(Path.Combine(season.Root, "Gone", "Spacer.SLDPRT"));
+        s = PaneState.Describe("sam", snap, null, null, false, null, now, health: health);
+        var hoodRow = s.Work.Single(w => w.Path == hood);
+        Check(hoodRow.Health != null && hoodRow.Health.Summary == "2 rebuild problems, 1 missing file" && hoodRow.Health.Advice.Contains("Spacer.SLDPRT"),
+            "A saved file's problems show on its row, with what to do");
+        Check(s.Work.Single(w => w.Path == mount).Health == null && s.WorkSummary.StartsWith("⚠ 1 to check · "), "Healthy files say nothing; the summary leads with what to check");
+        Check(s.SubmitCount == 2, "Health never changes what Submit sends");
 
         // The bell: only what can be acted on, and only while it still can be.
         s = PaneState.Describe("sam", snap, null, null, false, null, now, requests: requests);

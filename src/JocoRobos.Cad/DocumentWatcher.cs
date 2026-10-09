@@ -36,6 +36,8 @@ namespace JocoRobos.Cad
         internal bool Quiet;
         // A watched team document went from saved to changed (the panel's "unsaved").
         internal Action Dirtied;
+        // The student selected something in an assembly, or cleared the selection (the panel shows a selected component's owner).
+        internal Action SelectionChanged;
 
         internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed, Action<string> saved)
         {
@@ -125,10 +127,18 @@ namespace JocoRobos.Cad
                     DAssemblyDocEvents_ModifyNotifyEventHandler assemblyModify = () => Modified(watched);
                     DAssemblyDocEvents_DestroyNotify2EventHandler assemblyDestroy = type => Destroyed(watched, type);
                     DAssemblyDocEvents_FileSavePostNotifyEventHandler assemblySave = (type, name) => Saved(watched, name);
+                    DAssemblyDocEvents_UserSelectionPostNotifyEventHandler assemblySelect = () => Selected();
+                    DAssemblyDocEvents_ClearSelectionsNotifyEventHandler assemblyClear = () => Selected();
                     assembly.ModifyNotify += assemblyModify;
                     assembly.DestroyNotify2 += assemblyDestroy;
                     assembly.FileSavePostNotify += assemblySave;
-                    watched.Unhook = () => { assembly.ModifyNotify -= assemblyModify; assembly.DestroyNotify2 -= assemblyDestroy; assembly.FileSavePostNotify -= assemblySave; };
+                    assembly.UserSelectionPostNotify += assemblySelect;
+                    assembly.ClearSelectionsNotify += assemblyClear;
+                    watched.Unhook = () =>
+                    {
+                        assembly.ModifyNotify -= assemblyModify; assembly.DestroyNotify2 -= assemblyDestroy; assembly.FileSavePostNotify -= assemblySave;
+                        assembly.UserSelectionPostNotify -= assemblySelect; assembly.ClearSelectionsNotify -= assemblyClear;
+                    };
                     break;
                 case (int)swDocumentTypes_e.swDocDRAWING:
                     var drawing = (DrawingDoc)doc;
@@ -156,6 +166,14 @@ namespace JocoRobos.Cad
                 watched.Reported = true;
                 firstChange(watched.Doc);
             }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
+            return 0;
+        }
+
+        // Only passes it on: the panel reads the selection later, outside SOLIDWORKS' event.
+        private int Selected()
+        {
+            try { SelectionChanged?.Invoke(); }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
             return 0;
         }

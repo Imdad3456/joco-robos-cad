@@ -147,7 +147,14 @@ namespace JocoRobos.Cad
                     string copy = Recovery.CopyPath(Recovery.DefaultRoot, season, root, path, now);
                     if (WorkspacePolicy.TooLong(copy)) { ErrorLog.Step("recovery copy skipped (path too long): " + path); continue; }
                     int error = SaveCopy(doc, copy);
-                    if (error == 0) copied++;
+                    if (error == 0)
+                    {
+                        copied++;
+                        // Which saved version these unsaved changes were made on: later, the robot file's content says whether the copy
+                        // still holds work it doesn't (Recovery.Classify), whatever the clocks say.
+                        try { Recovery.RecordBase(copy, path); }
+                        catch (Exception exception) { ErrorLog.Write("recovery: record base of " + path, exception); }
+                    }
                     else ErrorLog.Step("recovery copy of " + path + " failed: SOLIDWORKS error " + error);
                 }
                 catch (Exception exception) { ErrorLog.Write("recovery copy of " + path, exception); }
@@ -165,7 +172,7 @@ namespace JocoRobos.Cad
         // After SOLIDWORKS closed unexpectedly: the panel's sync line says so, with Review. No window pops up over the student's work.
         private void OfferRecoveredWork(DateTime crashedSession)
         {
-            var lost = Recovery.Unsaved(Recovery.List(Recovery.DefaultRoot, WorkspaceInfo.BaseFolder), crashedSession, SavedAt);
+            var lost = Recovery.Unsaved(Recovery.List(Recovery.DefaultRoot, WorkspaceInfo.BaseFolder), crashedSession, ClassifyCopy);
             if (lost.Count == 0) { PruneRecovery(); return; }
             recoveredWork = lost;
             ErrorLog.Step("recovered work after a crash: " + String.Join(", ", lost.Select(c => Path.GetFileName(c.Original))));
@@ -173,6 +180,8 @@ namespace JocoRobos.Cad
         }
 
         private static DateTime? SavedAt(string path) { return File.Exists(path) ? File.GetLastWriteTime(path) : (DateTime?)null; }
+
+        private static CopyState ClassifyCopy(RecoveryCopy copy) { return Recovery.Classify(copy, FileFingerprint.Of(copy.Original)); }
 
         // Tools → CAD Hub → Recovery Copies: the same review, for any copy that holds work its robot file doesn't.
         public void RecoveryCopies() { ReviewRecovery(); }
@@ -182,7 +191,12 @@ namespace JocoRobos.Cad
             Execute(() =>
             {
                 bool afterCrash = recoveredWork != null;
-                var copies = recoveredWork ?? Recovery.Unsaved(Recovery.List(Recovery.DefaultRoot, WorkspaceInfo.BaseFolder), DateTime.MinValue, SavedAt);
+                var all = Recovery.List(Recovery.DefaultRoot, WorkspaceInfo.BaseFolder);
+                var copies = recoveredWork ?? OperationDialog.Run("Comparing recovery copies with your robot files…",
+                    () => Recovery.Unsaved(all, DateTime.MinValue, ClassifyCopy));
+                // Files whose copies only match work that's already saved: not listed, but said, so nothing seems to have vanished.
+                int older = all.Select(c => c.Original).Distinct(StringComparer.OrdinalIgnoreCase).Count() -
+                    copies.Select(c => c.Original).Distinct(StringComparer.OrdinalIgnoreCase).Count();
                 if (copies.Count == 0)
                 {
                     recoveredWork = null;
@@ -191,9 +205,11 @@ namespace JocoRobos.Cad
                         " days; Diagnostics says how many there are.");
                     return;
                 }
-                string explanation = afterCrash
-                    ? "SOLIDWORKS closed unexpectedly. These copies have work your robot files don't."
-                    : "These copies have work your robot files don't (newer than the files' last save).";
+                string explanation = (afterCrash
+                    ? "SOLIDWORKS closed unexpectedly. These copies have unsaved work your robot files don't."
+                    : "These copies have unsaved work your robot files don't (each robot file is still the version the copy was made from).") +
+                    (!afterCrash && older > 0 ? "\n" + older + (older == 1 ? " other file's copies are" : " other files' copies are") +
+                        " older than what's saved, so they aren't listed (they're in the folder)." : "");
                 using (var dialog = new RecoveryDialog(explanation, copies, RecoveryStatus, PreviewRecovery, RestoreRecovery, SaveRecoveryCopy,
                     () => Process.Start("explorer.exe", "/select,\"" + copies[0].Copy + "\"")))
                     dialog.ShowDialog(new SolidWorksWindow());
@@ -201,15 +217,24 @@ namespace JocoRobos.Cad
             });
         }
 
-        // What a row says before anything is clicked, from the last status check (Restore checks the server again).
-        private string RecoveryStatus(RecoveryCopy copy)
+        // What a row says before anything is clicked, and whether Restore can be offered: the same rules as the restore itself, from
+        // what's already known (the last status check, the files on disk). Restore checks everything again, with the server, when clicked.
+        private Tuple<string, bool> RecoveryStatus(RecoveryCopy copy)
         {
-            var snapshot = new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Name == copy.Season);
-            if (snapshot == null) return "Not in your current robot: Save a copy to keep it";
-            string owner;
-            if (snapshot.Mine.Contains(copy.Original) || snapshot.New.Contains(copy.Original)) return "✓ You're still editing it: Restore puts this copy back";
-            if (snapshot.Locks.TryGetValue(copy.Original, out owner) && owner != paneUser) return owner + " is editing it now: Save a copy to keep yours";
-            return "You're not editing it any more: Save a copy, then Edit it and redo your changes";
+            var snapshot = new[] { robotSnapshot, librarySnapshot }.FirstOrDefault(x => x != null && x.Info.Name == copy.Season && !x.Info.Archived);
+            string owner = null, newer = null;
+            if (snapshot != null)
+            {
+                snapshot.Locks.TryGetValue(copy.Original, out owner);
+                snapshot.IncomingFiles.TryGetValue(copy.Original, out newer);
+            }
+            var facts = new RestoreFacts { Name = Path.GetFileName(copy.Original), CopyExists = File.Exists(copy.Copy), InCurrentRobot = snapshot != null,
+                OpenInSolidWorks = FindOpen(copy.Original) != null, State = ClassifyCopy(copy), SavedAt = SavedAt(copy.Original),
+                LockedByMe = snapshot != null && (snapshot.Mine.Contains(copy.Original) || snapshot.New.Contains(copy.Original)),
+                LockedBy = owner != null && owner != paneUser ? owner : null, NewerFrom = newer,
+                ReadOnlyOnDisk = File.Exists(copy.Original) && (File.GetAttributes(copy.Original) & FileAttributes.ReadOnly) != 0 };
+            string why = RecoveryRestore.WhyNot(facts);
+            return why == null ? Tuple.Create("✓ You're still editing it: Restore puts this copy back", true) : Tuple.Create(why, false);
         }
 
         // Opens the copy read-only, renamed and outside the robot, so it can't be mistaken for (or saved over) the robot file.
@@ -285,7 +310,7 @@ namespace JocoRobos.Cad
                 var catalog = LoadCatalog(login);
                 var workspace = new[] { catalog.Robot, catalog.Library }.FirstOrDefault(w => w != null && !w.Archived && w.Name == copy.Season);
                 var facts = new RestoreFacts { Name = Path.GetFileName(copy.Original), CopyExists = File.Exists(copy.Copy), InCurrentRobot = workspace != null,
-                    OpenInSolidWorks = FindOpen(copy.Original) != null, SavedAt = SavedAt(copy.Original), CopyTakenAt = copy.TakenAt,
+                    OpenInSolidWorks = FindOpen(copy.Original) != null, SavedAt = SavedAt(copy.Original), State = ClassifyCopy(copy),
                     ReadOnlyOnDisk = File.Exists(copy.Original) && (File.GetAttributes(copy.Original) & FileAttributes.ReadOnly) != 0 };
                 if (workspace != null && facts.CopyExists && !facts.OpenInSolidWorks)
                 {

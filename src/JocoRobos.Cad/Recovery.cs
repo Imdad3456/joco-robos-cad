@@ -14,6 +14,58 @@ namespace JocoRobos.Cad
         internal string Season;
         internal string Relative;
         internal DateTime TakenAt;
+        // The saved robot file the copy's unsaved changes were made on (null: a copy from before CAD Hub recorded it).
+        internal FileFingerprint Base;
+    }
+
+    /// <summary>Which saved version of a file this is: its size, last save, and content hash (when it could be read).</summary>
+    internal sealed class FileFingerprint
+    {
+        internal long Length;
+        internal long WrittenUtcTicks;
+        internal string Sha256;     // null when the file couldn't be read at the time
+
+        internal static FileFingerprint Of(string path)
+        {
+            if (!File.Exists(path)) return null;
+            var info = new FileInfo(path);
+            var print = new FileFingerprint { Length = info.Length, WrittenUtcTicks = info.LastWriteTimeUtc.Ticks };
+            try
+            {
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var sha = System.Security.Cryptography.SHA256.Create())
+                    print.Sha256 = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "");
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return print;
+        }
+
+        internal string Encode() { return Length + " " + WrittenUtcTicks + " " + (Sha256 ?? "-"); }
+
+        internal static FileFingerprint Decode(string text)
+        {
+            string[] f = (text ?? "").Trim().Split(' ');
+            long length, ticks;
+            if (f.Length != 3 || !Int64.TryParse(f[0], out length) || !Int64.TryParse(f[1], out ticks)) return null;
+            return new FileFingerprint { Length = length, WrittenUtcTicks = ticks, Sha256 = f[2] == "-" ? null : f[2] };
+        }
+
+        /// <summary>Same saved version: the same content when both hashes are known, else the same size and save time.</summary>
+        internal bool SameAs(FileFingerprint other)
+        {
+            if (other == null || other.Length != Length) return false;
+            if (Sha256 != null && other.Sha256 != null) return String.Equals(Sha256, other.Sha256, StringComparison.OrdinalIgnoreCase);
+            return other.WrittenUtcTicks == WrittenUtcTicks;
+        }
+    }
+
+    /// <summary>What a recovery copy holds compared with the robot file now.</summary>
+    internal enum CopyState
+    {
+        UnsavedWork,        // the robot file is still the exact version the copy's unsaved changes were made on
+        RobotFileGone,      // the robot file isn't on this computer: the copy is all there is
+        OlderThanSaved,     // the robot file changed after the copy (saved again, or updated): nothing to recover
     }
 
     /// <summary>What's true right now about a recovery copy and its robot file, checked just before a restore.</summary>
@@ -27,8 +79,8 @@ namespace JocoRobos.Cad
         internal string LockedBy;           // who holds it otherwise (null: nobody)
         internal string NewerFrom;          // someone submitted a version this computer doesn't have
         internal bool ReadOnlyOnDisk;       // not checked out for editing here
-        internal DateTime? SavedAt;         // the robot file's last save (null: it doesn't exist)
-        internal DateTime CopyTakenAt;
+        internal CopyState State;           // compared by content (Recovery.Classify), not by save times
+        internal DateTime? SavedAt;         // the robot file's last save, to say when (null: it doesn't exist)
     }
 
     /// <summary>
@@ -52,9 +104,9 @@ namespace JocoRobos.Cad
             if (f.NewerFrom != null)
                 return f.NewerFrom + " submitted a newer version of " + name + ". Save the copy somewhere else, Update, then redo your changes from it.";
             if (f.ReadOnlyOnDisk) return name + " is read-only on this computer. Click Edit on it first, then restore.";
-            if (f.SavedAt != null && f.SavedAt.Value >= f.CopyTakenAt)
-                return name + " was saved at " + f.SavedAt.Value.ToString("h:mm tt") + ", after this copy was made, so the robot file may have newer work. " +
-                    "Save the copy somewhere else to compare instead.";
+            if (f.State == CopyState.OlderThanSaved)
+                return name + " changed after this copy was made" + (f.SavedAt != null ? " (saved " + f.SavedAt.Value.ToString("h:mm tt") + ")" : "") +
+                    ", so the robot file may have newer work. Save the copy somewhere else to compare instead.";
             return null;
         }
 
@@ -135,10 +187,13 @@ namespace JocoRobos.Cad
                     foreach (string file in Directory.GetFiles(round, "*", SearchOption.AllDirectories).Where(WorkspacePolicy.IsSubmittableCad))
                     {
                         string relative = file.Substring(round.Length + 1);
+                        FileFingerprint print = null;
+                        try { if (File.Exists(file + BaseSuffix)) print = FileFingerprint.Decode(File.ReadAllText(file + BaseSuffix)); }
+                        catch (IOException) { }
                         copies.Add(new RecoveryCopy
                         {
                             Copy = file, Season = season, Relative = relative, TakenAt = taken,
-                            Original = Path.Combine(baseFolder, season, relative),
+                            Original = Path.Combine(baseFolder, season, relative), Base = print,
                         });
                     }
                 }
@@ -146,16 +201,38 @@ namespace JocoRobos.Cad
             return copies.OrderByDescending(c => c.TakenAt).ToList();
         }
 
+        // Beside each copy: which saved version of the robot file its unsaved changes were made on.
+        internal const string BaseSuffix = ".base";
+
+        /// <summary>Records the robot file as it is on disk (the saved version) next to the copy just taken of its unsaved state.</summary>
+        internal static void RecordBase(string copy, string robotFile)
+        {
+            var print = FileFingerprint.Of(robotFile);
+            if (print != null) File.WriteAllText(copy + BaseSuffix, print.Encode());
+        }
+
         /// <summary>
-        /// The newest copy of each file taken since a time, when it holds work the robot's file doesn't have (the file was never saved
-        /// after it, or is gone). savedAt says when the robot's file was last saved; null if it doesn't exist.
+        /// What a copy holds compared with the robot file now. Copies are only ever taken of documents with unsaved changes, so while
+        /// the robot file is still exactly the version they were made on (same content), the copy has work the file doesn't. Copies
+        /// from before the base was recorded fall back to comparing the copy's time with the file's last save.
         /// </summary>
-        internal static List<RecoveryCopy> Unsaved(IEnumerable<RecoveryCopy> copies, DateTime since, Func<string, DateTime?> savedAt)
+        internal static CopyState Classify(RecoveryCopy copy, FileFingerprint robotNow)
+        {
+            if (robotNow == null) return CopyState.RobotFileGone;
+            if (copy.Base != null) return copy.Base.SameAs(robotNow) ? CopyState.UnsavedWork : CopyState.OlderThanSaved;
+            return new DateTime(robotNow.WrittenUtcTicks, DateTimeKind.Utc).ToLocalTime() < copy.TakenAt ? CopyState.UnsavedWork : CopyState.OlderThanSaved;
+        }
+
+        /// <summary>
+        /// The newest copy of each file taken since a time, when it holds work the robot file doesn't have (Classify). An older copy
+        /// of the same file never counts: the newest one has its work and more.
+        /// </summary>
+        internal static List<RecoveryCopy> Unsaved(IEnumerable<RecoveryCopy> copies, DateTime since, Func<RecoveryCopy, CopyState> classify)
         {
             return copies.Where(c => c.TakenAt >= since)
                 .GroupBy(c => c.Original, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.OrderByDescending(c => c.TakenAt).First())
-                .Where(c => { var saved = savedAt(c.Original); return saved == null || saved.Value < c.TakenAt; })
+                .Where(c => classify(c) != CopyState.OlderThanSaved)
                 .OrderByDescending(c => c.TakenAt).ToList();
         }
 
@@ -166,7 +243,13 @@ namespace JocoRobos.Cad
             foreach (var file in List(recoveryRoot, baseFolder).GroupBy(c => c.Season + "\\" + c.Relative, StringComparer.OrdinalIgnoreCase))
                 foreach (var old in file.OrderByDescending(c => c.TakenAt).Where((c, i) => i >= KeepPerFile || now - c.TakenAt > KeepFor))
                 {
-                    try { File.SetAttributes(old.Copy, FileAttributes.Normal); File.Delete(old.Copy); deleted++; }
+                    try
+                    {
+                        File.SetAttributes(old.Copy, FileAttributes.Normal);
+                        File.Delete(old.Copy);
+                        deleted++;
+                        if (File.Exists(old.Copy + BaseSuffix)) File.Delete(old.Copy + BaseSuffix);
+                    }
                     catch (IOException) { } // Open in SOLIDWORKS right now: next time.
                     catch (UnauthorizedAccessException) { }
                 }

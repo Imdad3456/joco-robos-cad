@@ -31,6 +31,13 @@ namespace JocoRobos.Cad
         // The open document, selected in the tree once the list is ready (and again whenever another one becomes active).
         private string follow, followed;
         private readonly ToolStripMenuItem askItem = new ToolStripMenuItem("Ask for it");
+        private readonly FlowLayoutPanel detailBox = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 4, 0, 0), Padding = new Padding(0, 6, 0, 2), Visible = false };
+        private readonly Label detailName = new Label { AutoSize = true, Margin = new Padding(0), Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f, FontStyle.Bold) };
+        private readonly Label detailInfo = new Label { AutoSize = true, Margin = new Padding(0, 2, 0, 0), ForeColor = SystemColors.GrayText,
+            Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f) };
+        private readonly FlowLayoutPanel detailLinks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 2, 0, 0) };
+        private readonly LinkLabel detailOpen = DetailLink("Open"), detailAsk = DetailLink("Ask"), detailHistory = DetailLink("History"), detailWhereUsed = DetailLink("Where used");
         private int generation;
         // Which folders are open, kept across searches and refreshes.
         private readonly HashSet<string> expandedFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -59,6 +66,7 @@ namespace JocoRobos.Cad
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             grid.Controls.Add(header, 0, 0);
             grid.Controls.Add(search, 0, 1);
             // The tree, or "Open Robot first" in its place.
@@ -66,7 +74,24 @@ namespace JocoRobos.Cad
             body.Controls.Add(tree);
             body.Controls.Add(empty);
             grid.Controls.Add(body, 0, 2);
+            // The selected row in full: names shorten in a narrow pane, so here's the whole name, its folder, and who has it.
+            foreach (var link in new[] { detailOpen, detailAsk, detailHistory, detailWhereUsed }) detailLinks.Controls.Add(link);
+            foreach (var control in new Control[] { detailName, detailInfo, detailLinks }) detailBox.Controls.Add(control);
+            detailBox.Paint += (s, e) => { using (var pen = new Pen(StatusPane.Hairline)) e.Graphics.DrawLine(pen, 0, 0, detailBox.Width, 0); };
+            grid.Controls.Add(detailBox, 0, 3);
             Controls.Add(grid);
+            detailOpen.LinkClicked += (s, e) => WithSelected(open);
+            detailAsk.LinkClicked += (s, e) => WithSelected(p => askFor?.Invoke(p));
+            detailHistory.LinkClicked += (s, e) => WithSelected(history);
+            detailWhereUsed.LinkClicked += (s, e) => WithSelected(whereUsed);
+            tree.AfterSelect += (s, e) => ShowDetails(e.Node);
+            grid.Resize += (s, e) =>
+            {
+                int width = Math.Max(100, grid.ClientSize.Width - grid.Padding.Horizontal);
+                detailBox.MinimumSize = detailBox.MaximumSize = new Size(width, 0);
+                detailName.MaximumSize = detailInfo.MaximumSize = detailLinks.MaximumSize = new Size(width, 0);
+                FitDetails();
+            };
 
             // Roomy rows, a little more indent, and an icon for folders, assemblies, parts and drawings.
             tree.ItemHeight = Math.Max(22, tree.Font.Height + 9);
@@ -107,6 +132,49 @@ namespace JocoRobos.Cad
             };
             tree.ContextMenuStrip = menu;
             ShowEmpty(true);
+        }
+
+        private static LinkLabel DetailLink(string text)
+        {
+            return new LinkLabel { Text = text, AutoSize = true, Margin = new Padding(0, 0, 10, 0), LinkBehavior = LinkBehavior.HoverUnderline,
+                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f) };
+        }
+
+        // The selected file (or folder) in full under the tree, with what can be done with it.
+        private void ShowDetails(TreeNode node)
+        {
+            if (index == null || node == null || !(node.Tag is string) || (node.Name != "file" && node.Name != "folder")) { detailWanted = false; detailBox.Visible = false; return; }
+            string relative = (string)node.Tag, full = index.FullPath(relative);
+            if (node.Name == "folder")
+            {
+                var summary = RobotFileStatus.Summarize(snapshot, full, user);
+                detailName.Text = relative;
+                detailInfo.Text = summary.Text.Length > 0 ? Describe(summary).Replace("\n", " · ") : "Nobody's working in here";
+                detailLinks.Visible = false;
+            }
+            else
+            {
+                var status = RobotFileStatus.Of(snapshot, full, user, DateTime.Now);
+                string folder = Path.GetDirectoryName(relative);
+                detailName.Text = Path.GetFileName(relative);
+                string tip = status.Mark == FileMark.Theirs ? status.Tip.Replace(" Right-click → Ask " + status.Owner + " for it.", "") : status.Tip;
+                detailInfo.Text = (String.IsNullOrEmpty(folder) ? "Robot folder" : folder) + " · " + (tip.Length > 0 ? tip.Replace("\n", " ") : "Nobody's editing it");
+                detailAsk.Text = "Ask " + status.Owner;
+                detailAsk.Visible = status.Mark == FileMark.Theirs && askFor != null;
+                detailLinks.Visible = true;
+            }
+            detailWanted = true;
+            FitDetails();
+        }
+
+        // The strip steps aside when showing it would leave the tree fewer than four rows (a short pane, My work expanded).
+        private bool detailWanted;
+
+        private void FitDetails()
+        {
+            if (!detailWanted) { detailBox.Visible = false; return; }
+            int fixedPart = search.Bottom + search.Margin.Bottom + Padding.Vertical + 14;
+            detailBox.Visible = ClientSize.Height - fixedPart - detailBox.GetPreferredSize(new Size(detailBox.MaximumSize.Width, 0)).Height >= tree.ItemHeight * 4;
         }
 
         private void WithSelected(Action<string> action)
@@ -186,6 +254,8 @@ namespace JocoRobos.Cad
             try
             {
                 tree.Nodes.Clear();
+                detailWanted = false;
+                detailBox.Visible = false;
                 details.Clear();
                 string query = search.Text.Trim();
                 if (query.Length > 0)
