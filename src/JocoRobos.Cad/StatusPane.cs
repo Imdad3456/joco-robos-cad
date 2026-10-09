@@ -26,57 +26,68 @@ namespace JocoRobos.Cad
         internal Action BeltChain;
         // "Ask for it": ask the person editing the active file; tell teammates who asked you "not yet".
         internal Action AskForFile, DismissRequests;
+        // Recovered work after a crash: review it.
+        internal Action ReviewRecovery;
     }
 
     /// <summary>
-    /// The CAD Hub panel. The Robot tab reads top to bottom as: where the robot stands (one line; details on hover), the one
-    /// thing to do next if there is one, This file (the open document: one status line, one action), My work (every file
-    /// this student is responsible for, with Submit), then the robot's files with who's working where. Support links sit in a
-    /// small footer. The Library tab has every way of getting a part; everything else lives in Tools → CAD Hub.
+    /// The CAD Hub panel. The Robot tab has a fixed top that never scrolls (the robot and its sync state with what to do, the open
+    /// file in one row, My work as one summary line that expands), and the robot's files take all the height that's left: the only
+    /// part that scrolls. Support links sit in a small footer. The Library tab has every way of getting a part; everything else
+    /// lives in Tools → CAD Hub.
     /// </summary>
     internal sealed class StatusPane : UserControl
     {
-        internal static readonly Color Hairline = Color.FromArgb(226, 229, 233), CardBack = Color.FromArgb(246, 247, 249);
-        private const int MaxWorkRows = 8;
+        internal static readonly Color Hairline = Color.FromArgb(226, 229, 233);
+        private const int MaxWorkRows = 6;
+        private const string SettingsKey = @"Software\JOCO ROBOS\CAD";
 
         private readonly PaneActions actions;
         private readonly ToolTip tips = new ToolTip { AutoPopDelay = 20000 };
+        // Rare lines: an add-in update, a SOLIDWORKS version problem, a confirmation, background work.
         private readonly Label update = Caption(9f, FontStyle.Bold, "", Color.RoyalBlue);
         private readonly Button install = Action("Install update", null);
-        private readonly Label flash = Caption(9.5f, FontStyle.Bold, "", Color.ForestGreen);
-        private readonly Label warning = Caption(9.5f, FontStyle.Bold, "", Color.Firebrick);
-        private readonly Label working = Caption(9f, FontStyle.Italic, "", SystemColors.GrayText);
-        private readonly Label robot = Caption(12f, FontStyle.Bold);
-        private readonly Label sync = Caption(9.5f, FontStyle.Bold);
-        private readonly Label refresh = new Label { Text = "", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(4, 4, 0, 0),
+        private readonly Label flash = Caption(9f, FontStyle.Bold, "", Color.ForestGreen);
+        private readonly Label warning = Caption(9f, FontStyle.Bold, "", Color.Firebrick);
+        private readonly Label working = Caption(8.5f, FontStyle.Italic, "", SystemColors.GrayText);
+        // The robot and its sync state: an icon and a word, what to do about it, at most one action.
+        private readonly Label robot = Caption(11.5f, FontStyle.Bold);
+        private readonly Label refresh = new Label { Text = "", AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(6, 3, 0, 0),
             Font = new Font("Segoe MDL2 Assets", 9f), ForeColor = SystemColors.GrayText };
-        private readonly Label details = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
+        private readonly Label sync = Caption(9.5f, FontStyle.Bold);
+        private readonly LinkLabel syncAction = Link("", 9f);
+        private readonly Label syncNote = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
         private readonly Button open = Action("Open Robot", "Open Robot");
-        private readonly Button closeUpdate = Action("Close & Update", "Update");
-        // This file: only while a document is open.
-        private readonly Label activeFile = Caption(10f, FontStyle.Bold);
-        // Regular weight: Windows has no bold fallback for 🔒 and would draw a box.
-        private readonly Label activeStatus = Caption(9.5f, FontStyle.Regular);
-        private readonly Label activeHint = Caption(8.5f, FontStyle.Regular, "", SystemColors.GrayText);
-        private readonly Button edit = Action("Edit", "Edit");
-        private readonly LinkLabel ask = Link("Ask for it");
-        private readonly LinkLabel history = Link("History of this file");
-        private readonly Card card = new Card();
-        // My work: only while this student has locks, changes or new files.
-        private readonly FlowLayoutPanel work = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 14, 0, 0) };
-        private readonly TableLayoutPanel workHeader = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
-        private readonly Label workTitle = Heading("MY WORK");
-        private readonly LinkLabel release = Link("Give back unchanged", 8.25f);
+        // The open file: one row, a second line only for a problem.
+        private readonly FileRow active = new FileRow { Margin = new Padding(0, 10, 0, 0) };
+        private readonly Label activeHint = Caption(8.5f, FontStyle.Regular);
+        // My work: one line (summary and Submit), requests always shown, every file when expanded.
+        private readonly Label workToggle = new Label { AutoSize = true, Cursor = Cursors.Hand, Margin = new Padding(0, 5, 4, 0),
+            Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9.5f, FontStyle.Bold) };
+        private readonly Label workSummary = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, Cursor = Cursors.Hand,
+            TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, 2, 6, 0), ForeColor = SystemColors.GrayText,
+            Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f) };
+        private readonly Button submit = new Button { Height = 28, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 0, 0, 0),
+            Padding = new Padding(4, 0, 4, 0), Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f, FontStyle.Bold) };
+        private readonly TableLayoutPanel workHeader = new TableLayoutPanel { ColumnCount = 3, RowCount = 1, AutoSize = true, Margin = new Padding(0, 10, 0, 0) };
+        private readonly TableLayoutPanel requestsRow = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
+        private readonly Label requests = new Label { AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+            Margin = new Padding(0), ForeColor = Color.DarkOrange, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f, FontStyle.Bold) };
+        private readonly LinkLabel notNow = Link("Not yet", 8.5f);
+        private readonly Label interrupted = Caption(8.5f, FontStyle.Bold, "⚠ An earlier Submit was interrupted. Click Submit: it checks what reached the team and finishes safely.", Color.DarkOrange);
         private readonly FlowLayoutPanel workRows = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0) };
-        private readonly Label interrupted = Caption(9f, FontStyle.Bold, "An earlier Submit was interrupted. Submit checks what reached the team and finishes it safely.", Color.DarkOrange);
-        private readonly LinkLabel notNow = Link("Not yet: let them know", 8.25f);
-        private readonly Button submit = Action("Submit", "Submit");
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 4, 0, 0) };
+        private readonly TableLayoutPanel workFooter = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
+        private readonly LinkLabel release = Link("Give back unchanged", 8.5f);
+        private readonly LinkLabel stopEditing = Link("", 8.5f);
+        private bool workExpanded;
         private string workShown;
-        private readonly TableLayoutPanel header = new TableLayoutPanel { ColumnCount = 3, RowCount = 1, AutoSize = true, Margin = new Padding(0, 0, 0, 2) };
+        private int workCount;
+        private readonly TableLayoutPanel header = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0) };
+        private readonly TableLayoutPanel syncRow = new TableLayoutPanel { ColumnCount = 2, RowCount = 1, AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
         private readonly FlowLayoutPanel layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown,
-            WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(14, 12, 14, 12) };
+            WrapContents = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(12, 10, 12, 10), Margin = new Padding(0) };
+        private readonly TableLayoutPanel robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, BackColor = SystemColors.Window };
         private readonly RobotFilesPanel files;
         private readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
         private readonly TabPage libraryTab = new TabPage("Library") { BackColor = SystemColors.Window };
@@ -88,52 +99,64 @@ namespace JocoRobos.Cad
             BackColor = SystemColors.Window;
             install.Click += (s, e) => actions.InstallUpdate();
             open.Click += (s, e) => actions.OpenRobot();
-            closeUpdate.Click += (s, e) => actions.CloseAndUpdate();
-            edit.Click += (s, e) => actions.Edit();
             submit.Click += (s, e) => actions.Submit();
             release.LinkClicked += (s, e) => actions.ReleaseUnchanged();
-            history.LinkClicked += (s, e) => actions.History();
-            ask.LinkClicked += (s, e) => actions.AskForFile?.Invoke();
             notNow.LinkClicked += (s, e) => actions.DismissRequests?.Invoke();
             refresh.Click += (s, e) => actions.Refresh();
             refresh.MouseEnter += (s, e) => refresh.ForeColor = SystemColors.HotTrack;
             refresh.MouseLeave += (s, e) => refresh.ForeColor = SystemColors.GrayText;
             tips.SetToolTip(refresh, "Check the server now");
             tips.SetToolTip(release, "Give back the files you locked but didn't change, so teammates can edit them");
+            tips.SetToolTip(notNow, "Let them know you're still working on it");
+            active.ActionClicked += action => { if (action == FileAction.Edit) actions.Edit(); else if (action == FileAction.Ask) actions.AskForFile?.Invoke(); };
+            workToggle.Click += (s, e) => ToggleWork();
+            workSummary.Click += (s, e) => ToggleWork();
+            workExpanded = ReadExpanded();
 
-            // 1. Where am I: robot name on the left, whether it's up to date (and ↻) on the right. Details on hover.
+            // The robot on the left, ↻ on the right; under it the sync state and its one action.
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            robot.Margin = new Padding(0, 0, 8, 0);
-            sync.Margin = new Padding(0, 3, 0, 0);
+            robot.Margin = new Padding(0);
             header.Controls.Add(robot, 0, 0);
-            header.Controls.Add(sync, 1, 0);
-            header.Controls.Add(refresh, 2, 0);
+            header.Controls.Add(refresh, 1, 0);
+            syncRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            syncRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            sync.Margin = new Padding(0);
+            syncAction.Margin = new Padding(6, 1, 0, 0);
+            syncAction.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            syncAction.LinkClicked += (s, e) =>
+            {
+                if ((SyncAction)syncAction.Tag == SyncAction.CloseAndUpdate) actions.CloseAndUpdate();
+                else if ((SyncAction)syncAction.Tag == SyncAction.ReviewRecovery) actions.ReviewRecovery?.Invoke();
+            };
+            syncRow.Controls.Add(sync, 0, 0);
+            syncRow.Controls.Add(syncAction, 1, 0);
+            syncNote.Margin = new Padding(0, 1, 0, 0);
+            activeHint.Margin = new Padding(0, 2, 0, 0);
 
-            // 2. This file.
-            history.Margin = new Padding(0, 4, 0, 0);
-            activeStatus.Margin = new Padding(0, 4, 0, 0);
-            foreach (var control in new Control[] { activeFile, activeStatus, activeHint, edit, ask, history })
-                card.Body.Controls.Add(control);
-            card.Margin = new Padding(0, 12, 0, 0);
-
-            // 3. My work.
+            // My work: "▸ My work 6 · 1 unsaved · 2 ready …  [Submit 3]".
+            workHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             workHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             workHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            release.Anchor = AnchorStyles.Right;
-            workHeader.Controls.Add(workTitle, 0, 0);
-            workHeader.Controls.Add(release, 1, 0);
-            foreach (var control in new Control[] { workHeader, interrupted, workRows, notNow, submit })
-                work.Controls.Add(control);
+            workHeader.Controls.Add(workToggle, 0, 0);
+            workHeader.Controls.Add(workSummary, 1, 0);
+            workHeader.Controls.Add(submit, 2, 0);
+            requestsRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            requestsRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            requestsRow.Controls.Add(requests, 0, 0);
+            requestsRow.Controls.Add(notNow, 1, 0);
+            workFooter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            workFooter.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            workFooter.Controls.Add(release, 0, 0);
+            interrupted.Margin = new Padding(0, 3, 0, 0);
 
-            foreach (var control in new Control[] { header, details, update, install, warning, flash, working, open, closeUpdate, card, work })
+            foreach (var control in new Control[] { header, syncRow, syncNote, update, install, warning, flash, working, open, active, activeHint,
+                workHeader, requestsRow, interrupted, workRows, workFooter })
                 layout.Controls.Add(control);
 
-            // 4. What do I want to work on: the robot's files fill the rest. Then a small footer.
+            // The fixed top, a hairline, the robot's files filling the rest, a hairline, the footer. No scrolling but the tree's.
             files = new RobotFilesPanel(actions.OpenFile, actions.RevealFile, actions.FileHistoryOf, actions.WhereUsedOf, actions.AskFor)
-                { Dock = DockStyle.Fill, MinimumSize = new Size(0, 160) };
-            var robotGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, AutoScroll = true, BackColor = SystemColors.Window };
+                { Dock = DockStyle.Fill, MinimumSize = new Size(0, 120) };
             robotGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             robotGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             robotGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
@@ -152,7 +175,6 @@ namespace JocoRobos.Cad
             tabs.TabPages.Add(robotTab);
             tabs.TabPages.Add(libraryTab);
             Controls.Add(tabs);
-            layout.Resize += (s, e) => FitWidth();
             robotGrid.Resize += (s, e) => FitWidth();
             Show(new PaneState());
         }
@@ -160,7 +182,7 @@ namespace JocoRobos.Cad
         // Diagnostics on the left, the version on the right: there when needed, out of the way otherwise.
         private Control Footer(PaneActions actions)
         {
-            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Padding = new Padding(14, 5, 14, 6), Margin = new Padding(0) };
+            var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Padding = new Padding(12, 4, 12, 5), Margin = new Padding(0) };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             var diagnostics = Link("Diagnostics", 8.25f);
@@ -174,38 +196,27 @@ namespace JocoRobos.Cad
             return footer;
         }
 
-        // Stretch buttons and wrap text to the pane's width.
+        // Everything in the fixed top fits the pane's width: wrapping text wraps, one-line rows shorten with "…".
         private void FitWidth()
         {
-            // The visible width comes from the container: the layout itself grows to fit its widest child and would never shrink back.
-            int visible = layout.Parent != null ? layout.Parent.ClientSize.Width : layout.ClientSize.Width;
-            int width = Math.Max(150, visible - layout.Padding.Horizontal - layout.Margin.Horizontal - SystemInformation.VerticalScrollBarWidth);
-            header.MinimumSize = header.MaximumSize = new Size(width, 0);
-            robot.MaximumSize = new Size(Math.Max(80, width / 2), 0);
-            sync.MaximumSize = new Size(Math.Max(80, (robot.Visible ? width - robot.PreferredSize.Width - 10 : width) - refresh.PreferredSize.Width - 6), 0);
-            card.MinimumSize = card.MaximumSize = new Size(width, 0);
-            foreach (Control control in layout.Controls)
-            {
-                if (control is Button) control.Width = width;
-                else if (control is Label && control != robot && control != sync) control.MaximumSize = new Size(width, 0);
-            }
-            int inner = width - card.Padding.Horizontal;
-            foreach (Control control in card.Body.Controls)
-            {
-                if (control is Button) control.Width = inner;
-                else if (control is Label) control.MaximumSize = new Size(inner, 0);
-            }
-            work.MinimumSize = work.MaximumSize = new Size(width, 0);
-            workHeader.MinimumSize = workHeader.MaximumSize = new Size(width, 0);
-            interrupted.MaximumSize = new Size(width, 0);
-            submit.Width = width;
+            int width = Math.Max(150, robotGrid.ClientSize.Width - layout.Padding.Horizontal);
+            layout.SuspendLayout();
+            foreach (Control control in new Control[] { header, syncRow, workHeader, requestsRow, workFooter })
+                control.MinimumSize = control.MaximumSize = new Size(width, 0);
+            // A painted row, not a sized-to-fit one: give it its size directly (size limits would squash its height to 0).
+            active.Size = new Size(width, active.HeightFor(width));
+            robot.MaximumSize = new Size(Math.Max(60, width - refresh.PreferredSize.Width - 8), 0);
+            sync.MaximumSize = new Size(Math.Max(60, width - (syncAction.Visible ? syncAction.PreferredSize.Width + 8 : 0)), 0);
+            foreach (var label in new[] { syncNote, update, warning, flash, working, activeHint, interrupted })
+                label.MaximumSize = new Size(width, 0);
+            install.Width = open.Width = width;
+            workSummary.Height = requests.Height = Math.Max(workToggle.PreferredSize.Height, 20);
             foreach (Control row in workRows.Controls)
             {
-                if (!(row is TableLayoutPanel)) { row.MaximumSize = new Size(width, 0); continue; } // "… and 3 more"
-                row.MinimumSize = row.MaximumSize = new Size(width, 0);
-                foreach (Control part in row.Controls)
-                    part.MaximumSize = new Size(part is LinkLabel ? Math.Max(60, width * 3 / 5) : width, 0);
+                if (!(row is TableLayoutPanel)) { row.MaximumSize = new Size(width - 14, 0); continue; } // "… and 3 more"
+                row.MinimumSize = row.MaximumSize = new Size(width - 14, 0);
             }
+            layout.ResumeLayout();
         }
 
         /// <summary>The robot file browser follows the robot's latest status check, and selects the open document.</summary>
@@ -225,12 +236,6 @@ namespace JocoRobos.Cad
         {
             return new Label { AutoSize = true, MaximumSize = new Size(230, 0), Text = text, Margin = new Padding(0, 2, 0, 2),
                 Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size, style), ForeColor = color ?? SystemColors.ControlText };
-        }
-
-        private static Label Heading(string text)
-        {
-            return new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 2, 0, 2),
-                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 8.5f, FontStyle.Bold), ForeColor = SystemColors.GrayText };
         }
 
         private static LinkLabel Link(string text, float size = 8.5f)
@@ -283,53 +288,72 @@ namespace JocoRobos.Cad
             flash.Visible = !String.IsNullOrEmpty(state.Flash);
             working.Text = state.Working ?? "";
             working.Visible = !String.IsNullOrEmpty(state.Working);
-            robot.Text = state.Robot;
-            bool named = state.Robot.Length > 0;
-            robot.Visible = named;
-            // No robot name yet (not signed in, checking): the status takes the line.
-            header.SetColumn(sync, named ? 1 : 0);
-            header.SetColumnSpan(sync, named ? 1 : 2);
-            sync.Anchor = AnchorStyles.Top | (named ? AnchorStyles.Right : AnchorStyles.Left);
+            warning.Text = state.Warning ?? "";
+            warning.Visible = !String.IsNullOrEmpty(state.Warning);
+
+            robot.Text = state.Robot.Length > 0 ? state.Robot : "CAD Hub";
+            refresh.Visible = state.Robot.Length > 0;
             sync.Text = state.Sync;
             sync.ForeColor = ColorOf(state.SyncTone);
             tips.SetToolTip(sync, state.SyncTip);
             tips.SetToolTip(robot, state.SyncTip);
-            refresh.Visible = named;
-            details.Text = state.Details;
-            details.Visible = state.Details.Length > 0;
+            syncAction.Tag = state.SyncAction;
+            syncAction.Text = state.SyncAction == SyncAction.CloseAndUpdate ? "Close & Update" : state.SyncAction == SyncAction.ReviewRecovery ? "Review" : "";
+            syncAction.Visible = state.SyncAction != SyncAction.None;
+            syncNote.Text = state.SyncNote;
+            syncNote.Visible = state.SyncNote.Length > 0;
             open.Visible = state.ShowOpen;
-            closeUpdate.Visible = state.ShowCloseAndUpdate;
-            warning.Text = state.Warning ?? "";
-            warning.Visible = !String.IsNullOrEmpty(state.Warning);
 
-            activeFile.Text = state.ActiveFile;
-            activeStatus.Text = state.ActiveStatus;
-            activeStatus.ForeColor = ColorOf(state.ActiveTone);
-            activeStatus.Visible = state.ActiveStatus.Length > 0;
+            active.Visible = state.ActiveFile.Length > 0;
+            active.Show(state.ActiveFile, state.ActiveStatus, ColorOf(state.ActiveTone), state.ActiveAction,
+                state.ActiveAction == FileAction.Ask ? "Ask " + state.AskOwner : state.ActiveAction == FileAction.Edit ? "Edit" : "");
+            tips.SetToolTip(active, state.ActiveTip);
             activeHint.Text = state.ActiveHint;
-            activeHint.Visible = state.ActiveHint.Length > 0;
-            edit.Visible = state.EditTarget != null;
-            edit.Text = "  " + (String.IsNullOrEmpty(state.EditTarget) ? "Edit" : "Edit " + state.EditTarget);
-            ask.Text = state.AskOwner == null ? "Ask for it" : "Ask " + state.AskOwner + " for it";
-            ask.Visible = state.AskOwner != null;
-            history.Visible = state.ShowHistory;
-            card.Visible = state.ActiveFile.Length > 0;
+            activeHint.ForeColor = state.ActiveHint.StartsWith("⚠") ? Color.DarkOrange : SystemColors.GrayText;
+            activeHint.Visible = active.Visible && state.ActiveHint.Length > 0;
 
-            bool showSubmit = state.SubmitCount > 0 || state.InterruptedSubmit;
-            submit.Visible = showSubmit;
-            submit.Text = "  Submit" + (state.SubmitCount > 0 ? " " + state.SubmitCount : "");
+            bool anyWork = state.Work.Count > 0 || state.InterruptedSubmit;
+            workCount = state.Work.Count;
+            workHeader.Visible = anyWork;
+            workToggle.Text = (workExpanded ? "▾" : "▸") + " My work " + state.Work.Count;
+            workSummary.Text = state.WorkSummary.Length > 0 ? "· " + state.WorkSummary : "";
+            tips.SetToolTip(workSummary, state.WorkSummary.Replace(" · ", "\n") + "\n\nClick to " + (workExpanded ? "hide" : "show") + " each file");
+            tips.SetToolTip(workToggle, workExpanded ? "Hide the file list" : "Show each file");
+            submit.Visible = state.SubmitCount > 0 || state.InterruptedSubmit;
+            submit.Text = "Submit" + (state.SubmitCount > 0 ? " " + state.SubmitCount : "");
+            submit.Image = ButtonIcon("Submit");
+            submit.TextImageRelation = TextImageRelation.ImageBeforeText;
+            requests.Text = state.Requests;
+            tips.SetToolTip(requests, String.Join("\n", state.Work.Where(w => w.WaitingFor != null).Select(w => w.WaitingFor + " is waiting for " + w.Name)) +
+                "\nSubmit (or give it back) when you're done with it.");
+            requestsRow.Visible = state.AnyoneWaiting;
             interrupted.Visible = state.InterruptedSubmit;
             release.Text = "Give back " + state.Unchanged + " unchanged";
-            release.Visible = state.Unchanged > 0;
-            notNow.Visible = state.AnyoneWaiting;
-            workTitle.Text = "MY WORK" + (state.Work.Count > 0 ? " (" + state.Work.Count + ")" : "");
+            workFooter.Visible = workExpanded && state.Unchanged > 0;
             ShowWork(state.Work);
-            work.Visible = state.Work.Count > 0 || state.InterruptedSubmit;
+            workRows.Visible = workExpanded && state.Work.Count > 0;
             layout.ResumeLayout();
             FitWidth();
         }
 
-        // One row per file: mark and name (click to open), its state on the right, and who's waiting for it underneath.
+        private void ToggleWork()
+        {
+            workExpanded = !workExpanded;
+            try { using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(SettingsKey)) key.SetValue("PaneWorkExpanded", workExpanded ? 1 : 0); }
+            catch (Exception) { } // A convenience only.
+            workToggle.Text = (workExpanded ? "▾" : "▸") + " My work " + workCount;
+            workRows.Visible = workExpanded && workRows.Controls.Count > 0;
+            workFooter.Visible = workExpanded && release.Text != "Give back 0 unchanged";
+            FitWidth();
+        }
+
+        private static bool ReadExpanded()
+        {
+            try { using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(SettingsKey)) return key != null && Convert.ToInt32(key.GetValue("PaneWorkExpanded", 0)) == 1; }
+            catch (Exception) { return false; }
+        }
+
+        // One row per file: mark and name (click to open), its state on the right in words, who's waiting for it underneath.
         private void ShowWork(List<WorkItem> items)
         {
             string shown = String.Join("|", items.Select(w => w.Path + ":" + w.State + ":" + w.WaitingFor));
@@ -339,53 +363,136 @@ namespace JocoRobos.Cad
             foreach (Control old in workRows.Controls.Cast<Control>().ToList()) { workRows.Controls.Remove(old); old.Dispose(); }
             foreach (var item in items.Take(MaxWorkRows))
             {
-                var row = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 1, 0, 1) };
+                var row = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Margin = new Padding(14, 0, 0, 0) };
                 row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
                 row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-                var name = Link(item.Mark + " " + Path.GetFileNameWithoutExtension(item.Name), 9f);
-                name.AutoEllipsis = true;
-                name.LinkColor = item.Mark == "⚠" ? Color.DarkOrange : SystemColors.ControlText;
+                var name = new LinkLabel { Text = item.Mark + " " + Path.GetFileNameWithoutExtension(item.Name) + (item.WaitingFor != null ? "  ✋" : ""),
+                    AutoSize = false, AutoEllipsis = true, Dock = DockStyle.Fill, Height = 20, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0),
+                    LinkBehavior = LinkBehavior.HoverUnderline, LinkColor = item.Mark == "⚠" ? Color.DarkOrange : SystemColors.ControlText,
+                    Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f) };
                 string path = item.Path;
                 name.LinkClicked += (s, e) => actions.OpenFile?.Invoke(path);
-                tips.SetToolTip(name, item.Name + "\nClick to open");
-                var stateLabel = Caption(8.5f, FontStyle.Regular, item.State, StatusPane.ColorOf(item.Tone));
-                stateLabel.Anchor = AnchorStyles.Right;
+                tips.SetToolTip(name, item.Name + (item.WaitingFor != null ? "\n" + item.WaitingFor + " is waiting for it" : "") + "\nClick to open");
+                var state = Caption(8.5f, FontStyle.Regular, item.State, ColorOf(item.Tone));
+                state.Anchor = AnchorStyles.Right;
+                state.Margin = new Padding(6, 2, 0, 0);
                 row.Controls.Add(name, 0, 0);
-                row.Controls.Add(stateLabel, 1, 0);
-                if (item.WaitingFor != null)
-                {
-                    var waiting = Caption(8.5f, FontStyle.Bold, "   ✋ " + item.WaitingFor + (item.WaitingFor.Contains(",") ? " are" : " is") + " waiting for it", Color.DarkOrange);
-                    row.Controls.Add(waiting, 0, 1);
-                    row.SetColumnSpan(waiting, 2);
-                }
+                row.Controls.Add(state, 1, 0);
                 workRows.Controls.Add(row);
             }
             if (items.Count > MaxWorkRows)
-                workRows.Controls.Add(Caption(8.5f, FontStyle.Regular, "… and " + (items.Count - MaxWorkRows) + " more (Submit lists them all)", SystemColors.GrayText));
+            {
+                var more = Caption(8.5f, FontStyle.Regular, "… and " + (items.Count - MaxWorkRows) + " more (Submit lists them all)", SystemColors.GrayText);
+                more.Margin = new Padding(14, 1, 0, 0);
+                workRows.Controls.Add(more);
+            }
             workRows.ResumeLayout();
         }
 
-        /// <summary>A light box for the open file.</summary>
-        private sealed class Card : Panel
+        /// <summary>
+        /// The open file in one line: its name (bold), its status (in words, colored), and one action on the right. When the pane is
+        /// narrow the name shortens first, so the status and the action stay readable.
+        /// </summary>
+        private sealed class FileRow : Control
         {
-            internal readonly FlowLayoutPanel Body = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0), BackColor = CardBack, Dock = DockStyle.Top };
+            private string name = "", status = "", action = "";
+            private FileAction kind;
+            private Color statusColor;
+            private Rectangle actionBounds;
+            private bool overAction;
+            private readonly Font bold = new Font(SystemFonts.MessageBoxFont.FontFamily, 9.5f, FontStyle.Bold);
+            internal event Action<FileAction> ActionClicked;
 
-            internal Card()
+            internal FileRow()
             {
-                AutoSize = true;
-                AutoSizeMode = AutoSizeMode.GrowAndShrink;
-                BackColor = CardBack;
-                Padding = new Padding(10, 8, 10, 10);
-                ResizeRedraw = true;
-                DoubleBuffered = true;
-                Controls.Add(Body);
+                Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f);
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
+                Height = LineHeight;
+            }
+
+            private const TextFormatFlags Flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
+            private const int Gap = 14; // " · " between the name and the status
+
+            private int LineHeight { get { return Math.Max(bold.Height, Font.Height) + 6; } }
+
+            /// <summary>One line when the name (or most of it), the status and the action fit; otherwise the status gets its own line.</summary>
+            internal int HeightFor(int width) { return OneLine(width) ? LineHeight : LineHeight * 2 - 4; }
+
+            private bool OneLine(int width)
+            {
+                if (status.Length == 0) return true;
+                int nameWidth = Math.Min(Measure(name, bold), Measure("Flywheel Pl…", bold)); // a little of the name is enough
+                return nameWidth + Gap + Measure(status, Font) + ActionWidth() <= width;
+            }
+
+            private int ActionWidth() { return action.Length == 0 ? 0 : Measure(action, Font) + 10; }
+
+            private static int Measure(string text, Font font) { return TextRenderer.MeasureText(text, font, new Size(int.MaxValue, 100), Flags).Width; }
+
+            internal void Show(string fileName, string fileStatus, Color color, FileAction fileAction, string actionText)
+            {
+                name = fileName; status = fileStatus; statusColor = color; kind = fileAction; action = actionText;
+                Invalidate();
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
-                base.OnPaint(e);
-                using (var pen = new Pen(Hairline)) e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+                e.Graphics.Clear(BackColor);
+                int line = LineHeight, actionWidth = ActionWidth();
+                actionBounds = actionWidth == 0 ? Rectangle.Empty : new Rectangle(Width - actionWidth + 10, 0, actionWidth - 10, line);
+                int room = Width - actionWidth;
+                if (OneLine(Width))
+                {
+                    // Name · status ........ action
+                    int nameShown = Math.Min(Measure(name, bold), Math.Max(room / 3, room - (status.Length == 0 ? 0 : Measure(status, Font) + Gap)));
+                    TextRenderer.DrawText(e.Graphics, name, bold, new Rectangle(0, 0, nameShown, line), ForeColor, Flags | TextFormatFlags.EndEllipsis);
+                    if (status.Length > 0)
+                    {
+                        int x = nameShown + 4;
+                        TextRenderer.DrawText(e.Graphics, "·", Font, new Rectangle(x, 0, Gap - 4, line), SystemColors.GrayText, Flags);
+                        TextRenderer.DrawText(e.Graphics, status, Font, new Rectangle(x + Gap - 4, 0, Math.Max(0, room - x - Gap + 4), line), statusColor, Flags | TextFormatFlags.EndEllipsis);
+                    }
+                }
+                else
+                {
+                    // Name ........ action
+                    // status
+                    TextRenderer.DrawText(e.Graphics, name, bold, new Rectangle(0, 0, room, line), ForeColor, Flags | TextFormatFlags.EndEllipsis);
+                    TextRenderer.DrawText(e.Graphics, status, Font, new Rectangle(0, line - 4, Width, line), statusColor, Flags | TextFormatFlags.EndEllipsis);
+                }
+                if (actionWidth > 0)
+                    using (var link = new Font(Font, overAction ? FontStyle.Underline : FontStyle.Regular))
+                        TextRenderer.DrawText(e.Graphics, action, link, actionBounds, SystemColors.HotTrack, Flags);
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                base.OnMouseMove(e);
+                bool over = actionBounds.Contains(e.Location);
+                if (over == overAction) return;
+                overAction = over;
+                Cursor = over ? Cursors.Hand : Cursors.Default;
+                Invalidate();
+            }
+
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                base.OnMouseLeave(e);
+                if (!overAction) return;
+                overAction = false;
+                Invalidate();
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                base.OnMouseClick(e);
+                if (actionBounds.Contains(e.Location) && kind != FileAction.None) ActionClicked?.Invoke(kind);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) bold.Dispose();
+                base.Dispose(disposing);
             }
         }
     }

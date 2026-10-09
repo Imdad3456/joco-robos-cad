@@ -404,21 +404,29 @@ namespace JocoRobos.Cad
                     doc != null && doc.GetSaveFlag(), robotSnapshot != null && RobotDocuments(robotSnapshot.Info).Any(), editRequests, UnsavedWork());
                 state.Working = working;
                 state.Warning = paneCatalog == null ? null : WorkspacePolicy.SolidWorksProblem(SolidWorksYear, paneCatalog.SolidWorks);
-                if (state.Warning != null) state.EditTarget = null;
+                if (state.Warning != null && state.ActiveAction == FileAction.Edit) { state.ActiveAction = FileAction.None; state.EditTarget = null; }
                 if (autoUpdateProblem != null && state.CanAutoUpdate)
-                    state.Details += "\nCouldn't get them automatically: " + autoUpdateProblem + "\nTry Tools → CAD Hub → Update.";
+                {
+                    state.SyncNote = "⚠ Couldn't get them automatically. Try Tools → CAD Hub → Update.";
+                    state.SyncTip = autoUpdateProblem + "\n\n" + state.SyncTip;
+                }
                 var season = path == null || paneCatalog == null ? null : paneCatalog.Owning(path);
                 if (season != null && !season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name)
                 {
-                    state.ActiveStatus = "Reference copy from " + season.Name + ". Read-only; your robot is " + robotSnapshot.Info.Name + ".";
+                    state.ActiveStatus = "Reference copy · " + season.Name;
+                    state.ActiveTip = "Read-only reference from " + season.Name + ". Your robot is " + robotSnapshot.Info.Name + ".";
+                    state.ActiveHint = "";
                     state.ActiveTone = Tone.Muted;
+                    state.ActiveAction = FileAction.None;
                     state.EditTarget = null;
+                    state.AskOwner = null;
                 }
                 // Already asked: say so instead of offering again.
                 string askedOwner;
                 if (path != null && state.AskOwner != null && askedFor.TryGetValue(path, out askedOwner) && askedOwner == state.AskOwner)
                 {
                     state.ActiveHint = "You asked " + askedOwner + " for it. This panel tells you when it's free.";
+                    state.ActiveAction = FileAction.None;
                     state.AskOwner = null;
                 }
                 state.Flash = flash;

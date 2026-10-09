@@ -515,15 +515,15 @@ static class Program
         Check(s.ShowOpen && s.SubmitCount == 0 && s.EditTarget == null, "Not signed in: only Open Robot");
         var snap = fresh();
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
-        Check(s.ShowOpen && !s.ShowCloseAndUpdate && s.EditTarget == null && s.SubmitCount == 0, "Nothing open: Open Robot");
+        Check(s.ShowOpen && s.SyncAction == SyncAction.None && s.ActiveAction == FileAction.None && s.SubmitCount == 0 && s.Sync == "✓ Up to date" && s.SyncNote == "", "Nothing open: Open Robot; up to date needs no note");
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
-        Check(!s.ShowOpen && s.EditTarget == "ShooterPlate" && s.ActiveStatus.Contains("nobody's editing") && s.ActiveHint.Contains("Start changing it"), "Free read-only part: Edit it");
+        Check(!s.ShowOpen && s.ActiveAction == FileAction.Edit && s.EditTarget == "ShooterPlate" && s.ActiveFile == "ShooterPlate" && s.ActiveStatus == "Free to edit" && s.ActiveHint == "" && s.ActiveTip.Contains("Start changing it"), "Free read-only part: one row, Edit, the how-to on hover");
         s = PaneState.Describe("sam", snap, null, asm, true, null, now, robotOpen: true);
         Check(s.EditTarget == "", "Assembly: generic Edit (may lock the selected part)");
         snap.Locks[part] = "sarah";
         snap.LockedSince[part] = now.AddMinutes(-5);
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
-        Check(s.EditTarget == null && s.ActiveStatus.Contains("sarah is editing this · since") && s.ActiveTone == Tone.Bad, "Teammate's file: who and since when, no button");
+        Check(s.ActiveAction == FileAction.Ask && s.ActiveStatus == "Locked by sarah" && s.ActiveTip.Contains("since") && s.ActiveHint == "" && s.ActiveTone == Tone.Bad, "Teammate's file: who, one row, since when on hover");
         Check(s.AskOwner == "sarah", "Teammate's file: offer to ask sarah for it");
         // Requests to this student come from the server; only well-formed ones are shown.
         var asked = EditRequests.Parse(new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"requests\": [" +
@@ -533,31 +533,31 @@ static class Program
         Check(asked.Count == 1 && asked[0].From == "sarah" && asked[0].Path == "30_Shooter/Plate.SLDPRT", "Edit requests parsed, bad ones dropped");
         snap = fresh(); snap.Locks[part] = "sam"; snap.Mine.Add(part); snap.Changed.Add(part);
         s = PaneState.Describe("sam", snap, null, part, false, null, now, robotOpen: true);
-        Check(s.EditTarget == null && s.SubmitCount == 1 && s.ActiveStatus.Contains("editing this · saved") && s.Work.Single().Name == "ShooterPlate.SLDPRT" && s.Work[0].State == "saved", "Editing: Submit 1");
+        Check(s.ActiveAction == FileAction.None && s.SubmitCount == 1 && s.ActiveStatus == "✎ Editing · saved" && s.Work.Single().Name == "ShooterPlate.SLDPRT" && s.Work[0].State == "ready" && s.WorkSummary == "1 ready", "Editing: Submit 1");
         snap = fresh(); snap.Head = 12; snap.Incoming.Add("r11 sarah: intake"); snap.Incoming.Add("r12 sarah: arm");
         s = PaneState.Describe("sam", snap, null, part, true, null, now, robotOpen: true);
-        Check(s.ShowCloseAndUpdate && !s.CanAutoUpdate && s.Sync == "⬇ 2 new" && s.SyncTip.Contains("2 new changes") && !s.Details.Contains("r11"), "Teammate changes with robot open: Close & Update");
+        Check(s.SyncAction == SyncAction.CloseAndUpdate && !s.CanAutoUpdate && s.Sync == "⬇ 2 updates waiting" && s.SyncNote == "Close the robot's files to get them." && s.SyncTip.Contains("r11"), "Teammate changes with robot open: Close & Update");
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
-        Check(s.CanAutoUpdate && !s.ShowCloseAndUpdate, "Nothing open: teammate changes come in by themselves");
+        Check(s.CanAutoUpdate && s.SyncAction == SyncAction.None && s.Sync == "⬇ Getting 2 updates…", "Nothing open: teammate changes come in by themselves");
         // A new Library part (mentor upload) with nothing new in the robot still comes down.
         var librarySeason = new WorkspaceInfo("Library", Guid.NewGuid(), false, true);
         var lib = new WorkspaceSnapshot { Info = librarySeason, Local = 5, Head = 6 };
         lib.Incoming.Add("#6 mentor1: Add bracket");
         var robotNow = fresh();
         s = PaneState.Describe("sam", robotNow, lib, null, false, null, now);
-        Check(s.CanAutoUpdate && s.Sync == "⬇ 1 new" && s.SyncTip.Contains("Library #6"), "Library-only news is fetched too");
+        Check(s.CanAutoUpdate && s.Sync == "⬇ Getting 1 update…" && s.SyncTip.Contains("Library #6"), "Library-only news is fetched too");
         s = PaneState.Describe("sam", robotNow, lib, part, true, null, now, robotOpen: true);
-        Check(s.ShowCloseAndUpdate, "Library-only news with the robot open: Close & Update");
+        Check(s.SyncAction == SyncAction.CloseAndUpdate, "Library-only news with the robot open: Close & Update");
         lib.New.Add(Path.Combine(librarySeason.Root, "Mine.SLDPRT"));
         s = PaneState.Describe("sam", robotNow, lib, null, false, null, now);
-        Check(!s.CanAutoUpdate && s.Details.Contains("Library parts come in after you Submit"), "Library news waits for the Library's own unsubmitted work");
+        Check(!s.CanAutoUpdate && s.SyncNote.Contains("Submit your Library changes first"), "Library news waits for the Library's own unsubmitted work");
         snap.PendingSubmit = true;
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
         Check(s.InterruptedSubmit, "Interrupted Submit is shown with Submit to settle it");
         snap.PendingSubmit = false;
         snap.New.Add(Path.Combine(season.Root, "New.SLDPRT"));
         s = PaneState.Describe("sam", snap, null, null, false, null, now);
-        Check(!s.CanAutoUpdate && !s.ShowCloseAndUpdate && s.Details.Contains("after you Submit") && s.SubmitCount == 1, "Own unsubmitted work: Submit first");
+        Check(!s.CanAutoUpdate && s.SyncAction == SyncAction.None && s.SyncNote == "Submit your work first, then they come in." && s.SubmitCount == 1, "Own unsubmitted work: Submit first, said plainly");
         WorkChecks(season, part, asm, fresh);
     }
 
@@ -573,17 +573,19 @@ static class Program
         snap.New.Add(mount);
         var requests = new[] { new EditRequests.Request { Id = "r1", Season = season.Name, Path = "30_Shooter/Hood.SLDPRT", From = "sarah" } };
         var s = PaneState.Describe("sam", snap, null, part, false, null, now, activeDirty: true, robotOpen: true, requests: requests, unsaved: new[] { asm });
-        Check(String.Join(",", s.Work.Select(w => w.Name + ":" + w.State)) == "Shooter.SLDASM:unsaved,ShooterPlate.SLDPRT:unsaved,Hood.SLDPRT:saved,Camera Mount.SLDPRT:new",
+        Check(String.Join(",", s.Work.Select(w => w.Name + ":" + w.State)) == "Shooter.SLDASM:unsaved,ShooterPlate.SLDPRT:unsaved,Hood.SLDPRT:ready,Camera Mount.SLDPRT:new",
             "My work: unsaved first, then what Submit sends: " + String.Join(",", s.Work.Select(w => w.Name + ":" + w.State)));
         Check(s.SubmitCount == 2 && s.Unchanged == 0 && s.HasLocks, "Submit counts saved and new files; unsaved locked files aren't 'unchanged'");
+        Check(s.WorkSummary == "2 unsaved · 1 ready · 1 new", "My work collapsed: one summary line, " + s.WorkSummary);
+        Check(s.Requests == "✋ sarah is waiting for Hood" && s.AnyoneWaiting, "A request shows even while My work is collapsed");
         Check(s.Work.Single(w => w.WaitingFor != null).Name == "Hood.SLDPRT" && s.AnyoneWaiting && s.Work.First(w => w.Name == "Hood.SLDPRT").WaitingFor == "sarah",
             "A teammate's request shows on the file it's about");
-        Check(s.ActiveStatus == "✎ You're editing this · unsaved" && s.ActiveHint == "", "Editing a part: one line, no hint");
+        Check(s.ActiveStatus == "✎ Editing · unsaved" && s.ActiveHint == "" && s.ActiveFile == "ShooterPlate", "Editing a part: one row, no hint");
         s = PaneState.Describe("sam", snap, null, asm, false, null, now, activeDirty: true, robotOpen: true);
         Check(s.ActiveHint.Contains("Do not save read-only documents"), "The assembly save tip appears when there's something to save");
         s = PaneState.Describe("sam", snap, null, asm, false, null, now, robotOpen: true);
         Check(s.ActiveHint == "" && s.Unchanged == 2, "No save tip when nothing's unsaved; locked untouched files can be given back");
-        Check(s.Work.Last().State == "not changed" && s.Work.Last().Tone == Tone.Muted, "Untouched locked files last, muted");
+        Check(s.Work.Last().State == "unchanged" && s.Work.Last().Tone == Tone.Muted && s.WorkSummary == "1 ready · 1 new · 2 unchanged", "Untouched locked files last, muted");
 
         // A teammate's newer version: on the open file and in the tree.
         snap = fresh();
@@ -591,9 +593,17 @@ static class Program
         snap.Incoming.Add("#11 sarah: hood gear");
         snap.IncomingFiles[gear] = "sarah";
         s = PaneState.Describe("sam", snap, null, gear, true, null, now, robotOpen: true);
-        Check(s.ActiveStatus == "⬇ sarah submitted a newer version" && s.ActiveHint.Contains("Close & Update") && s.EditTarget == "Hood Gear", "Out-of-date file says so");
+        Check(s.ActiveStatus == "⬇ Newer version from sarah" && s.ActiveHint == "" && s.ActiveTip.Contains("get it before you change this") && s.EditTarget == "Hood Gear", "Out-of-date file says so");
         s = PaneState.Describe("sam", snap, null, gear, true, "timed out", now.AddMinutes(-3), robotOpen: true);
-        Check(s.Sync == "⚠ Offline" && s.Details.Contains("timed out"), "Offline: said once, with the reason");
+        Check(s.Sync == "⚠ Offline" && s.SyncNote.StartsWith("Keep working on files you've locked") && s.SyncTip.Contains("timed out") && !s.CanAutoUpdate, "Offline: what still works, the reason on hover");
+        s = PaneState.Describe("sam", null, null, null, false, "no route", now);
+        Check(s.Sync == "⚠ Offline" && s.SyncNote.Contains("Submit and updates wait"), "Offline before any check: same state, same words");
+        snap = fresh(); snap.Locks[gear] = "sarah";
+        s = PaneState.Describe("sam", snap, null, gear, true, null, now, activeDirty: true, robotOpen: true);
+        Check(s.ActiveTone == Tone.Warn && s.ActiveHint.StartsWith("⚠ Your changes here can't be saved") && s.ActiveAction == FileAction.Ask, "Changed a teammate's file: the problem gets its own line");
+        snap = fresh();
+        s = PaneState.Describe("sam", snap, null, gear, true, null, now, activeDirty: true, robotOpen: true);
+        Check(s.ActiveStatus == "⚠ Unsaved changes, not locked" && s.ActiveHint.Contains("Click Edit") && s.ActiveAction == FileAction.Edit, "Unlocked changes: warned, with Edit");
 
         // The file tree: who, on the row; folders add it up.
         snap = fresh();

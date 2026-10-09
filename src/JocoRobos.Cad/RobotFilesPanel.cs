@@ -20,7 +20,7 @@ namespace JocoRobos.Cad
         private readonly Label empty = new Label { Dock = DockStyle.Fill, ForeColor = SystemColors.GrayText, Padding = new Padding(2, 8, 2, 0),
             Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f), Text = "Open Robot to download the robot files." };
         private readonly SearchBox search = new SearchBox("Search robot files…") { Dock = DockStyle.Fill, Margin = new Padding(0, 6, 0, 6) };
-        private readonly TreeView tree = new TreeView { Dock = DockStyle.Fill, HideSelection = false, ShowNodeToolTips = true, BorderStyle = BorderStyle.None,
+        private readonly TreeView tree = new FileTree { Dock = DockStyle.Fill, HideSelection = false, ShowNodeToolTips = true, BorderStyle = BorderStyle.None,
             FullRowSelect = true, ShowLines = false, DrawMode = TreeViewDrawMode.OwnerDrawText, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f) };
         private readonly Timer debounce = new Timer { Interval = 220 };
         private readonly ContextMenuStrip menu = new ContextMenuStrip();
@@ -73,6 +73,8 @@ namespace JocoRobos.Cad
             tree.Indent = Math.Max(19, tree.Font.Height + 4);
             tree.ImageList = FileIcons.Build();
             tree.HandleCreated += (s, e) => { try { SetWindowTheme(tree.Handle, "explorer", null); } catch (Exception) { } }; // Modern arrows and hover.
+            // Rows are drawn to the pane's width (DrawNode): a narrower or wider pane redraws them all.
+            tree.Resize += (s, e) => tree.Invalidate();
             tree.DrawNode += DrawNode;
 
             search.TextChanged += (s, e) => { debounce.Stop(); debounce.Start(); };
@@ -296,6 +298,9 @@ namespace JocoRobos.Cad
             var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding;
             var color = e.Node.ForeColor.IsEmpty ? tree.ForeColor : e.Node.ForeColor;
             var bounds = new Rectangle(e.Bounds.X + 2, e.Bounds.Y, Math.Max(0, tree.ClientSize.Width - e.Bounds.X - 2), e.Bounds.Height);
+            // The detail is drawn past the node's own text, where the tree doesn't clear: clear it here (the theme paints selected and hovered rows itself).
+            if ((e.State & (TreeNodeStates.Selected | TreeNodeStates.Hot)) == 0)
+                using (var back = new SolidBrush(tree.BackColor)) e.Graphics.FillRectangle(back, bounds);
             string detail;
             if (!details.TryGetValue(e.Node, out detail))
             {
@@ -335,6 +340,20 @@ namespace JocoRobos.Cad
 
         [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
         private static extern int SetWindowTheme(IntPtr window, string application, string idList);
+
+        /// <summary>The file tree, without sideways scrolling: long names shorten with "…" (DrawNode) instead of pushing the folders off the left.</summary>
+        private sealed class FileTree : TreeView
+        {
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    var parameters = base.CreateParams;
+                    parameters.Style |= 0x8000; // TVS_NOHSCROLL
+                    return parameters;
+                }
+            }
+        }
 
         /// <summary>A search field that looks like one: taller, a magnifier, a light border that turns blue while typing.</summary>
         private sealed class SearchBox : Panel

@@ -33,18 +33,22 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
 | 2.1 | Both | Close all documents | Panel: "✓ Up to date" and only **Open Robot** | ☐ |
-| 2.2 | Both | **Open Robot**, then open `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B) | "Read-only · nobody's editing it" and an **Edit Part1test** button; the file is selected in Robot Files | ☐ |
-| 2.3 | Both | Wait 10 seconds, then change a dimension **without** clicking Edit | No question. The panel says "✎ You're editing this · unsaved" (locked by itself); **My work** lists it as *unsaved*; your change is still there | ☐ |
-| 2.4 | Both | Save | **My work** shows it as *saved*, and **Submit 1** under the list | ☐ |
+| 2.2 | Both | **Open Robot**, then open `80_Unsorted\Part1test.SLDPRT` (A) or `80_Unsorted\18ish.SLDPRT` (B) | The open-file row: "Part1test · Free to edit · **Edit**" (hover explains); the file is selected in Robot Files | ☐ |
+| 2.3 | Both | Wait 10 seconds, then change a dimension **without** clicking Edit | No question. The row says "✎ Editing · unsaved" (locked by itself); **My work** says "1 unsaved"; your change is still there | ☐ |
+| 2.4 | Both | Save | **My work** says "1 ready" with **Submit 1** on the same line | ☐ |
 | 2.5 | Both | Open your assembly (A: `50_Electrical\battery holder`, B: `motor cover asssewmbly`) read-only and drag a component | Assemblies still ask "Lock it for editing now?" → **No**. Close it without saving | ☐ |
 | 2.5b | Both | Open your assembly read-only, change a mate right away (first 5 seconds), and click **No** if asked to lock. Then Submit something else | The panel keeps warning about the unsaved assembly changes; you can't easily forget them (write down anything that felt too quiet) | ☐ |
 | 2.6 | Both | Close the part from 2.3 (it stays yours: it has a saved change). Open `80_Unsorted\id2_1.SLDPRT`, click **Edit**, change nothing, close it | id2_1 leaves **My work** within a few seconds (unchanged → given back); the part from 2.3 is still there | ☐ |
 | 2.7 | Both | A: Edit a part and keep it. B: look at Robot Files | B sees A's part as "🔒 *name* · A" (A's username after the name, readable without hovering); its folder shows 🔒1 while collapsed. Hover: "A is editing this since …" | ☐ |
 | 2.8 | B | Right-click A's part in Robot Files | **Ask A for it** is in the menu (not for free files). Click it: "✓ Asked A…". A's **My work** shows "✋ B is waiting for it" on that file and keeps showing it (it doesn't disappear after 15 seconds) | ☐ |
 | 2.9 | A | **Not yet: let them know** | The ✋ line goes away | ☐ |
-| 2.10 | A | Submit a change to a part B has open read-only | Within 3 minutes (or ↻), B's header says "⬇ 1 new" (hover lists it); the part shows "⬇ *name* · newer from A" in Robot Files; with it open, the panel says "⬇ A submitted a newer version" | ☐ |
-| 2.11 | Both | Lock 2 parts with Edit and change nothing | **My work** lists both as *not changed* and offers **Give back 2 unchanged**; clicking it releases both | ☐ |
-| 2.12 | Both | Switch between open documents (Ctrl+Tab) | **This file** and the Robot Files selection follow the active document; the tree doesn't jump while you're typing in its search box | ☐ |
+| 2.10 | A | Submit a change to a part B has open read-only | Within 3 minutes (or ↻), B's sync line says "⬇ 1 update waiting" (or "Getting…" with nothing open; hover lists it); the part shows "⬇ *name* · newer from A" in Robot Files; with it open, the row says "⬇ Newer version from A" | ☐ |
+| 2.11 | Both | Lock 2 parts with Edit and change nothing | **My work** says "2 unchanged"; expanded, it lists both and offers **Give back 2 unchanged**; clicking it releases both | ☐ |
+| 2.12 | Both | Switch between open documents (Ctrl+Tab) | The open-file row and the Robot Files selection follow the active document; the tree doesn't jump while you're typing in its search box | ☐ |
+| 2.14 | Both | Click **▸ My work**, restart SOLIDWORKS | It stays expanded (and collapsed after collapsing it). With a teammate's request, the ✋ line shows either way | ☐ |
+| 2.15 | Both | Right-click the open file in Robot Files | **File History** and **Where Used** are there (the History link left the panel) | ☐ |
+| 2.16 | Both | Look at the panel with a monochrome / grayscale filter (Windows Settings → Accessibility → Color filters) | Every state still reads: ✓ ⬇ ⚠ ✎ ● ✋ icons and words, never color alone | ☐ |
+| 2.17 | Both | Select a file in Robot Files, then widen and narrow the pane | No leftover text next to the selected row (seen faintly in the test harness) | ☐ |
 | 2.13 | Both | Make the task pane narrow, then wide | Nothing is cut off on the right; long file names shorten (…) before the owner's name does | ☐ |
 
 ## 3. Library tab
@@ -121,7 +125,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 4.4 | A | Change it, save, **Submit** | Submitted | ☐ |
 | 4.4b | B | After A's Submit, wait up to 3 min (or **Check now**) | "✓ ABS_MotorCover_v2 is free now… Open it and click Edit." A's panel no longer shows the request | ☐ |
 | 4.4c | A | Web mentor page → **Seasons** → **Who's working** | A and B with "online", their robot "up to date" (or "N submits behind"), and what each is editing | ☐ |
-| 4.5 | B | Keep `Robot.SLDASM`, a sub-assembly and a part open in their own windows, part active. Wait up to 3 min (or **Check now**) | "⬇ 1 new change on the server", A's comment, and **Close & Update** | ☐ |
+| 4.5 | B | Keep `Robot.SLDASM`, a sub-assembly and a part open in their own windows, part active. Wait up to 3 min (or **Check now**) | "⬇ 1 update waiting", "Close the robot's files to get them.", **Close & Update** on the same line; A's comment on hover | ☐ |
 | 4.6 | B | **Close & Update** | All three close, update, and reopen, with the part active again; "✓ Up to date" | ☐ |
 | 4.7 | A | Close **all** documents. B: change and **Submit** any small file | Within 3 min A's panel says "Getting 1 new change…" then "✓ Got 1 new change", with no clicks | ☐ |
 | 4.8 | B | **Edit** `TPU_MotorCover_v2`, change it, save, don't Submit | | ☐ |
@@ -142,7 +146,7 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 | 5.2c | B | Edit an assembly, insert a part from a USB stick or Desktop, save it, then delete or rename that original file in Explorer → **Submit** | "…uses a file that isn't on this computer", naming it; Submit is off until you fix it or click **Submit anyway** | ☐ |
 | 5.3 | A | **Edit** a part, then end SOLIDWORKS in Task Manager. Restart | Still yours; the panel's "Give back the ones I didn't change" releases it | ☐ |
 | 5.4 | Both | Save a change without submitting, then close SOLIDWORKS | Asks once "Submit now before exiting?" → **No** closes normally | ☐ |
-| 5.4b | A | Sign in as the same account on a second computer (or a second Windows user). Submit a small change on computer 1 | Computer 2's panel shows "⬇ 1 new change", from "you (another computer)", and gets it | ☐ |
+| 5.4b | A | Sign in as the same account on a second computer (or a second Windows user). Submit a small change on computer 1 | Computer 2's panel shows "⬇ 1 update…" (hover: from "you (another computer)"), and gets it | ☐ |
 | 5.4c | A | Mentor page → **Add-in** → set the team SOLIDWORKS version to `2025` → Save. In SOLIDWORKS, **Check now**, then try **Edit** on a part | Red panel note "This computer has SOLIDWORKS 2026, but the team uses 2025…"; Edit refuses. Set it back to `2026`: editing works again | ☐ |
 | 5.4d | A | Publish a new add-in as **required** while B has a saved, unsubmitted change | B can still **Submit** it; new Edits ask to install the update first | ☐ |
 | 5.4e | Both | Panel → **Diagnostics**, then paste into Notepad. A: mentor page → **Diagnostics** → View | "Sent to your mentors"; the same report on the mentor page and in Notepad: versions, account name, robot state, recent errors; no password, no setup code | ☐ |
