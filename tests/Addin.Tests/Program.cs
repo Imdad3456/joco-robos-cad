@@ -153,10 +153,124 @@ static class Program
             MountingChecks();
             HealthChecks();
             RecoveryChecks(temp);
+            SaveChecks(temp);
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
 
         finally { Directory.Delete(temp, true); }
+    }
+
+    // Ctrl+S, Save All and Save As on team files: what gets locked, saved, skipped or refused, and what happens when steps fail.
+    static void SaveChecks(string temp)
+    {
+        string robot = Path.Combine(temp, "Saves", "JOCO-ROBOS", "2026-Robot");
+        Func<string, DocKind, OpenDocState> doc = (name, kind) => new OpenDocState { Path = Path.Combine(robot, "30_Shooter", name), Kind = kind, Dirty = true, ReadOnly = true, InTeam = true };
+        Func<System.Collections.Generic.List<SavePlanItem>, string> steps = plan => String.Join(", ", plan.Select(i => i.Doc.Name + ":" + i.Step));
+
+        Check(SaveRules.Classify(2) == SaveCommand.Save && SaveRules.Classify(19) == SaveCommand.SaveAll && SaveRules.Classify(620) == SaveCommand.SaveAs &&
+            SaveRules.Classify(17) == SaveCommand.None, "Save commands recognized; rebuild isn't one");
+        Check(SaveRules.ModelingCommands.Contains(45) && SaveRules.ModelingCommands.Contains(859) && !SaveRules.ModelingCommands.Contains(17) &&
+            !SaveRules.ModelingCommands.Contains(3200), "Sketch and Edit Sketch count as intent; rebuilds don't");
+
+        // Ctrl+S in a changed read-only part: lock it, then save the original (never Save As).
+        var plate = doc("Plate.SLDPRT", DocKind.Part); plate.Active = true;
+        var plan = SaveRules.Plan(SaveCommand.Save, new[] { plate });
+        Check(steps(plan) == "Plate:LockThenSave" && SaveRules.MustTakeOver(plan), "Ctrl+S on a changed read-only part: lock, then save the original");
+        plate.ReadOnly = false;
+        plan = SaveRules.Plan(SaveCommand.Save, new[] { plate });
+        Check(steps(plan) == "Plate:SaveNow" && !SaveRules.MustTakeOver(plan), "Ctrl+S on a part already being edited: SOLIDWORKS saves it as usual");
+        var outside = new OpenDocState { Path = Path.Combine(temp, "Desktop", "Bracket.SLDPRT"), Kind = DocKind.Part, Dirty = true, ReadOnly = true, Active = true };
+        Check(!SaveRules.MustTakeOver(SaveRules.Plan(SaveCommand.Save, new[] { outside })), "Files outside the robot are left to SOLIDWORKS");
+        Check(SaveRules.Plan(SaveCommand.Save, new[] { new OpenDocState { Kind = DocKind.Part, Dirty = true, Active = true } })[0].Step == SaveStep.Skip,
+            "A never-saved document is left for Save As");
+
+        // Locks owned by another student, the same student elsewhere, and stale revisions: refused before anything is changed.
+        var theirs = doc("Flywheel.SLDPRT", DocKind.Part); theirs.Active = true; theirs.LockedBy = "sarah";
+        plan = SaveRules.Plan(SaveCommand.Save, new[] { theirs });
+        Check(plan[0].Step == SaveStep.Blocked && plan[0].Reason.StartsWith("sarah is editing it") && plan[0].Reason.Contains("Experimental copy") && SaveRules.MustTakeOver(plan),
+            "Another student's lock: refused, with a way to keep the work (and SOLIDWORKS' Save As is still stopped)");
+        var elsewhere = doc("Hood.SLDPRT", DocKind.Part); elsewhere.Active = true; elsewhere.MineElsewhere = true; elsewhere.LockedBy = "sam";
+        Check(SaveRules.Plan(SaveCommand.Save, new[] { elsewhere })[0].Reason.Contains("another computer"), "Own lock from another computer: refused, says where");
+        var stale = doc("Gear.SLDPRT", DocKind.Part); stale.Active = true; stale.NewerFrom = "ben";
+        plan = SaveRules.Plan(SaveCommand.Save, new[] { stale });
+        Check(plan[0].Step == SaveStep.Blocked && plan[0].Reason.StartsWith("ben submitted a newer version"), "Stale revision: refused before locking");
+        stale.Mine = true;
+        Check(SaveRules.Plan(SaveCommand.Save, new[] { stale })[0].Step == SaveStep.LockThenSave, "Already locked by this computer: nobody else can have changed it");
+
+        // Assemblies: never locked because a rebuild marked them changed; asked once when saved on purpose.
+        var shooter = doc("Shooter.SLDASM", DocKind.Assembly); shooter.Active = true;
+        var arm = doc("Arm.SLDPRT", DocKind.Part);
+        var rebuiltOnly = doc("Spacer.SLDPRT", DocKind.Part);
+        var editing = doc("Bracket.SLDPRT", DocKind.Part); editing.Intent = true;
+        var writable = doc("Roller.SLDPRT", DocKind.Part); writable.ReadOnly = false; writable.Mine = true;
+        var clean = doc("Shaft.SLDPRT", DocKind.Part); clean.Dirty = false;
+        var all = new[] { shooter, arm, rebuiltOnly, editing, writable, clean };
+        Check(steps(SaveRules.Plan(SaveCommand.Save, all)) == "Shooter:AskThenLock, Arm:Skip, Spacer:Skip, Bracket:LockThenSave, Roller:SaveNow",
+            "Ctrl+S in an assembly: ask about the assembly, lock what's being edited, save what's writable, skip what only a rebuild changed: " + steps(SaveRules.Plan(SaveCommand.Save, all)));
+        var saveAll = SaveRules.Plan(SaveCommand.SaveAll, all);
+        Check(steps(saveAll) == "Shooter:Skip, Arm:Skip, Spacer:Skip, Bracket:LockThenSave, Roller:SaveNow" && saveAll[0].Reason.Contains("rebuild"),
+            "Save All never locks an assembly (or a part) only a rebuild may have changed: " + steps(saveAll));
+        shooter.Active = false; arm.Active = true;
+        Check(SaveRules.Plan(SaveCommand.Save, all).Single().Doc == arm, "Ctrl+S in a part's window saves only that part");
+
+        // Multiple modified documents with an interrupted save: the network fails for one lock, a save fails for another.
+        var asked = new System.Collections.Generic.List<string>();
+        var locked = new System.Collections.Generic.List<string>();
+        var savedFiles = new System.Collections.Generic.List<string>();
+        var a1 = doc("A1.SLDPRT", DocKind.Part); a1.Intent = true;
+        var a2 = doc("A2.SLDPRT", DocKind.Part); a2.Intent = true;
+        var a3 = doc("A3.SLDPRT", DocKind.Part); a3.Intent = true;
+        var w1 = doc("W1.SLDPRT", DocKind.Part); w1.ReadOnly = false;
+        var asmDoc = doc("Top.SLDASM", DocKind.Assembly); asmDoc.Active = true;
+        var job = SaveRules.Plan(SaveCommand.Save, new[] { asmDoc, a1, a2, a3, w1, theirs });
+        var outcome = SaveRules.Run(job,
+            d => { asked.Add(d.Name); return false; },
+            d => { if (d.Name == "A2") throw new InvalidOperationException("Can't reach the team server: timed out."); locked.Add(d.Name); },
+            d => { if (d.Name == "A3") return "SOLIDWORKS couldn't save it (error 2)"; savedFiles.Add(d.Name); return null; });
+        Check(asked.SequenceEqual(new[] { "Top" }) && locked.SequenceEqual(new[] { "A1", "A3" }), "Asked about the assembly only; locked the parts being edited");
+        Check(outcome.Saved.OrderBy(x => x).SequenceEqual(new[] { "A1", "W1" }) && savedFiles.OrderBy(x => x).SequenceEqual(new[] { "A1", "W1" }),
+            "Everything that could be saved was saved: " + String.Join(",", outcome.Saved));
+        Func<string, string> why = name => outcome.NotSaved.Where(n => n.Item1 == name).Select(n => n.Item2).SingleOrDefault() ?? "";
+        Check(why("A2").StartsWith("Can't reach the team server") && why("A2").EndsWith("(still open with your changes)"), "A failed lock: reported, work kept: " + why("A2"));
+        Check(why("A3").StartsWith("SOLIDWORKS couldn't save it") && why("Flywheel").StartsWith("sarah is editing it"), "A failed save and a teammate's file: each reported as a problem");
+        Check(outcome.Skipped.Single().Item1 == "Top" && outcome.Skipped[0].Item2.Contains("you chose not to"), "A declined assembly is left alone, not reported as a failure");
+        Check(outcome.NotSaved.Count == 3 && SaveRules.Summary(outcome.Saved.Count, outcome.NotSaved.Count) == "Saved 2 files · 3 not saved", "One summary line");
+        arm.Active = false;
+        var quiet = SaveRules.Run(SaveRules.Plan(SaveCommand.SaveAll, new[] { arm, writable }), d => true, d => { }, d => null);
+        Check(quiet.NotSaved.Count == 0 && quiet.Skipped.Single().Item1 == "Arm" && quiet.Saved.Single() == "Roller",
+            "A part only a rebuild changed is left alone quietly (no warning after every Ctrl+S)");
+        var crashing = SaveRules.Run(SaveRules.Plan(SaveCommand.Save, new[] { plate }), d => { throw new Exception("boom"); }, d => { }, d => { throw new Exception("boom"); });
+        Check(crashing.Saved.Count == 0 && crashing.NotSaved.Single().Item2.StartsWith("couldn't be saved"), "A save step that throws is reported, never thrown");
+
+        // One save at a time: a second Ctrl+S while CAD Hub is locking doesn't start another.
+        var gate = new SaveGate();
+        Check(gate.TryBegin() && !gate.TryBegin() && gate.Running, "A second save waits for the first");
+        gate.End();
+        Check(gate.TryBegin(), "After it finishes, saving works again");
+
+        // Save As: experimental copies outside the robot, new team parts with unique names, never over a file.
+        string baseFolder = Path.Combine(temp, "Saves", "JOCO-ROBOS"), original = Path.Combine(robot, "30_Shooter", "Plate.SLDPRT");
+        var existing = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase) { Path.Combine(baseFolder, "Experiments", "Plate (experiment).SLDPRT") };
+        string experiment = SaveRules.ExperimentPath(baseFolder, original, existing.Contains);
+        Check(experiment == Path.Combine(baseFolder, "Experiments", "Plate (experiment 2).SLDPRT"), "Experimental copy: its own name, numbered, outside the robot: " + experiment);
+        Check(SaveRules.IsExperiment(baseFolder, experiment) && !SaveRules.IsExperiment(baseFolder, original), "Experimental copies are recognized as such");
+        var open = new[] { "Plate.SLDPRT", "Shooter.SLDASM" };
+        Check(SaveRules.WhyNotExperiment(experiment, baseFolder, existing.Contains, open) == null, "A fresh experiment path is fine");
+        Check(SaveRules.WhyNotExperiment(Path.Combine(robot, "Plate copy.SLDPRT"), baseFolder, existing.Contains, open).StartsWith("That's inside 2026-Robot"), "Never inside the robot");
+        Check(SaveRules.WhyNotExperiment(Path.Combine(baseFolder, "Experiments", "Plate (experiment).SLDPRT"), baseFolder, existing.Contains, open).Contains("never saves over"),
+            "Never over an existing file");
+        Check(SaveRules.WhyNotExperiment(Path.Combine(temp, "Desktop", "Plate.SLDPRT"), baseFolder, p => false, open).Contains("can't hold two files with one name"),
+            "Never the name of a file SOLIDWORKS has open");
+        Check(SaveRules.WhyNotExperiment(Path.Combine(temp, "Desktop", "Plate.step"), baseFolder, p => false, open).StartsWith("Keep the SOLIDWORKS file type"), "Stays a SOLIDWORKS file");
+        var names = new[] { Path.Combine(robot, "30_Shooter", "Plate.SLDPRT"), Path.Combine(robot, "90_COTS", "Spacer.SLDPRT") }.ToLookup(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
+        string folder = Path.Combine(robot, "30_Shooter");
+        Check(SaveRules.WhyNotNewTeamFile("Plate v2", folder, robot, ".SLDPRT", names, p => false) == null, "A new unique team part name is fine");
+        Check(SaveRules.WhyNotNewTeamFile("spacer", folder, robot, ".SLDPRT", names, p => false).Contains("(in 90_COTS)"), "Same name anywhere in the robot: refused, says where");
+        Check(SaveRules.WhyNotNewTeamFile("Plate v2", Path.Combine(temp, "Desktop"), robot, ".SLDPRT", names, p => false) == "Choose a folder inside the robot.", "New team parts go inside the robot");
+        Check(SaveRules.WhyNotNewTeamFile("Plate v2", folder, robot, ".SLDPRT", names, p => true).Contains("already exists"), "Never over an existing file");
+        Check(SaveRules.WhyNotNewTeamFile("a:b", folder, robot, ".SLDPRT", names, p => false).StartsWith("A file name can't") &&
+            SaveRules.WhyNotNewTeamFile("Part^Asm", folder, robot, ".SLDPRT", names, p => false).Contains("^") &&
+            SaveRules.WhyNotNewTeamFile("  ", folder, robot, ".SLDPRT", names, p => false).StartsWith("Type a name"), "Bad names refused with why");
     }
 
     // Recovery copies: only robot files, kept outside the robot, taken when the student pauses, pruned, and offered after a crash.
@@ -634,7 +748,7 @@ static class Program
             "A teammate's request shows on the file it's about");
         Check(s.ActiveStatus == "✎ Editing · unsaved" && s.ActiveHint == "" && s.ActiveFile == "ShooterPlate", "Editing a part: one row, no hint");
         s = PaneState.Describe("sam", snap, null, asm, false, null, now, activeDirty: true, robotOpen: true);
-        Check(s.ActiveHint.Contains("Do not save read-only documents"), "The assembly save tip appears when there's something to save");
+        Check(s.ActiveStatus == "✎ Editing · unsaved" && s.ActiveHint == "", "Editing an assembly: no save tip (CAD Hub handles read-only parts a rebuild changed)");
         s = PaneState.Describe("sam", snap, null, asm, false, null, now, robotOpen: true);
         Check(s.ActiveHint == "" && s.Unchanged == 2, "No save tip when nothing's unsaved; locked untouched files can be given back");
         Check(s.Work.Last().State == "unchanged" && s.Work.Last().Tone == Tone.Muted && s.WorkSummary == "1 ready · 1 new · 2 unchanged", "Untouched locked files last, muted");
@@ -684,7 +798,14 @@ static class Program
         Check(s.ActiveTone == Tone.Warn && s.ActiveHint.StartsWith("⚠ Your changes here can't be saved") && s.ActiveAction == FileAction.Ask, "Changed a teammate's file: the problem gets its own line");
         snap = fresh();
         s = PaneState.Describe("sam", snap, null, gear, true, null, now, activeDirty: true, robotOpen: true);
-        Check(s.ActiveStatus == "⚠ Unsaved changes, not locked" && s.ActiveHint.Contains("Click Edit") && s.ActiveAction == FileAction.Edit, "Unlocked changes: warned, with Edit");
+        Check(s.ActiveStatus == "Changed · Ctrl+S locks it" && s.ActiveHint == "" && s.ActiveTone == Tone.Info && s.ActiveAction == FileAction.Edit,
+            "Changed but not locked: Ctrl+S will lock it (no warning, no Save As), Edit still there");
+        snap = fresh(); snap.Mine.Add(gear); snap.Locks[gear] = "sam";
+        s = PaneState.Describe("sam", snap, null, gear, true, null, now, robotOpen: true);
+        Check(s.ActiveStatus == "✎ Editing · locked for you" && s.ActiveHint == "" && s.ActiveAction == FileAction.None, "Locked when editing started: no warning, nothing to click");
+        string experiment = Path.Combine(WorkspaceInfo.BaseFolder, "Experiments", "Gear (experiment).SLDPRT");
+        s = PaneState.Describe("sam", snap, null, experiment, false, null, now, robotOpen: true);
+        Check(s.ActiveStatus == "Experimental copy · not part of the robot" && s.ActiveTone == Tone.Muted && s.ActiveHint == "", "An experimental copy says what it is");
 
         // The file tree: who, on the row; folders add it up.
         snap = fresh();

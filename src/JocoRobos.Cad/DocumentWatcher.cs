@@ -38,6 +38,10 @@ namespace JocoRobos.Cad
         internal Action Dirtied;
         // The student selected something in an assembly, or cleared the selection (the panel shows a selected component's owner).
         internal Action SelectionChanged;
+        // The student opened a feature or a sketch of a part to edit it (fires before anything changes): clear intent to edit.
+        internal Action<ModelDoc2> EditIntent;
+        // SOLIDWORKS is about to show Save As for a document: return 1 to stop it (CAD Hub saves team files its own way).
+        internal Func<ModelDoc2, int> SaveAsStarting;
 
         internal DocumentWatcher(SldWorks application, Func<string, bool> isTeamFile, Action<ModelDoc2> firstChange, Action<string> closed, Action<string> saved)
         {
@@ -117,10 +121,20 @@ namespace JocoRobos.Cad
                     DPartDocEvents_ModifyNotifyEventHandler partModify = () => Modified(watched);
                     DPartDocEvents_DestroyNotify2EventHandler partDestroy = type => Destroyed(watched, type);
                     DPartDocEvents_FileSavePostNotifyEventHandler partSave = (type, name) => Saved(watched, name);
+                    DPartDocEvents_FileSaveAsNotify2EventHandler partSaveAs = name => SaveAs(watched);
+                    DPartDocEvents_FeatureEditPreNotifyEventHandler partEditFeature = feature => Intent(watched);
+                    DPartDocEvents_FeatureSketchEditPreNotifyEventHandler partEditSketch = (feature, sketch) => Intent(watched);
                     part.ModifyNotify += partModify;
                     part.DestroyNotify2 += partDestroy;
                     part.FileSavePostNotify += partSave;
-                    watched.Unhook = () => { part.ModifyNotify -= partModify; part.DestroyNotify2 -= partDestroy; part.FileSavePostNotify -= partSave; };
+                    part.FileSaveAsNotify2 += partSaveAs;
+                    part.FeatureEditPreNotify += partEditFeature;
+                    part.FeatureSketchEditPreNotify += partEditSketch;
+                    watched.Unhook = () =>
+                    {
+                        part.ModifyNotify -= partModify; part.DestroyNotify2 -= partDestroy; part.FileSavePostNotify -= partSave;
+                        part.FileSaveAsNotify2 -= partSaveAs; part.FeatureEditPreNotify -= partEditFeature; part.FeatureSketchEditPreNotify -= partEditSketch;
+                    };
                     break;
                 case (int)swDocumentTypes_e.swDocASSEMBLY:
                     var assembly = (AssemblyDoc)doc;
@@ -129,15 +143,17 @@ namespace JocoRobos.Cad
                     DAssemblyDocEvents_FileSavePostNotifyEventHandler assemblySave = (type, name) => Saved(watched, name);
                     DAssemblyDocEvents_UserSelectionPostNotifyEventHandler assemblySelect = () => Selected();
                     DAssemblyDocEvents_ClearSelectionsNotifyEventHandler assemblyClear = () => Selected();
+                    DAssemblyDocEvents_FileSaveAsNotify2EventHandler assemblySaveAs = name => SaveAs(watched);
                     assembly.ModifyNotify += assemblyModify;
                     assembly.DestroyNotify2 += assemblyDestroy;
                     assembly.FileSavePostNotify += assemblySave;
                     assembly.UserSelectionPostNotify += assemblySelect;
                     assembly.ClearSelectionsNotify += assemblyClear;
+                    assembly.FileSaveAsNotify2 += assemblySaveAs;
                     watched.Unhook = () =>
                     {
                         assembly.ModifyNotify -= assemblyModify; assembly.DestroyNotify2 -= assemblyDestroy; assembly.FileSavePostNotify -= assemblySave;
-                        assembly.UserSelectionPostNotify -= assemblySelect; assembly.ClearSelectionsNotify -= assemblyClear;
+                        assembly.UserSelectionPostNotify -= assemblySelect; assembly.ClearSelectionsNotify -= assemblyClear; assembly.FileSaveAsNotify2 -= assemblySaveAs;
                     };
                     break;
                 case (int)swDocumentTypes_e.swDocDRAWING:
@@ -145,10 +161,16 @@ namespace JocoRobos.Cad
                     DDrawingDocEvents_ModifyNotifyEventHandler drawingModify = () => Modified(watched);
                     DDrawingDocEvents_DestroyNotify2EventHandler drawingDestroy = type => Destroyed(watched, type);
                     DDrawingDocEvents_FileSavePostNotifyEventHandler drawingSave = (type, name) => Saved(watched, name);
+                    DDrawingDocEvents_FileSaveAsNotify2EventHandler drawingSaveAs = name => SaveAs(watched);
                     drawing.ModifyNotify += drawingModify;
                     drawing.DestroyNotify2 += drawingDestroy;
                     drawing.FileSavePostNotify += drawingSave;
-                    watched.Unhook = () => { drawing.ModifyNotify -= drawingModify; drawing.DestroyNotify2 -= drawingDestroy; drawing.FileSavePostNotify -= drawingSave; };
+                    drawing.FileSaveAsNotify2 += drawingSaveAs;
+                    watched.Unhook = () =>
+                    {
+                        drawing.ModifyNotify -= drawingModify; drawing.DestroyNotify2 -= drawingDestroy; drawing.FileSavePostNotify -= drawingSave;
+                        drawing.FileSaveAsNotify2 -= drawingSaveAs;
+                    };
                     break;
                 default:
                     return;
@@ -166,6 +188,20 @@ namespace JocoRobos.Cad
                 watched.Reported = true;
                 firstChange(watched.Doc);
             }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
+            return 0;
+        }
+
+        // Answered at once; anything slow (locking, dialogs) happens later, after SOLIDWORKS' event has finished.
+        private int SaveAs(Watched watched)
+        {
+            try { return SaveAsStarting == null ? 0 : SaveAsStarting(watched.Doc); }
+            catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); return 0; }
+        }
+
+        private int Intent(Watched watched)
+        {
+            try { if (watched.Doc.IsOpenedReadOnly() && IsTeam(watched)) EditIntent?.Invoke(watched.Doc); }
             catch (Exception exception) { System.Diagnostics.Trace.WriteLine("JOCO watcher: " + exception); }
             return 0;
         }

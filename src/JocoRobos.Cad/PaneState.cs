@@ -307,7 +307,14 @@ namespace JocoRobos.Cad
                 state.EditTarget = assembly ? "" : Path.GetFileNameWithoutExtension(activePath);
             };
             state.ActiveTip = Path.GetFileName(activePath) + "\nRight-click it in Robot files for File History and Where Used.";
-            if (owner == null)
+            if (owner == null && SaveRules.IsExperiment(WorkspaceInfo.BaseFolder, activePath))
+            {
+                state.ActiveStatus = "Experimental copy · not part of the robot";
+                state.ActiveTip = "Teammates can't see it, and no robot file uses it. To use these changes in the robot, open the team's file and redo them, " +
+                    "or File → Save As → Create a new team part from it.";
+                state.ActiveTone = Tone.Muted;
+            }
+            else if (owner == null)
             {
                 state.ActiveStatus = "⚠ Not in the robot folder";
                 state.ActiveHint = "Teammates can't see it. Save it into the robot folder, or use Library → Import a downloaded CAD file.";
@@ -315,16 +322,12 @@ namespace JocoRobos.Cad
             }
             else if (owner.Mine.Contains(activePath))
             {
-                state.ActiveStatus = "✎ Editing" + (dirty ? " · unsaved" : owner.Changed.Contains(activePath) ? " · saved" : "");
+                state.ActiveStatus = "✎ Editing" + (dirty ? " · unsaved" : owner.Changed.Contains(activePath) ? " · saved" : readOnly ? " · locked for you" : "");
                 state.ActiveTone = Tone.Good;
-                if (readOnly)
-                {
-                    state.ActiveHint = "⚠ Still read-only in SOLIDWORKS: click Edit again.";
-                    edit();
-                }
-                // SOLIDWORKS marks the read-only parts inside an assembly changed just from rebuilding, then offers to save them.
-                else if (assembly && dirty)
-                    state.ActiveHint = "When you save: if SOLIDWORKS lists read-only files, tick \"Do not save read-only documents\", then Save All.";
+                // Locked (when the student started editing) but SOLIDWORKS still has it read-only: Ctrl+S switches it and saves.
+                // (Saving an assembly whose read-only parts a rebuild marked changed needs no tip any more: CAD Hub saves the assembly and
+                // leaves those parts alone, without SOLIDWORKS' read-only files window.)
+                if (readOnly) state.ActiveTip = "Locked for you. Ctrl+S saves it into the robot.";
             }
             else if (owner.Locks.TryGetValue(activePath, out lockedBy) && lockedBy == user)
             {
@@ -355,11 +358,12 @@ namespace JocoRobos.Cad
                 state.ActiveStatus = "Read-only (archived season)";
                 state.ActiveTone = Tone.Muted;
             }
-            else if (readOnly && dirty)
+            else if (readOnly && dirty && newer == null)
             {
-                state.ActiveStatus = "⚠ Unsaved changes, not locked";
-                state.ActiveHint = "Click Edit to keep them. Ctrl+S here would make a copy instead.";
-                state.ActiveTone = Tone.Warn;
+                // Not locked yet: CAD Hub can't tell a rebuild from an edit, so it locks when the student saves (or clicks Edit).
+                state.ActiveStatus = "Changed · Ctrl+S locks it";
+                state.ActiveTip = "Nobody's editing it. Ctrl+S locks it for you and saves it into the robot; Edit locks it now.";
+                state.ActiveTone = Tone.Info;
                 edit();
             }
             else if (newer != null)

@@ -344,12 +344,14 @@ namespace JocoRobos.Cad
             application.FileCloseNotify += OnFileClosed;
             watcher = new DocumentWatcher(application,
                 path => path.StartsWith(WorkspaceInfo.BaseFolder + "\\", StringComparison.OrdinalIgnoreCase) && WorkspacePolicy.IsSubmittableCad(path),
-                doc => OnUi("lock offer", () => OfferLock(doc)),
+                doc => OnUi("first change", () => OnFirstChange(doc)),
                 path => OnUi("release on close", () => ReleaseIfUnchanged(path)),
                 path => OnUi("saved", () => OnDocumentSaved(path)));
             // Redraw after the change has finished, not inside SOLIDWORKS' own event.
             watcher.Dirtied = () => { try { closedTimer?.Stop(); closedTimer?.Start(); } catch (Exception) { } };
             watcher.SelectionChanged = watcher.Dirtied;
+            try { StartSaveHandling(); }
+            catch (Exception exception) { ErrorLog.Write("save handling: start", exception); }
             // Saving changes what's waiting to submit: refresh shortly after, once per burst of saves (Save All).
             savedTimer = new Timer { Interval = 1000 };
             savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
@@ -1921,8 +1923,39 @@ namespace JocoRobos.Cad
 
         // ---------- lock on first change, release on close ----------
 
-        // A read-only team file was just changed (even if it was opened with File → Open): offer to lock it now,
-        // before the student spends time on changes they could not save.
+        // A read-only team file was just marked changed. That alone isn't evidence of editing (verified in SOLIDWORKS 2026: rebuilds and
+        // leaving a sketch unchanged do it too), so nothing is locked here: the panel says Ctrl+S will lock it, and a teammate's lock is
+        // warned about now, before more work goes in. With clear evidence (OnEditIntent), the file was already locked.
+        private void OnFirstChange(ModelDoc2 doc)
+        {
+            string path;
+            try { path = Path.GetFullPath(doc.GetPathName()); if (!doc.IsOpenedReadOnly()) return; }
+            catch (Exception) { return; }
+            if (doc.GetType() != (int)swDocumentTypes_e.swDocASSEMBLY) WarnIfSomeoneElsesFile(doc, path);
+            RenderStatus();
+        }
+
+        // Someone else (or this account elsewhere) holds the lock, from the last status check: say so once, with what to do.
+        // True when warned (the file can't be locked here).
+        private bool WarnIfSomeoneElsesFile(ModelDoc2 doc, string path)
+        {
+            string name = Path.GetFileName(path);
+            string owner = new[] { robotSnapshot, librarySnapshot }
+                .Where(x => x != null && !x.Mine.Contains(path) && x.Locks.ContainsKey(path))
+                .Select(x => x.Locks[path]).FirstOrDefault();
+            if (owner == null || !warnedChanges.Add(path)) return owner != null;
+            if (owner == paneUser)
+                Message("You locked " + name + " from another computer, so changes here can't be saved into the robot.\n\n" +
+                    "Submit it from that computer, or ask a mentor to release the lock.", MessageBoxIcon.Warning);
+            else
+                Message(owner + " is editing " + name + ", so your changes can't be saved into the robot.\n\n" +
+                    "Undo them (Ctrl+Z), or keep them with File → Save As → Experimental copy and show it to " + owner + ".", MessageBoxIcon.Warning);
+            return true;
+        }
+
+        private readonly HashSet<string> warnedChanges = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Clear evidence the student is editing a read-only team part or drawing: lock it now, the same as clicking Edit.
         private void OfferLock(ModelDoc2 doc)
         {
             if (application == null) return;
@@ -1937,34 +1970,13 @@ namespace JocoRobos.Cad
             catch (Exception) { return; } // Closed in the meantime.
             var season = paneCatalog?.Owning(path);
             if (season != null && (season.Archived || (!season.IsLibrary && robotSnapshot != null && season.Name != robotSnapshot.Info.Name))) return;
-            string name = Path.GetFileName(path);
             // From the last status check; Edit re-checks with the server either way.
-            string owner = new[] { robotSnapshot, librarySnapshot }
-                .Where(x => x != null && !x.Mine.Contains(path) && x.Locks.ContainsKey(path))
-                .Select(x => x.Locks[path]).FirstOrDefault();
             RenderStatus();
-            if (owner != null && owner == paneUser)
-            {
-                Message("You locked " + name + " from another computer, so changes here can't be saved into the robot.\n\n" +
-                    "Submit it from that computer, or ask a mentor to release the lock.", MessageBoxIcon.Warning);
-                return;
-            }
-            if (owner != null)
-            {
-                Message(owner + " is editing " + name + ", so your changes can't be saved into the robot.\n\n" +
-                    "Undo them (Ctrl+Z), or use File → Save As to keep a copy outside the robot folder and show it to " + owner + ".", MessageBoxIcon.Warning);
-                return;
-            }
-            // Parts and drawings: free and (Edit checks) current, so lock it now, the same as clicking Edit. Closing it unchanged
-            // gives the lock back by itself; if the lock can't be taken, Edit says why and the change stays unsaved.
-            // Assemblies still ask: rebuilding can mark them changed by itself, and quietly locking a big assembly blocks everyone.
-            if (doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY &&
-                MessageBox.Show(new SolidWorksWindow(), "You're changing the assembly " + name + ", which is read-only until you lock it.\n\nLock it for editing now? " +
-                "Your change is kept, and nobody else can edit it until you Submit.", Title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            {
-                RenderStatus(); // The pane keeps showing the unsaved changes until they lock or undo.
-                return;
-            }
+            if (WarnIfSomeoneElsesFile(doc, path)) return;
+            // Assemblies never lock here: rebuilding marks them changed by itself. Ctrl+S in the assembly asks (AddinSave).
+            if (doc.GetType() == (int)swDocumentTypes_e.swDocASSEMBLY) return;
+            // Free and (Edit checks) current: lock it now, the same as clicking Edit. Closing it unchanged gives the lock back by
+            // itself; if the lock can't be taken, Edit says why and the change stays unsaved.
             Execute(() => EditDocument(doc, false, null, true));
         }
 
@@ -3155,6 +3167,7 @@ namespace JocoRobos.Cad
                 if (submitWindow != null && !submitWindow.IsDisposed) submitWindow.Close();
                 submitWindow = null;
                 StopRecovery();
+                StopSaveHandling();
                 watcher?.Dispose();
                 watcher = null;
                 savedTimer?.Dispose();
