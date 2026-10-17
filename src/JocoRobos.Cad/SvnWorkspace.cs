@@ -33,7 +33,39 @@ namespace JocoRobos.Cad
             var credentials = new CredentialCache();
             credentials.Add(new Uri(Repository.GetLeftPart(UriPartial.Authority) + "/"), "SVN", login);
             client.Authentication.DefaultCredentials = credentials;
+            // A connection that drops mid-step (Wi-Fi, sleep, a school filter) leaves SVN waiting up to 10 minutes per step,
+            // and Submit makes several; JOCO stays busy, so every other command is off, the whole time. Stop any step that
+            // has heard nothing for StallLimit instead. Cancel is asked about every half second, also while waiting on the server.
+            // The student's Stop button (Stoppable) ends a step the same way.
+            var lastHeard = DateTime.UtcNow;
+            var stop = stopToken;
+            client.Processing += (s, e) => lastHeard = DateTime.UtcNow;
+            client.Progress += (s, e) => lastHeard = DateTime.UtcNow;
+            client.Notify += (s, e) => lastHeard = DateTime.UtcNow;
+            client.Cancel += (s, e) => { if (stop.IsCancellationRequested || DateTime.UtcNow - lastHeard > StallLimit) e.Cancel = true; };
             return client;
+        }
+
+        internal static readonly TimeSpan StallLimit = TimeSpan.FromMinutes(2);
+
+        internal static readonly string StalledMessage = "The team server stopped responding for " + StallLimit.TotalMinutes +
+            " minutes, so JOCO stopped waiting. Check your internet connection and try again.";
+
+        [ThreadStatic] private static System.Threading.CancellationToken stopToken;
+
+        /// <summary>Runs action on this thread so that cancelling stop ends whichever SVN step is running.</summary>
+        internal static T Stoppable<T>(System.Threading.CancellationToken stop, Func<T> action)
+        {
+            var before = stopToken;
+            stopToken = stop;
+            try { return action(); }
+            finally { stopToken = before; }
+        }
+
+        /// <summary>Why an SVN step was cancelled, for a catch inside Stoppable (or anywhere else: then it was the stall limit).</summary>
+        internal static string CanceledMessage
+        {
+            get { return stopToken.IsCancellationRequested ? "You clicked Stop." : StalledMessage; }
         }
 
         internal static T Exclusive<T>(Func<T> action)

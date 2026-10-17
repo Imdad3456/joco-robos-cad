@@ -274,7 +274,7 @@ namespace JocoRobos.Cad
             catch (Exception exception)
             {
                 ErrorLog.Write("command", exception);
-                string text = exception.Message;
+                string text = exception is SharpSvn.SvnOperationCanceledException ? SvnWorkspace.StalledMessage : exception.Message;
                 // SVN's own wording when a school filter swaps in its HTTPS certificate.
                 if (text.IndexOf("certificate", StringComparison.OrdinalIgnoreCase) >= 0 && text.IndexOf("verif", StringComparison.OrdinalIgnoreCase) >= 0)
                     text = "This network is interfering with the secure connection to " + WorkspaceInfo.Server.Host + " (school web filters that inspect HTTPS do this). " +
@@ -2191,14 +2191,15 @@ namespace JocoRobos.Cad
             var host = new SubmitHost
             {
                 Target = catalog.Robot.Name,
-                Scan = () => Task.Run(() => SvnWorkspace.Exclusive(() =>
+                Scan = stop => Task.Run(() => SvnWorkspace.Stoppable(stop, () => SvnWorkspace.Exclusive(() =>
                 {
                     var clock = System.Diagnostics.Stopwatch.StartNew();
                     var plan = new SubmitPlan();
-                    foreach (var svn in workspaces) plan.Add(svn.PrepareSubmit());
+                    try { foreach (var svn in workspaces) plan.Add(svn.PrepareSubmit()); }
+                    catch (SharpSvn.SvnOperationCanceledException failure) { throw new InvalidOperationException(SvnWorkspace.CanceledMessage, failure); }
                     Timings.Record("Submit: finding your changes", clock.ElapsedMilliseconds);
                     return plan;
-                })),
+                }))),
                 Check = (plan, selected, acknowledged) =>
                 {
                     var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -2227,7 +2228,7 @@ namespace JocoRobos.Cad
                     if (todo.Count > 0) Timings.Record("Submit: reading references (" + todo.Count + " files)", clock.ElapsedMilliseconds);
                 },
                 Fix = (issue, action) => FixSubmitIssue(issue, action, catalog, workspaces),
-                Commit = (selected, comment) => CommitSubmit(selected, comment, workspaces),
+                Commit = (selected, comment, stop) => CommitSubmit(selected, comment, workspaces, stop),
                 Busy = value =>
                 {
                     if (value) { wasBusy = busy; busy = true; }
@@ -2423,9 +2424,9 @@ namespace JocoRobos.Cad
             return ImportOutsideReferencesOf(doc, catalog);
         }
 
-        private async Task<SubmitOutcome> CommitSubmit(List<SubmitItem> selected, string comment, List<SvnWorkspace> workspaces)
+        private async Task<SubmitOutcome> CommitSubmit(List<SubmitItem> selected, string comment, List<SvnWorkspace> workspaces, System.Threading.CancellationToken stop)
         {
-            var outcome = await Task.Run(() =>
+            var outcome = await Task.Run(() => SvnWorkspace.Stoppable(stop, () =>
             {
                 var result = new SubmitOutcome();
                 // One revision per repository. The library goes last so a robot failure stops before it.
@@ -2440,7 +2441,7 @@ namespace JocoRobos.Cad
                     }
                 }
                 return result;
-            });
+            }));
             // Submitted files are no longer locked; stop SOLIDWORKS from saving over them.
             var done = new HashSet<string>(outcome.Done, StringComparer.OrdinalIgnoreCase);
             foreach (var doc in OpenDocuments().Where(d => done.Contains(d.GetPathName() ?? "")))

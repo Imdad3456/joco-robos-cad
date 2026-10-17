@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -13,8 +14,8 @@ namespace JocoRobos.Cad
     internal sealed class SubmitHost
     {
         internal string Target;
-        // Background: the SVN scan of the robot and Library.
-        internal Func<Task<SubmitPlan>> Scan;
+        // Background: the SVN scan of the robot and Library. Cancelling the token (Stop) ends it.
+        internal Func<CancellationToken, Task<SubmitPlan>> Scan;
         // UI thread: the preflight for the current plan, checked files, and acknowledged warnings.
         internal Func<SubmitPlan, ISet<string>, ISet<string>, List<SubmitIssue>> Check;
         // UI thread, one file at a time: reads references ahead of Check so SOLIDWORKS stays responsive between files.
@@ -22,8 +23,9 @@ namespace JocoRobos.Cad
         internal Func<IList<string>, Func<int, int, bool>, Task> Prepare;
         // UI thread: runs one fix button (save, lock, import, restore); returns a note to show or null, throws on failure.
         internal Func<SubmitIssue, IssueAction, string> Fix;
-        // The real Submit (SvnWorkspace.Submit), which rechecks everything itself.
-        internal Func<List<SubmitItem>, string, Task<SubmitOutcome>> Commit;
+        // The real Submit (SvnWorkspace.Submit), which rechecks everything itself. Stopping it midway is safe: the next
+        // Submit checks whether the stopped one reached the server.
+        internal Func<List<SubmitItem>, string, CancellationToken, Task<SubmitOutcome>> Commit;
         internal Action<bool> Busy;
     }
 
@@ -83,9 +85,12 @@ namespace JocoRobos.Cad
         private bool working, populating, preparing;
         private string workingText;
         private DateTime? leftAt;
+        // Set while an SVN step (the scan or the Submit itself) runs, so Stop can end it.
+        private CancellationTokenSource stopping;
 
         private readonly Label status = new Label { AutoSize = true, Margin = new Padding(0, 4, 0, 8) };
         private readonly LinkLabel checkAgain = new LinkLabel { Text = "Check again", AutoSize = true, Margin = new Padding(12, 6, 0, 8) };
+        private readonly LinkLabel stop = new LinkLabel { Text = "Stop", AutoSize = true, Margin = new Padding(12, 6, 0, 8), Visible = false };
         private readonly FlowLayoutPanel issuePanel = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false,
             AutoScroll = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 8) };
         private readonly ListView files = new ListView { View = View.Details, CheckBoxes = true, FullRowSelect = true, ShowGroups = true,
@@ -123,7 +128,16 @@ namespace JocoRobos.Cad
             status.Font = new Font(Font.FontFamily, 10f, FontStyle.Bold);
             statusRow.Controls.Add(status);
             statusRow.Controls.Add(checkAgain);
+            statusRow.Controls.Add(stop);
             checkAgain.LinkClicked += (s, e) => Safely("check again", () => { note = null; return Rescan(); });
+            // Right away, not through Safely: the click must land while the step it stops is still running.
+            stop.LinkClicked += (s, e) =>
+            {
+                if (stopping == null) return;
+                stopping.Cancel();
+                workingText = "Stopping…";
+                Render();
+            };
 
             files.Columns.Add("File", 250);
             files.Columns.Add("Folder", 230);
@@ -266,8 +280,9 @@ namespace JocoRobos.Cad
             if (working) return;
             try
             {
+                stopping = new CancellationTokenSource();
                 Begin("Checking your changes…");
-                var fresh = await host.Scan();
+                var fresh = await host.Scan(stopping.Token);
                 if (IsDisposed) return;
                 if (fresh.Notice != null) notice = fresh.Notice;
                 plan = fresh;
@@ -279,7 +294,7 @@ namespace JocoRobos.Cad
                 ErrorLog.Write("Submit scan", exception);
                 scanFailure = exception.Message;
             }
-            finally { End(); }
+            finally { stopping = null; End(); }
             if (!IsDisposed) await Recheck();
         }
 
@@ -424,6 +439,7 @@ namespace JocoRobos.Cad
                 status.ForeColor = Color.ForestGreen;
             }
             checkAgain.Visible = !working && plan != null;
+            stop.Visible = working && stopping != null && !stopping.IsCancellationRequested;
             submit.Text = SubmitCheck.SubmitLabel(selected);
             submit.Enabled = !working && plan != null && blocking == 0 && selected.Count > 0;
             AcceptButton = null; // Enter makes new lines in the comment.
@@ -595,15 +611,16 @@ namespace JocoRobos.Cad
             SubmitOutcome outcome;
             try
             {
+                stopping = new CancellationTokenSource();
                 Begin("Submitting " + chosen.Count + (chosen.Count == 1 ? " file" : " files") + "…");
-                outcome = await host.Commit(chosen, comment.Text.Trim());
+                outcome = await host.Commit(chosen, comment.Text.Trim(), stopping.Token);
             }
             catch (Exception exception)
             {
                 ErrorLog.Write("Submit commit", exception);
                 outcome = new SubmitOutcome { Error = exception.Message };
             }
-            finally { End(); }
+            finally { stopping = null; End(); }
             if (outcome.Error == null)
             {
                 Outcome = outcome;

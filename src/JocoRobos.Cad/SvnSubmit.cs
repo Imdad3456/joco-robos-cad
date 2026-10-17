@@ -148,6 +148,10 @@ namespace JocoRobos.Cad
                 if (unlocked.Count > 0)
                 {
                     try { client.Lock(unlocked, new SvnLockArgs { StealLock = false, Comment = "Locked by Submit" }); }
+                    catch (SvnOperationCanceledException failure)
+                    {
+                        throw new InvalidOperationException(CanceledMessage + "\n\nNothing was submitted; your edits are kept.", failure);
+                    }
                     catch (SvnException failure)
                     {
                         throw new InvalidOperationException("Could not lock your changed files; a teammate may have just started editing them. Nothing was submitted.\n\n" + failure.Message, failure);
@@ -174,6 +178,13 @@ namespace JocoRobos.Cad
                     {
                         // Explicit targets with empty depth: only these files' lock tokens are sent and released.
                         client.Commit(targets, new SvnCommitArgs { LogMessage = comment, Depth = SvnDepth.Empty, KeepLocks = false }, out committed);
+                    }
+                    catch (SvnOperationCanceledException failure)
+                    {
+                        // The server went quiet, so asking it now would only wait again. The journal stays: the next Submit
+                        // (or opening this window) checks whether this one landed, so nothing is lost or sent twice.
+                        throw new InvalidOperationException(CanceledMessage + "\n\nYour edits and locks are kept. When you Submit again, " +
+                            "JOCO first checks whether this Submit reached the team.", failure);
                     }
                     catch (Exception failure)
                     {
