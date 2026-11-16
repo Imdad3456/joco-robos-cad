@@ -226,11 +226,20 @@ def _number(parameter):
     if parameter.get('type') != 'quantity' or not isinstance(parameter.get('defaultValue'), (int, float)):
         return None
     kind = parameter.get('quantityType')
-    if kind == 'LENGTH' and parameter.get('unit') in METERS_PER and str(parameter.get('default', '')).endswith(' m'):
+    # FRCDesignLib wrote defaults in meters ("0.0762 m") until late 2026, then in the parameter's unit ("3 in"): both work.
+    if kind == 'LENGTH' and parameter.get('unit') in METERS_PER and _meters(parameter.get('default')) is not None:
         return 'length', METERS_PER[parameter['unit']]
     if kind in ('INTEGER', 'REAL'):
         return kind.lower(), None
     return None
+
+
+def _meters(text):
+    """A length written like Onshape and FRCDesignLib write them ("0.0762 m", "3 in", "1.5 inch"), in meters; None otherwise."""
+    match = re.match(r'^\s*(-?\d+(?:\.\d+)?(?:[eE]-?\d+)?)\s*([a-z]+)\s*$', str(text or ''))
+    if not match or match.group(2) not in METERS_PER:
+        return None
+    return float(match.group(1)) * METERS_PER[match.group(2)]
 
 
 def _number_value(parameter, text):
@@ -260,7 +269,7 @@ def _number_label(parameter, value):
     """A configuration value back in the parameter's unit, for file names: 2.5in."""
     kind, factor = _number(parameter)
     if kind == 'length':
-        return _plain(float(str(value).split()[0]) / factor, 4) + SHORT_UNIT.get(parameter['unit'], parameter['unit'])
+        return _plain(_meters(value) / factor, 4) + SHORT_UNIT.get(parameter['unit'], parameter['unit'])
     return str(value)
 
 

@@ -63,6 +63,22 @@ check(f.library_path(item, numbers, {'Length': '0.0254 m'}, 'abcdef') == 'FRCDes
 tube = [dict(size, id='Type'), dict(length, isCosmetic=True, default='0.0762 m', defaultValue=3, max=47)]
 check(f.normalize_configuration(tube, {'Length': '3'}) == {'Type': 'S'}, 'cosmetic default not sent')
 check(f.normalize_configuration(tube, {'Length': '24'}) == {'Type': 'S', 'Length': '0.6096 m'}, 'custom tube length sent')
+# Since late 2026 FRCDesignLib writes defaults in the parameter's unit ("3 in"), not meters: still editable, same results.
+inches = [dict(size, id='Type'), dict(length, id='Length', isCosmetic=True, default='3 in', defaultValue=3, max=47),
+          dict(length, id='Hole_Offset', name='Hole Offset', default='0.5 in', defaultValue=0.5, max=0.5)]
+check(f._choice(inches[1])['kind'] == 'number' and f._choice(inches[1])['default'] == '3' and f._choice(inches[1])['unit'] == 'in'
+      and f._choice(inches[2])['kind'] == 'number' and f._choice(inches[2])['max'] == '0.5', 'inch defaults are editable (not "fixed")')
+check(f.normalize_configuration(inches, {'Length': '24', 'Hole_Offset': '0.25'}) == {'Type': 'S', 'Length': '0.6096 m', 'Hole_Offset': '0.00635 m'},
+      'custom inch-default lengths sent in meters: ' + str(f.normalize_configuration(inches, {'Length': '24', 'Hole_Offset': '0.25'})))
+check(f.normalize_configuration(inches, {}) == {'Type': 'S', 'Hole_Offset': '0.5 in'}, 'defaults kept as FRCDesignLib wrote them')
+check(f.library_path(item, inches[1:], {'Length': '0.6096 m', 'Hole_Offset': '0.5 in'}, 'abcdef') ==
+      'FRCDesignLib/Shafts/Hex Shaft (VEX) (Length 24in).SLDPRT', 'file name from an inch default: ' +
+      f.library_path(item, inches[1:], {'Length': '0.6096 m', 'Hole_Offset': '0.5 in'}, 'abcdef'))
+try:
+    f.normalize_configuration(inches, {'Hole_Offset': '2'}); check(False, 'range')
+except f.FrcError as exc:
+    check('between 0 and 0.5 in' in str(exc), 'range still enforced: ' + str(exc))
+check(f._meters('0.0762 m') == 0.0762 and abs(f._meters('3 in') - 0.0762) < 1e-12 and f._meters('3 parsecs') is None and f._meters('') is None, 'length text')
 check(f._condition({'type': 'logical', 'operation': 'OR', 'children': []}) is None, 'empty OR never hides (FRCDesignApp rule)')
 check(f._condition({'type': 'alwaysShown'}) is None, 'always shown')
 item = {'id': 'x', 'name': 'A' * 200, 'groupId': 'g', 'microversionId': 'm'}
