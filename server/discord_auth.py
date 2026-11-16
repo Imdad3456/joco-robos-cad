@@ -221,9 +221,19 @@ def finish(state, code, error, accounts):
     accounts: what joco.py provides, called under its lock: users() -> set of CAD usernames, set_password(user, secret),
     add_mentor(user), mentors() -> set of mentor usernames, locked() -> context manager."""
     with _lock:
-        f = _flows.pop(state or '', None)
-    if not f or time.time() - f['created'] > FLOW_SECONDS:
-        raise DiscordError('That sign-in expired. Start again from SOLIDWORKS or the mentor page.')
+        f = _flows.get(state or '')
+        if not f or f.get('used') or time.time() - f['created'] > FLOW_SECONDS:
+            raise DiscordError('That sign-in expired. Start again from SOLIDWORKS or the mentor page.')
+        # Used up now, but kept until its result is stored: the add-in may ask while Discord is still being checked.
+        f['used'] = True
+    try:
+        return _finish(f, code, error, accounts)
+    finally:
+        with _lock:
+            _flows.pop(state, None)
+
+
+def _finish(f, code, error, accounts):
     try:
         if error:
             raise DiscordError('Sign-in was cancelled in Discord.' if error == 'access_denied' else 'Discord refused the sign-in (%s).' % error[:60])
@@ -257,7 +267,9 @@ def finish(state, code, error, accounts):
 
 
 def poll(verifier):
-    """The add-in collects its sign-in: ('done', user, key), ('error', message), ('pending',) or ('unknown',)."""
+    """The add-in collects its sign-in: ('done', user, key), ('error', message), ('pending',), or ('unknown',) for a malformed
+    verifier. Nothing known yet is still 'pending': the add-in starts asking as it opens the browser, often before the browser
+    reaches the start page, and it gives up by itself after 10 minutes. (1.16.0 treats 'unknown' as expired.)"""
     if not verifier or len(verifier) > 200:
         return ('unknown',)
     challenge = _b64(hashlib.sha256(verifier.encode()).digest())
@@ -265,8 +277,7 @@ def poll(verifier):
         _prune(time.time())
         result = _results.pop(challenge, None)
         if result is None:
-            waiting = any(f['challenge'] == challenge for f in _flows.values())
-            return ('pending',) if waiting else ('unknown',)
+            return ('pending',)
     if 'error' in result:
         return ('error', result['error'])
     return ('done', result['user'], result['key'])

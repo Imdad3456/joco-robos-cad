@@ -85,14 +85,33 @@ q = parse_qs(urlsplit(url).query)
 check(url.startswith('https://discord.com/oauth2/authorize?') and q['client_id'] == ['111'] and q['scope'] == ['identify guilds']
       and q['redirect_uri'] == ['https://cad.example.org/account/discord/callback'] and q['state'] == [state], 'authorize URL')
 check(d.poll(v) == ('pending',), 'pending before Discord answers')
-check(d.poll('nonsense') == ('unknown',), 'unknown verifier')
+check(d.poll('nonsense') == ('pending',) and d.poll('') == ('unknown',), 'nothing known yet is still pending (the browser may not have opened)')
+
+# The add-in asks while the server is still checking with Discord (1.16.0 showed "expired" here): still pending, then done.
+asked = []
+race_v, race_c = verifier_pair()
+real_http = d._http
+def asking_http(method, url, data=None, token=None):
+    if url.endswith('/users/@me'):
+        asked.append(d.poll(race_v))
+    return real_http(method, url, data, token)
+codes['race'] = person('510', 'racer')
+race_state, _ = d.start('addin', race_c)
+d._http = asking_http
+d.finish(race_state, 'race', '', accounts)
+d._http = real_http
+check(asked == [('pending',)] and d.poll(race_v)[0] == 'done', 'asked mid-sign-in: pending, then done ' + str(asked))
+try:
+    d.finish(race_state, 'race', '', accounts); check(False, 'a used sign-in can\'t finish twice')
+except d.DiscordError:
+    check(race_state not in d._flows, 'used sign-in gone')
 
 # A new member: account named after their Discord username, key set as the SVN password, collected once.
 v, _, (kind, user, _) = sign_in('501', 'sarah.k')
 check(kind == 'addin' and user == 'sarah.k' and 'sarah.k' in htpasswd, 'new account from the Discord username')
 r = d.poll(v)
 check(r[0] == 'done' and r[1] == 'sarah.k' and r[2] == htpasswd['sarah.k'] and len(r[2]) == 43, 'add-in collects username and key')
-check(d.poll(v) == ('unknown',), 'collected only once')
+check(d.poll(v) == ('pending',), 'collected only once')
 key1 = r[2]
 
 # The same person on another computer: the same account and the same key (the first computer keeps working).
@@ -131,7 +150,7 @@ check(d.username_for({'id': '1', 'username': 'Sam'}, {'sam', 'sam-2'}) == 'sam-3
 
 # Mentor page sessions: signed, expire, end with "sign out everywhere".
 v, _, (kind, user, _) = sign_in('501', 'sarah.k', kind='web')
-check(kind == 'web' and d.poll(v) == ('unknown',), 'web sign-in leaves nothing for an add-in to collect')
+check(kind == 'web' and d.poll(v) == ('pending',), 'web sign-in leaves nothing for an add-in to collect')
 cookie = d.make_session('sarah.k')
 check(d.read_session(cookie) == 'sarah.k', 'session read back')
 check(d.read_session(cookie[:-2] + ('AA' if not cookie.endswith('AA') else 'BB')) is None, 'tampered session refused')
