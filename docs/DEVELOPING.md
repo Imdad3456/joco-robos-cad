@@ -36,7 +36,7 @@ To go back to the installed copy, close SOLIDWORKS, run `.\scripts\Unregister-De
 ## Troubleshooting
 
 - **The add-in doesn't load, or SharpSvn is missing:** keep every output file (especially `SharpSvn.dll`) beside `JocoRobos.Cad.dll`, and install the x64 Visual C++ runtime.
-- **Authentication failed:** Tools → CAD Hub → Sign In. The CAD password is separate from GitHub, Windows, and Tailscale. Saved logins are under Windows Credential Manager → Generic Credentials → CAD Hub.
+- **Authentication failed:** Tools → CAD Hub → Sign In (with Discord). Saved logins are under Windows Credential Manager → Generic Credentials → CAD Hub; how it was made is `HKCU\Software\JOCO ROBOS\CAD\SignInKind` (`discord`, `password`, or missing before 1.16).
 - **Which copy is SOLIDWORKS loading?** The panel header says "(dev build)" for a development copy. From PowerShell: `(Get-ItemProperty "Registry::HKEY_CLASSES_ROOT\CLSID\{E219FE9C-5919-4BE5-98B7-A518C11AD901}\InprocServer32").CodeBase`.
 - **An automatic update didn't install:** the installer log is in `%LOCALAPPDATA%\JocoRobos.Cad\updates\`.
 

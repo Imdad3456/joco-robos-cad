@@ -5,26 +5,9 @@ using System.Text;
 
 namespace JocoRobos.Cad
 {
-    /// <summary>Students set and change their own passwords; mentors only ever hand out one-time setup codes.</summary>
+    /// <summary>Requests to the team server's small JSON APIs (sign-in, edit requests, parts lists).</summary>
     internal static class Accounts
     {
-        /// <summary>First sign-in: username + mentor's setup code → the student's own password. No existing login needed.</summary>
-        internal static void Setup(string username, string code, string password)
-        {
-            Post("account/setup", null, "{\"username\": " + Json(username) + ", \"code\": " + Json(code) + ", \"password\": " + Json(password) + "}");
-        }
-
-        /// <summary>A new student asks for an account with the username and password they chose; a mentor then gives them a code.</summary>
-        internal static void Request(string username, string password)
-        {
-            Post("account/request", null, "{\"username\": " + Json(username) + ", \"password\": " + Json(password) + "}");
-        }
-
-        internal static void ChangePassword(NetworkCredential login, string password)
-        {
-            Post("admin/api/password", login, "{\"password\": " + Json(password) + "}");
-        }
-
         /// <summary>POSTs JSON as this add-in and returns the server's answer; a refusal becomes an InvalidOperationException with its reason.</summary>
         internal static string Post(string path, NetworkCredential login, string json)
         {
@@ -54,7 +37,7 @@ namespace JocoRobos.Cad
                 using (var reader = new StreamReader(response.GetResponseStream()))
                 {
                     string text = reader.ReadToEnd().Trim();
-                    if (response.StatusCode == HttpStatusCode.Unauthorized) text = "Your current password wasn't accepted. Sign in again first.";
+                    if (response.StatusCode == HttpStatusCode.Unauthorized) text = "The server didn't accept your sign-in. Sign in again (Tools → CAD Hub → Sign In).";
                     throw new InvalidOperationException(text.Length > 0 && text.Length < 300 && !text.StartsWith("<") ? text : "The server refused (" + (int)response.StatusCode + ").", exception);
                 }
             }

@@ -2,8 +2,11 @@
 """CAD Hub server administration: seasons, library, locks, and accounts.
 
 `joco.py ensure` runs at container start. `joco.py serve` is the mentor web page,
-listening only inside the container; Apache authenticates users and forwards
-/admin with the verified username. Students never need this page.
+listening only inside the container. Students and mentors sign in with Discord
+(discord_auth.py): the add-in gets a key Apache checks like a password, and the
+mentor page gets a session cookie. Apache forwards /admin with the username it
+verified (Basic sign-in: the add-in, or a password account); without one, the
+page uses its Discord session. Students never need this page.
 """
 import calendar
 import fcntl
@@ -23,9 +26,11 @@ import time
 import xml.etree.ElementTree as ElementTree
 from email.parser import BytesParser
 from email.policy import HTTP
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlsplit
 
+import discord_auth
 import frcdesign
 
 REPOS = os.environ.get('JOCO_REPOS', '/var/lib/svn')
@@ -50,11 +55,6 @@ EDIT_REQUEST_DAYS = 2
 # Parts lists sent from SOLIDWORKS (Tools → CAD Hub → Parts List): the latest per season, and the one before it to compare.
 PARTS = os.path.join(CONFIG, 'parts')
 MAX_PARTS_BODY = 2 * 1024 * 1024
-INVITES = os.path.join(CONFIG, 'invites.json')
-REQUESTS = os.path.join(CONFIG, 'requests.json')  # Students asking for an account, waiting for a mentor's code.
-MAX_REQUESTS = 40
-CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'  # No 0/O, 1/I/L.
-INVITE_DAYS = 7
 _setup_attempts = {}  # address -> [times]; in memory, reset on restart.
 INSTALLER = re.compile(r'^JOCO-ROBOS-CAD-Setup-(\d{1,4})\.(\d{1,4})\.(\d{1,4})\.exe$')
 LIBRARY = 'Library'
@@ -67,6 +67,8 @@ CAD = ('.sldprt', '.sldasm', '.slddrw')
 ROBOT_FOLDERS = ['00_Master', '10_Drivetrain', '20_Intake', '30_Shooter', '40_Climber', '50_Electrical', '90_COTS']
 LIBRARY_FOLDERS = ['Motors', 'Gearboxes', 'Wheels', 'Electronics', 'Hardware', 'Mechanisms']
 MAX_UPLOAD = 100 * 1024 * 1024  # Cloudflare's request limit on the free plan.
+SESSION_COOKIE = 'cadhub_session'  # The mentor page's Discord sign-in.
+FLOW_COOKIE = 'cadhub_signin'  # Ties a mentor page sign-in to the browser that started it.
 _mutex = threading.Lock()
 
 
@@ -669,37 +671,10 @@ def diagnostic_summary(name):
     return name[17:-4], sent, fields.get('Add-in', '?'), fields.get('Computer', ''), fields.get('Panel status error', '')
 
 
-# ---------- accounts: students choose their own passwords ----------
-
-def new_setup_code(user, mentor):
-    """Disables any current password and creates a one-time setup code; the student picks the password."""
-    run('htpasswd', '-B', '-i', USERS, user, stdin=secrets.token_urlsafe(32).encode())  # Unusable until set up.
-    code = '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
-    invites = read_json(INVITES) or {}
-    invites[user] = {'code': code, 'expires': time.time() + INVITE_DAYS * 86400, 'by': mentor, 'failures': 0}
-    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-    return code
-
-
-def new_open_code(mentor, make_mentor):
-    """A setup code not tied to a name: the student chooses their own username (and password) with it."""
-    code = new_code()
-    invites = read_json(INVITES) or {}
-    invites['open:' + secrets.token_hex(6)] = {'code': code, 'expires': time.time() + INVITE_DAYS * 86400, 'by': mentor, 'mentor': bool(make_mentor)}
-    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-    return code
-
-
-def open_codes():
-    """Unused, unexpired codes that let a student pick their own username: [(id, invite)]."""
-    now = time.time()
-    return [(k[5:], v) for k, v in sorted((read_json(INVITES) or {}).items(), key=lambda kv: kv[1]['expires'])
-            if k.startswith('open:') and v['expires'] > now]
-
+# ---------- accounts: Discord sign-in (discord_auth.py); password accounts only for special cases ----------
 
 def _throttle(address, kind='setup'):
-    # Generous: a whole team setting up at school shares one public address. Codes are 12 random characters,
-    # and five wrong guesses kill a code, so this only slows down scripts.
+    # Generous: a whole team at school shares one public address. This only slows down scripts.
     now = time.time()
     key = kind + ':' + (address or '')
     recent = [t for t in _setup_attempts.get(key, []) if now - t < 3600]
@@ -708,113 +683,31 @@ def _throttle(address, kind='setup'):
     _setup_attempts[key] = recent + [now]
 
 
-def _password_rule(user, password):
-    if len(password) < 10 or password.lower() == user:
-        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
+def set_password(user, secret):
+    run('htpasswd', '-B', '-i', USERS, user, stdin=secret.encode())
 
 
-def _password_matches(user, hashed, password):
-    """bcrypt check through htpasswd itself (Python has no bcrypt here), against a one-line temporary file."""
-    with tempfile.NamedTemporaryFile('w', dir=CONFIG, prefix='.verify-', delete=True) as handle:
-        handle.write(user + ':' + hashed + '\n')
-        handle.flush()
-        return subprocess.run(['htpasswd', '-v', '-i', handle.name, user], input=password.encode(), capture_output=True).returncode == 0
+def _add_mentor(user):
+    state = load_state()
+    if user not in state['mentors']:
+        state['mentors'] = sorted(set(state['mentors']) | {user})
+        save_state(state)
 
 
-def pending_requests():
-    now = time.time()
-    return {k: v for k, v in (read_json(REQUESTS) or {}).items() if v['expires'] > now}
+# What discord_auth needs from here; every call happens under Locked.
+DISCORD_ACCOUNTS = {'users': lambda: set(users()), 'set_password': set_password, 'add_mentor': _add_mentor,
+                    'mentors': lambda: set(load_state()['mentors']), 'locked': Locked}
 
 
-def request_account(address, user, password):
-    """Public (no sign-in): a student asks for an account with the username and password they chose. Nothing works
-    until a mentor hands them the code shown on the Accounts tab; activating needs that code and this password."""
-    _throttle(address, 'request')
-    user = (user or '').strip().lower()
-    if not USERNAME.match(user) or user == PUBLISHER:
-        raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore, starting with a letter or number.')
-    if user in users():
-        raise Refused('The username ' + user + ' is taken. Choose another one (or, if it\'s yours, ask a mentor for a New setup code).')
-    _password_rule(user, password)
-    requests = pending_requests()
-    existing = requests.get(user)
-    if existing:
-        if _password_matches(user, existing['hash'], password):
-            return  # Asked twice: same request, same code.
-        raise Refused('Someone already asked for the username ' + user + '. Choose another one, or ask a mentor.')
-    if len(requests) >= MAX_REQUESTS:
-        raise Refused('Too many account requests are waiting. Ask a mentor.')
-    hashed = run('htpasswd', '-niB', user, stdin=password.encode()).strip().split(':', 1)[1]
-    requests[user] = {'hash': hashed, 'code': new_code(), 'at': time.time(), 'expires': time.time() + INVITE_DAYS * 86400,
-                      'address': re.sub(r'[^0-9a-fA-F.:]', '', address or '')[:45], 'failures': 0}
-    write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
-
-
-def new_code():
-    return '-'.join(''.join(secrets.choice(CODE_ALPHABET) for _ in range(4)) for _ in range(3))
-
-
-def claim_account(address, user, code, password):
-    """Public (no sign-in): a student turns a setup code into their own password. Deliberately vague errors."""
-    now = time.time()
-    _throttle(address)
-    user = (user or '').strip().lower()
-    code = re.sub(r'[^A-Z0-9]', '', (code or '').upper())
-    # A student's own request: the mentor's code plus the password they asked with.
-    requests = pending_requests()
-    asked = requests.get(user)
-    if asked and user not in users():
-        if not hmac.compare_digest(asked['code'].replace('-', ''), code):
-            asked['failures'] = asked.get('failures', 0) + 1
-            if asked['failures'] >= 5:
-                del requests[user]  # Guessing: the request is dead; the student asks again.
-            write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
-            raise Refused('That code isn\'t the one for ' + user + '. Check it with your mentor.')
-        if not _password_matches(user, asked['hash'], password):
-            raise Refused('Use the same password you asked with. (If someone else asked for ' + user + ', ask a mentor to reject that request.)')
-        run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
-        del requests[user]
-        write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
-        return
-    invites = read_json(INVITES) or {}
-    invite = invites.get(user)
-    matches = lambda i: i['expires'] >= now and hmac.compare_digest(i['code'].replace('-', ''), code)
-    if not (invite and matches(invite)):
-        # A code not tied to a name: this student is choosing their username now. Only someone holding a valid code
-        # learns whether a name is taken.
-        key = next((k for k, v in invites.items() if k.startswith('open:') and matches(v)), None)
-        if key is not None:
-            if not USERNAME.match(user) or user == PUBLISHER:
-                raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore, starting with a letter or number.')
-            if user in users():
-                raise Refused('The username ' + user + ' is taken. Choose another one.')
-            if len(password) < 10 or password.lower() == user:
-                raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
-            run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
-            if invites[key].get('mentor'):
-                state = load_state()
-                state['mentors'] = sorted(set(state['mentors']) | {user})
-                save_state(state)
-            del invites[key]
-            write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-            return
-        if invite:
-            invite['failures'] = invite.get('failures', 0) + 1
-            if invite['failures'] >= 5:
-                del invites[user]  # Guessing: the code is dead; a mentor makes a new one.
-            write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-        raise Refused('That username and setup code don\'t match, or the code expired. Ask a mentor for a new code.')
-    if len(password) < 10 or password.lower() == user:
-        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
-    run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
-    del invites[user]
-    write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-
-
-def change_password(user, password):
-    if len(password) < 10 or password.lower() == user:
-        raise Refused('Choose a password of at least 10 characters that isn\'t your username.')
-    run('htpasswd', '-B', '-i', USERS, user, stdin=password.encode())
+def recheck_discord_forever():
+    """Daily: anyone who left the team's Discord server loses access (never because Discord is down)."""
+    while True:
+        time.sleep(600)
+        try:
+            for name in discord_auth.recheck(DISCORD_ACCOUNTS):
+                sys.stderr.write('admin: %s left the Discord server; signed out everywhere\n' % name)
+        except Exception as exc:  # Keep checking tomorrow.
+            sys.stderr.write('admin: Discord recheck failed: %r\n' % exc)
 
 
 # ---------- actions (all run under Locked) ----------
@@ -908,38 +801,11 @@ def act(user, form):
         # rmlocks bypasses the student pre-unlock hook; unsubmitted edits on the owner's PC become stale.
         run('svnadmin', 'rmlocks', os.path.join(REPOS, repo), path)
         return 'Released ' + path + '. The previous owner can no longer submit their unsaved copy of it.'
-    if action == 'add-user' and not form.get('username', '').strip():
-        new_open_code(user, form.get('mentor'))
-        return ('New ' + ('mentor ' if form.get('mentor') else '') + 'setup code made; it\'s listed under Unused setup codes. '
-                'Give it to the student: they choose their own username and password in SOLIDWORKS.')
-    if action == 'reject-request':
-        requests = pending_requests()
+    if action == 'sign-out-everywhere':
         name = form.get('username', '')
-        if requests.pop(name, None) is None:
-            raise Refused('That request was already used or rejected.')
-        write_atomic(REQUESTS, json.dumps(requests, indent=2) + '\n', 0o600)
-        return 'Rejected the request for ' + name + '.'
-    if action == 'cancel-code':
-        invites = read_json(INVITES) or {}
-        if invites.pop('open:' + form.get('id', ''), None) is None:
-            raise Refused('That code was already used or cancelled.')
-        write_atomic(INVITES, json.dumps(invites, indent=2) + '\n', 0o600)
-        return 'Setup code cancelled.'
-    if action in ('add-user', 'reset-password'):
-        name = form.get('username', '').strip().lower()
-        if not USERNAME.match(name):
-            raise Refused('Usernames: 2–32 lowercase letters, numbers, dot, dash, underscore.')
-        if name == PUBLISHER:
-            raise Refused(PUBLISHER + ' is the GitHub release account.')
-        if (action == 'add-user') == (name in users()):
-            raise Refused(name + (' already exists.' if action == 'add-user' else ' does not exist.'))
-        new_setup_code(name, user)
-        if action == 'add-user' and form.get('mentor'):
-            state['mentors'] = sorted(set(state['mentors']) | {name})
-            save_state(state)
-        # The code is shown on the Accounts page, never in a URL or log.
-        return ('Added ' + name + '.' if action == 'add-user' else name + '\'s old password no longer works.') + \
-            ' Give them the setup code shown next to their name; they choose their own password in SOLIDWORKS.'
+        if not discord_auth.sign_out_everywhere(name, DISCORD_ACCOUNTS):
+            raise Refused(name + " doesn't sign in with Discord.")
+        return name + " is signed out on every computer (and this page). Signing in with Discord again works if they're still in the server."
     if action in ('delete-user', 'toggle-mentor'):
         name = form.get('username', '')
         if name not in users():
@@ -953,9 +819,10 @@ def act(user, form):
             if held:
                 raise Refused(name + ' still holds ' + str(len(held)) + ' lock(s). Release them first.')
             run('htpasswd', '-D', USERS, name)
+            discord_auth.forget(name)
             state['mentors'] = [m for m in state['mentors'] if m != name]
             save_state(state)
-            return 'Deleted ' + name + '. Their history is kept.'
+            return 'Deleted ' + name + ". Their history is kept. (If they're still in the Discord server, signing in again makes a new account.)"
         state['mentors'] = sorted(set(state['mentors']) ^ {name})
         save_state(state)
         return name + (' is now a mentor.' if name in state['mentors'] else ' is no longer a mentor.')
@@ -1100,6 +967,7 @@ th{color:var(--muted);font-weight:500;font-size:13px;border-top:0}.muted{color:v
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}form.inline{display:inline}
 input,select,button{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
 button{cursor:pointer;background:var(--card)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+a.button{display:inline-block;padding:9px 16px;border-radius:6px;text-decoration:none;font-weight:600}a.button.primary{background:#5865F2;color:#fff}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}.notice{padding:10px 14px;border-radius:8px;margin-bottom:16px;border:1px solid var(--line);background:var(--card)}
 code{font-size:13px}.scroll{overflow-x:auto}
 '''
@@ -1117,7 +985,25 @@ class Admin(BaseHTTPRequestHandler):
 
     @property
     def user(self):
-        return self.headers.get('X-Joco-User', '')
+        # Basic sign-in checked by Apache (the add-in's key, or a password account) comes first. The browser's Discord
+        # session only counts for the pages, never for the add-in APIs.
+        verified = self.headers.get('X-Joco-User', '')
+        if verified or urlsplit(self.path).path.startswith('/admin/api/'):
+            return verified
+        if not hasattr(self, '_session_user'):
+            morsel = self.cookie(SESSION_COOKIE)
+            self._session_user = (discord_auth.read_session(morsel) if morsel else None) or ''
+            if self._session_user and self._session_user not in users():
+                self._session_user = ''
+        return self._session_user
+
+    def cookie(self, name):
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get('Cookie', ''))
+        except Exception:
+            return None
+        return jar[name].value if name in jar else None
 
     def token(self):
         with open(SECRET) as handle:
@@ -1125,7 +1011,10 @@ class Admin(BaseHTTPRequestHandler):
 
     def guard(self):
         state = load_state()
-        if not self.user or self.user not in state['mentors']:
+        if not self.user:
+            self.sign_in_page()
+            return None
+        if self.user not in state['mentors']:
             self.page('Mentors only', '<section><h2>Mentors only</h2><p>This page is for mentors. Students do everything from SOLIDWORKS.</p></section>', '', status=403)
             return None
         return state
@@ -1181,6 +1070,10 @@ class Admin(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if urlsplit(self.path).path == '/account/discord/start':
+            return self.discord_start()
+        if urlsplit(self.path).path == '/account/discord/callback':
+            return self.discord_callback()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('GET')
         if urlsplit(self.path).path == '/admin/api/edit-requests':
@@ -1227,12 +1120,13 @@ class Admin(BaseHTTPRequestHandler):
             return self.parts_upload()
         if urlsplit(self.path).path.startswith('/admin/api/frcdesign/'):
             return self.frc_api('POST')
-        if urlsplit(self.path).path == '/account/setup':
-            return self.account_setup()
-        if urlsplit(self.path).path == '/account/request':
-            return self.account_request()
-        if urlsplit(self.path).path == '/admin/api/password':
-            return self.password_change()
+        if urlsplit(self.path).path == '/account/discord/poll':
+            return self.discord_poll()
+        if urlsplit(self.path).path in ('/account/setup', '/account/request', '/admin/api/password'):
+            # Setup codes and passwords chosen in SOLIDWORKS (before 1.16).
+            return self.reply(410, 'CAD Hub now signs in with Discord. Install the newest CAD Hub (ask a mentor), then use Sign In.')
+        if urlsplit(self.path).path == '/admin/signout':
+            return self.sign_out()
         state = self.guard()
         if state is None:
             return
@@ -1240,10 +1134,8 @@ class Admin(BaseHTTPRequestHandler):
         if back not in ('/admin', '/admin/locks', '/admin/library', '/admin/users', '/admin/addin', '/admin/diagnostics'):
             back = '/admin'
         try:
-            # Browsers resend Basic credentials automatically: require same-origin plus a per-user token.
-            origin = self.headers.get('Origin') or self.headers.get('Referer') or ''
-            host = self.headers.get('X-Forwarded-Host', self.headers.get('Host', '')).split(',')[0].strip()
-            if urlsplit(origin).netloc != host:
+            # Browsers resend cookies and Basic credentials automatically: require same-origin plus a per-user token.
+            if not self.same_origin():
                 raise Refused('Request blocked: it did not come from this page.')
             length = int(self.headers.get('Content-Length', '0'))
             if length > MAX_UPLOAD + 65536:
@@ -1360,39 +1252,89 @@ class Admin(BaseHTTPRequestHandler):
         except (Refused, ValueError) as exc:
             self.reply(400, str(exc))
 
-    def account_setup(self):
-        # Reached without sign-in (see svn.conf /account); only a valid setup code can set a password.
-        address = self.headers.get('CF-Connecting-IP') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
-        try:
-            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
-            with Locked():
-                claim_account(address, str(body.get('username', '')), str(body.get('code', '')), str(body.get('password', '')))
-            self.reply(200, 'Your password is set.')
-        except (Refused, ValueError) as exc:
-            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
+    # ---------- Discord sign-in (public: see svn.conf /account) ----------
 
-    def account_request(self):
-        # Reached without sign-in (see svn.conf /account); only stores a request, which does nothing without a mentor's code.
-        address = self.headers.get('CF-Connecting-IP') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
-        try:
-            body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
-            with Locked():
-                request_account(address, str(body.get('username', '')), str(body.get('password', '')))
-            self.reply(200, 'Request sent. Ask a mentor for your code.')
-        except (Refused, ValueError) as exc:
-            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
+    def address(self):
+        return self.headers.get('CF-Connecting-IP') or self.headers.get('X-Forwarded-For', '').split(',')[0].strip() or self.client_address[0]
 
-    def password_change(self):
-        # Apache already checked the current password; the add-in header blocks cross-site form posts.
-        if not self.user or self.user == PUBLISHER or self.headers.get('X-Joco-Client') != 'addin':
-            return self.reply(403, 'Not allowed.')
+    def same_origin(self):
+        origin = self.headers.get('Origin') or self.headers.get('Referer') or ''
+        host = self.headers.get('X-Forwarded-Host', self.headers.get('Host', '')).split(',')[0].strip()
+        return urlsplit(origin).netloc == host
+
+    def discord_start(self):
+        query = parse_qs(urlsplit(self.path).query)
+        kind = query.get('kind', ['web'])[0]
+        try:
+            _throttle(self.address(), 'discord')
+            state, url = discord_auth.start(kind, query.get('challenge', [''])[0])
+        except (Refused, discord_auth.DiscordError) as exc:
+            return self.message_page('Sign-in problem', str(exc), status=400)
+        self.send_response(303)
+        self.send_header('Location', url)
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        if kind == 'web':
+            # Ties the mentor page's sign-in to this browser: someone else's Discord approval can't sign it in.
+            self.send_header('Set-Cookie', '%s=%s; Path=/account/discord; Max-Age=%d; HttpOnly; Secure; SameSite=Lax' % (
+                FLOW_COOKIE, state, discord_auth.FLOW_SECONDS))
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def discord_callback(self):
+        query = parse_qs(urlsplit(self.path).query)
+        state = query.get('state', [''])[0]
+        pending = discord_auth.flow(state)
+        if pending and pending['kind'] == 'web' and not hmac.compare_digest(self.cookie(FLOW_COOKIE) or '', state):
+            return self.message_page('Sign-in problem', 'Open the mentor page and sign in again in this browser.', status=400)
+        try:
+            kind, user, _ = discord_auth.finish(state, query.get('code', [''])[0], query.get('error', [''])[0], DISCORD_ACCOUNTS)
+        except discord_auth.DiscordError as exc:
+            return self.message_page('Not signed in', str(exc), status=403)
+        if kind == 'addin':
+            return self.message_page('Signed in', "You're signed in to CAD Hub as %s. Go back to SOLIDWORKS; you can close this tab." % user)
+        self.send_response(303)
+        self.send_header('Location', '/admin')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Set-Cookie', '%s=; Path=/account/discord; Max-Age=0; HttpOnly; Secure; SameSite=Lax' % FLOW_COOKIE)
+        self.send_header('Set-Cookie', '%s=%s; Path=/admin; Max-Age=%d; HttpOnly; Secure; SameSite=Lax' % (
+            SESSION_COOKIE, discord_auth.make_session(user), discord_auth.SESSION_SECONDS))
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def discord_poll(self):
+        # The add-in collects its sign-in with the verifier only it knows.
         try:
             body = json.loads(self.rfile.read(min(int(self.headers.get('Content-Length', '0')), 4096)) or b'{}')
-            with Locked():
-                change_password(self.user, str(body.get('password', '')))
-            self.reply(200, 'Password changed.')
-        except (Refused, ValueError) as exc:
-            self.reply(400, str(exc) if isinstance(exc, Refused) else 'Bad request.')
+        except ValueError:
+            return self.reply(400, 'Bad request.')
+        result = discord_auth.poll(str(body.get('verifier', '')))
+        if result[0] == 'done':
+            return self.json_reply({'status': 'done', 'username': result[1], 'key': result[2]})
+        if result[0] == 'error':
+            return self.json_reply({'status': 'error', 'message': result[1]})
+        return self.json_reply({'status': result[0]})
+
+    def sign_out(self):
+        if not self.same_origin():
+            return self.reply(403, 'Request blocked: it did not come from this page.')
+        self.send_response(303)
+        self.send_header('Location', '/admin')
+        self.send_header('Set-Cookie', '%s=; Path=/admin; Max-Age=0; HttpOnly; Secure; SameSite=Lax' % SESSION_COOKIE)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def sign_in_page(self):
+        if discord_auth.configured():
+            body = ('<section><h2>Sign in</h2><p>Mentors sign in with Discord. You need to be in %s.</p>'
+                    '<p><a class="button primary" href="/account/discord/start?kind=web">Sign in with Discord</a></p></section>') % esc(
+                discord_auth.settings()['guild_name'])
+        else:
+            body = "<section><h2>Sign in</h2><p>Discord sign-in isn't set up on this server yet (see server/README.md).</p></section>"
+        self.page('Sign in', body, '', nav=False)
+
+    def message_page(self, title, text, status=200):
+        self.page(title, '<section><h2>%s</h2><p>%s</p></section>' % (esc(title), esc(text)), '', status=status, nav=False)
 
     def reply(self, status, text):
         data = (text + '\n').encode()
@@ -1421,13 +1363,18 @@ class Admin(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
-    def page(self, title, body, current, status=200):
-        links = [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/parts', 'Parts'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'),
+    def page(self, title, body, current, status=200, nav=True):
+        links = [] if not nav else [('/admin', 'Seasons'), ('/admin/locks', 'Locks'), ('/admin/parts', 'Parts'), ('/admin/library', 'Library'), ('/admin/users', 'Accounts'),
                  ('/admin/addin', 'Add-in'), ('/admin/diagnostics', 'Diagnostics')]
         nav = ''.join('<a href="%s"%s>%s</a>' % (h, ' class="on"' if h == current else '', t) for h, t in links)
+        account = ''
+        if links and self.user:
+            account = esc(self.user)
+            if not self.headers.get('X-Joco-User'):  # A Discord session can sign out; a browser's Basic sign-in can't.
+                account += ' <form class="inline" method="post" action="/admin/signout"><button>Sign out</button></form>'
         text = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<title>%s · CAD Hub</title><style>%s</style></head><body><header><b>CAD Hub</b><nav>%s</nav>'
-                '<span class="muted">%s</span></header><main>%s</main></body></html>') % (esc(title), STYLE, nav, esc(self.user), body)
+                '<span class="muted">%s</span></header><main>%s</main></body></html>') % (esc(title), STYLE, nav, account, body)
         data = text.encode()
         self.send_response(status)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -1737,53 +1684,58 @@ class Admin(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def users_page(self, state):
-        rows = ''
         beats = read_json(HEARTBEATS) or {}
-        invites = read_json(INVITES) or {}
-        for name in users():
-            mentor = name in state['mentors']
-            invite = invites.get(name)
-            pending = ('<div><b>Setup code: <code style="font-size:15px">%s</code></b> <span class="muted">(expires %s)</span></div>' % (
-                esc(invite['code']), time.strftime('%b %d', time.localtime(invite['expires'])))) if invite and invite['expires'] > time.time() else ''
-            reset = pending + self.form('reset-password', {'username': name}, 'New setup code')
-            tools = '' if name == self.user else (self.form('toggle-mentor', {'username': name}, 'Remove mentor' if mentor else 'Make mentor') + ' ' +
-                                                   self.form('delete-user', {'username': name}, 'Delete'))
+        discord = {a['user']: a for a in discord_auth.load()['accounts'].values()}
+        approved = state.get('solidworks')
+
+        def seen(name):
             beat = beats.get(name) or {}
             hours = age_hours(beat.get('seen'))
-            approved = state.get('solidworks')
             sw = beat.get('solidworks')
             sw_html = '' if not sw else ' · <span class="%s">SOLIDWORKS %s</span>' % ('bad' if approved and sw != approved else 'muted', esc(sw))
-            seen = '<span class="muted">never</span>' if hours is None else '%s%s · %s%s' % (
+            return '<span class="muted">never</span>' if hours is None else '%s%s · %s%s' % (
                 esc(beat.get('version', '?')), sw_html, 'today' if hours < 24 else '%d days ago' % (hours // 24),
                 (' · ' + esc(', '.join(beat.get('computers', [])))) if beat.get('computers') else '')
-            rows += '<tr><td><b>%s</b> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), '<span class="tag">mentor</span>' if mentor else '', seen, reset, tools)
-        add = ('<form method="post" class="row"><input type="hidden" name="token" value="%s"><input type="hidden" name="action" value="add-user">'
-               '<input name="username" placeholder="username (optional)" pattern="[a-z0-9][a-z0-9._\\-]{1,31}" aria-label="Username (optional)">'
 
-               '<label><input type="checkbox" name="mentor" value="1"> Mentor</label><button class="primary">Make setup code</button></form>'
-               '<p class="muted">Leave the username empty and just hand out the one-time code (valid %d days): the student enters it the first time SOLIDWORKS starts '
-               'and chooses their own username and password. Type a username to pick it for them instead. Mentors never see passwords. '
-               '"New setup code" next to a name resets a forgotten password the same way.</p>') % (self.token(), INVITE_DAYS)
-        unused = ''.join('<tr><td><code style="font-size:15px"><b>%s</b></code> %s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
-            esc(i['code']), '<span class="tag">mentor</span>' if i.get('mentor') else '', esc(i.get('by', '')),
-            time.strftime('%b %d', time.localtime(i['expires'])), self.form('cancel-code', {'id': cid}, 'Cancel'))
-            for cid, i in open_codes())
-        unused = ('<section><h2>Unused setup codes</h2><div class="scroll"><table><tr><th>Code</th><th>Made by</th><th>Expires</th><th></th></tr>%s</table></div></section>' % unused
-                  if unused else '')
-        waiting = ''.join('<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td><code style="font-size:15px"><b>%s</b></code></td><td>%s</td></tr>' % (
-            esc(name), time.strftime('%b %d %H:%M', time.localtime(r['at'])), esc(r.get('address', '')), esc(r['code']),
-            self.form('reject-request', {'username': name}, 'Reject'))
-            for name, r in sorted(pending_requests().items(), key=lambda kv: kv[1]['at']))
-        waiting = ('<section><h2>Students waiting for a code</h2><p class="muted">They asked from SOLIDWORKS with the username and password they chose. '
-                   'Give each student the code next to their name (in person, so you know it\'s them); they type it in and their account works. '
-                   'Reject anything you don\'t recognize.</p><div class="scroll"><table><tr><th>Username</th><th>Asked</th><th>From</th><th>Code</th><th></th></tr>%s</table></div></section>' % waiting
-                   if waiting else '')
-        return waiting + ('<section><h2>Add an account</h2>%s</section>%s<section><h2>Accounts</h2><div class="scroll"><table>'
-                '<tr><th>User</th><th>Add-in · last seen · computers</th><th>Setup</th><th></th></tr>%s</table></div></section>') % (add, unused, rows)
+        def tools(name, extra=''):
+            if name == self.user:
+                return extra
+            mentor = name in state['mentors']
+            return extra + ' ' + self.form('toggle-mentor', {'username': name}, 'Remove mentor' if mentor else 'Make mentor') + ' ' + \
+                self.form('delete-user', {'username': name}, 'Delete')
+
+        rows = password_rows = ''
+        for name in users():
+            tag = ' <span class="tag">mentor</span>' if name in state['mentors'] else ''
+            account = discord.get(name)
+            if account:
+                status = ('<span class="bad">left the Discord server</span>' if account.get('removed') else
+                          'Discord <b>%s</b> · checked %s' % (esc(account.get('discord', '')), time.strftime('%b %d', time.localtime(account.get('checked', 0)))))
+                rows += '<tr><td><b>%s</b>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>' % (
+                    esc(name), tag, status, seen(name), tools(name, self.form('sign-out-everywhere', {'username': name}, 'Sign out everywhere')))
+            elif name == PUBLISHER:
+                password_rows += '<tr><td><b>%s</b></td><td>GitHub release uploader</td><td></td></tr>' % esc(name)
+            else:
+                password_rows += '<tr><td><b>%s</b>%s</td><td>%s</td><td>%s</td></tr>' % (esc(name), tag, seen(name), tools(name))
+        guild = esc(discord_auth.settings()['guild_name'])
+        intro = ('<p class="muted">Everyone in %s signs in with Discord: in SOLIDWORKS (Tools → CAD Hub → Sign In) and here. Their CAD username is '
+                 'their Discord username, made the first time they sign in. Someone who leaves the Discord server loses access within a day; '
+                 '"Sign out everywhere" ends every sign-in at once (a lost laptop). Delete only accounts that hold no locks.</p>') % guild
+        if not discord_auth.configured():
+            intro = '<p class="bad">Discord sign-in isn\'t set up on this server yet, so nobody new can sign in. See server/README.md.</p>'
+        body = ('<section><h2>Accounts</h2>%s<div class="scroll"><table><tr><th>User</th><th>Discord</th><th>Add-in · last seen · computers</th>'
+                '<th></th></tr>%s</table></div></section>') % (intro, rows or '<tr><td colspan="4" class="muted">Nobody has signed in with Discord yet.</td></tr>')
+        if password_rows:
+            body += ('<section><h2>Password accounts</h2><p class="muted">Not Discord: for special cases, made from SSH on the server '
+                     '(<code>joco.py password-account NAME</code>). They sign in with a username and password.</p><div class="scroll"><table>'
+                     '<tr><th>User</th><th>Add-in · last seen</th><th></th></tr>%s</table></div></section>') % password_rows
+        return body
 
 
 def serve():
     server = ThreadingHTTPServer(('127.0.0.1', int(os.environ.get('JOCO_ADMIN_PORT', '8092'))), Admin)
+    if discord_auth.configured():
+        threading.Thread(target=recheck_discord_forever, daemon=True).start()
     server.serve_forever()
 
 
@@ -1812,6 +1764,33 @@ if __name__ == '__main__':
             state['mentors'] = sorted((set(state['mentors']) | {sys.argv[3]}) if sys.argv[2] == 'add' else (set(state['mentors']) - {sys.argv[3]}))
             save_state(state)
         print('Mentors: ' + ', '.join(state['mentors']))
+    elif command == ['password-account'] and len(sys.argv) == 3:
+        # A non-Discord account for special cases: podman exec -it joco-svn runuser -u www-data -- python3 /opt/joco/joco.py password-account NAME
+        import getpass
+        name = sys.argv[2].strip().lower()
+        if not USERNAME.match(name) or name == PUBLISHER or name in discord_auth.linked_users():
+            sys.exit('Choose a username (2–32 lowercase letters, numbers, . _ -) that isn\'t a Discord account or ' + PUBLISHER + '.')
+        password = getpass.getpass('Password for %s (at least 12 characters): ' % name)
+        if len(password) < 12 or password != getpass.getpass('Again: '):
+            sys.exit('Not changed: the passwords were too short or didn\'t match.')
+        with Locked():
+            set_password(name, password)
+        print('%s can sign in with that password. Make it a mentor with: joco.py mentor add %s' % (name, name))
+    elif command == ['remove-password-accounts']:
+        # After everyone signs in with Discord: joco.py remove-password-accounts [KEEP ...] (github-release is always kept).
+        keep = set(sys.argv[2:]) | {PUBLISHER} | set(discord_auth.linked_users())
+        with Locked():
+            state = load_state()
+            gone = [n for n in users() if n not in keep]
+            for name in gone:
+                held = [l for r in repositories() for l in locks(r) if l.get('owner') == name]
+                if held:
+                    print('Kept %s: still holds %d lock(s). Release them on the Locks page first.' % (name, len(held)))
+                    continue
+                run('htpasswd', '-D', USERS, name)
+                state['mentors'] = [m for m in state['mentors'] if m != name]
+                print('Removed ' + name)
+            save_state(state)
     elif command == ['test-season'] and len(sys.argv) in (4, 5) and sys.argv[2] in ('create', 'remove'):
         # joco.py test-season create 2099-Robot 2026-Robot   |   joco.py test-season remove 2099-Robot
         with Locked():
@@ -1827,4 +1806,5 @@ if __name__ == '__main__':
             except Refused as exc:
                 sys.exit(str(exc))
     else:
-        sys.exit('usage: joco.py ensure | serve | mentor add|remove USER | test-season create NAME FROM | test-season remove NAME')
+        sys.exit('usage: joco.py ensure | serve | mentor add|remove USER | password-account NAME | remove-password-accounts [KEEP ...] | '
+                 'test-season create NAME FROM | test-season remove NAME')

@@ -13,7 +13,7 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 ## For students
 
 1. **Install:** download the newest `JOCO-ROBOS-CAD-Setup-x.y.z.exe` from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest) and run it. Windows warns about an unknown publisher; click **More info → Run anyway**.
-2. **Set up your account:** start SOLIDWORKS and type your team's server address (your mentor tells you; Team 5919: `cad.team5919.org`). Choose a username and password, and click **Send request**. A mentor gives you a code; type it in and click **Finish**. You won't need to type it again.
+2. **Sign in:** start SOLIDWORKS and type your team's server address (your mentor tells you; Team 5919: `cad.team5919.org`). Click **Sign in with Discord** and approve it in your browser. You need to be in the team's Discord server; your CAD username is your Discord username. Each computer remembers it.
 3. **Daily work:**
    - **Open Robot** gets teammates' latest work and opens the robot. Everything is read-only until you change it.
    - **Just start CADing, and press Ctrl+S.** Saving a team file locks it for you first (opening a feature or sketch to edit locks it right away), and saves the team's own file: no Save As window, no duplicates. If a teammate is editing it, you're told right away, and **Ask … for it** lets them know you're waiting. **Edit** still locks a file (or the selected part) any time.
@@ -30,11 +30,11 @@ Everyone keeps a full copy of the robot on their own computer (fast). The team s
 
 In search, **⚡** marks FRCDesignLib parts the team Library already has (instant); with nothing typed, the Library tab shows the team's most-used parts. The **×** box next to Insert adds several at once.
 
-Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List, Where Used), your account (Sign In, Change Password, Test Connection, Check This Computer, Copy Diagnostics), and recovery tools (Set Aside My Changes, Recovery Copies, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
+Everything else is in **Tools → CAD Hub**, in sections: everyday extras (Update, Release Edit, Choose Robot, Open Old Robot, File History, Parts List, Where Used), your account (Sign In, Test Connection, Check This Computer, Copy Diagnostics), and recovery tools (Set Aside My Changes, Recovery Copies, Restore Deleted Files, Import Outside References, Repair Moved References, Upgrade Robot Files).
 
 **Recovery copies:** while you're editing a part or assembly and haven't saved, CAD Hub quietly keeps a copy every few minutes (only when you pause), outside the robot folder. If SOLIDWORKS closes unexpectedly, the panel says "⚠ Recovered work" with **Review**: **Preview** opens a copy read-only under a different name, **Restore** puts it back only while you still hold that file's lock, nothing newer is on the server, and the file is closed (after you confirm; the current file is kept in Set Aside), and **Save a copy** keeps it anywhere else. Nothing is ever replaced automatically. Tools → CAD Hub → **Recovery Copies** opens the same window any time; copies are kept 14 days.
 
-**Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or codes.
+**Something wrong?** Click **Diagnostics** at the bottom of the panel (or Tools → Copy Diagnostics). It goes straight to your mentors' Diagnostics tab, and is also copied so you can paste it. It never includes passwords or sign-in keys.
 
 ## For mentors
 
@@ -46,7 +46,7 @@ Everything is on your server's mentor page, **https://*your server*/admin** (Tea
 | **Parts** | The robot's parts list (sent from SOLIDWORKS with **Tools → CAD Hub → Parts List**): what to buy by vendor with part numbers, what to make, quantities, what changed since the last list, and a spreadsheet download |
 | **Locks** | See who's editing what and since when; release a lock someone abandoned (after they've confirmed they're done: releasing doesn't keep their unsubmitted changes) |
 | **Library** | Add reusable parts; see what's been imported from FRCDesignLib |
-| **Accounts** | Give waiting students their code (they asked from SOLIDWORKS with their own username and password), reject requests you don't recognize, reset a forgotten password, see add-in versions |
+| **Accounts** | Everyone who signed in with Discord: make or remove mentors, **Sign out everywhere** (a lost laptop), delete accounts, see add-in versions. Anyone who leaves the Discord server loses access within a day |
 | **Diagnostics** | Read the reports students send with the panel's **Diagnostics** link (what they run, what's changed and locked, recent errors; never passwords) |
 | **Add-in** | Release a new add-in version to everyone; set the team's **approved SOLIDWORKS version** (a newer SOLIDWORKS can look but not edit or submit, so nobody upgrades the shared files by accident) |
 

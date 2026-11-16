@@ -20,13 +20,15 @@ This sheet covers what's **new since 0.13** and the **safety paths nobody has ne
 
 | # | Who | Do | Expect | ✓ |
 |---|---|---|---|---|
-| 1.0a | New student | Start SOLIDWORKS (this Windows user never used JOCO) | **Team Server** asks which server. Type `cad.team5919.orgg` → Continue: "Couldn't reach…"; type `example.com`: "isn't a CAD Hub server"; type `cad.team5919.org`: the account form | ☐ |
-| 1.0b | A | On your own (already set-up) PC, after installing this version | Never asked for a server; everything works as before. Tools → Sign In shows "Team server: cad.team5919.org  Change…" | ☐ |
-| 1.1 | New student | Start SOLIDWORKS → username (e.g. `test.student`), password twice → **Send request** | The form stays open: "✓ Request sent. Ask a mentor for your code" | ☐ |
-| 1.2 | A | **Accounts** → "Students waiting for a code" | `test.student`, the time, and a code | ☐ |
-| 1.3 | New student | Type a wrong code → **Finish** | "That code isn't the one for test.student"; the form comes back with the name filled in | ☐ |
-| 1.4 | New student | The right code (and the same password) → **Finish** | "You're set up as test.student". A: the request is gone from the list | ☐ |
-| 1.5 | A | **Accounts** → **Delete** `test.student` | Deleted | ☐ |
+| 1.0a | New student | Start SOLIDWORKS (this Windows user never used JOCO) | **Team Server** asks which server. Type `cad.team5919.orgg` → Continue: "Couldn't reach…"; type `example.com`: "isn't a CAD Hub server"; type `cad.team5919.org`: **Sign in to CAD Hub** | ☐ |
+| 1.0b | A | On your own (already set-up) PC, after installing this version | Never asked for a server. The first CAD Hub command asks once: "CAD Hub now signs in with Discord"; Cancel keeps working with the old sign-in until SOLIDWORKS restarts | ☐ |
+| 1.1 | New student (in the Discord server) | **Sign in with Discord** | The browser opens Discord; approve. Browser: "You're signed in to CAD Hub as <your Discord username>". SOLIDWORKS: the window closes by itself, "You're signed in as …", then Open Robot starts | ☐ |
+| 1.2 | Someone not in the Discord server | **Sign in with Discord** and approve | Browser and the sign-in window: "… isn't in JoCo RoBos. Join it …"; nothing saved | ☐ |
+| 1.3 | New student | **Sign in with Discord**, then **Cancel** in Discord (or close the browser tab) | "Sign-in was cancelled in Discord" (or, after 10 minutes, "took too long"); **Sign in with Discord** works again | ☐ |
+| 1.4 | New student, second computer | Sign in with Discord there too | Same username; the first computer still works | ☐ |
+| 1.5 | A | Mentor page (signed out): **Sign in with Discord** | The mentor page opens; your name and **Sign out** at the top right | ☐ |
+| 1.6 | A | **Accounts** → the student → **Sign out everywhere** | The student's next CAD Hub command: "didn't accept your sign-in"; **Sign In** with Discord again works | ☐ |
+| 1.7 | A | **Accounts** → **Delete** the test student (no locks) | Deleted | ☐ |
 
 ## 2. The panel does the work
 

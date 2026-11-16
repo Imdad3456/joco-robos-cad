@@ -38,7 +38,7 @@ Everything people see says **CAD Hub** (panel, menus, dialogs, installer, SOLIDW
 - **Can't:** reach the Steam Deck. It's only reachable over Tailscale from the mentor's Linux PC. **Server changes** (anything under `server/`) have to be deployed from that PC. The procedure: start `joco-svn-backup.service`, copy `server/` to `~/server/joco-cad/source.new`, build `localhost/joco-svn:vNN` with podman, swap the source folders, update `~/.config/systemd/user/joco-svn.service`, then daemon-reload and restart. Bump the tag in `server/joco-svn.service` and `server/README.md` each time. The same goes for `joco.py test-season create/remove`, the restore drill, and reading server logs.
 
 ## Rules that stay
-- Secrets never go in the repository or in chat: the Onshape key (`~/server/joco-cad/secrets/onshape.env` on the Deck), the tunnel token, passwords, setup codes. Never ask anyone to paste a password.
+- Secrets never go in the repository or in chat: the Onshape key (`~/server/joco-cad/secrets/onshape.env` on the Deck), the tunnel token, the Discord client secret (`~/server/joco-cad/secrets/discord.env`), sign-in keys, passwords. Never ask anyone to paste a password.
 - The repository stays **public** (students download releases from it).
 - The Deck also runs a Discord bot, Lavalink and Pterodactyl: leave them alone.
 - Mentors release add-in versions themselves (Release to students); tags only stage them.

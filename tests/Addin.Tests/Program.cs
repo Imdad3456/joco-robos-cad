@@ -22,6 +22,33 @@ static class Program
         throw new Exception(message);
     }
 
+    // Discord sign-in: what the add-in sends the browser to, and how it reads the team server's answers (server/discord_auth.py).
+    static void DiscordChecks()
+    {
+        var first = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        var second = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        var challenge = System.Text.RegularExpressions.Regex.Match(first.StartUrl, "challenge=([A-Za-z0-9_-]+)$").Groups[1].Value;
+        Check(first.StartUrl.StartsWith("https://cad.team5919.org/account/discord/start?kind=addin&challenge=") && challenge.Length == 43,
+            "Sign-in starts at the team server with a 43-character challenge (the server checks its shape)");
+        Check(first.StartUrl != second.StartUrl, "Every sign-in has its own secret");
+        Check(DiscordSignIn.Base64Url(new byte[] { 0xfb, 0xff, 0xfe }) == "-__-", "URL-safe base64 without padding");
+        var signIn = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        signIn.Apply("{\"status\": \"pending\"}");
+        Check(signIn.Result == DiscordSignIn.State.Pending && signIn.Login == null, "Still waiting for Discord");
+        signIn.Apply("{\"status\": \"done\", \"username\": \"sarah.k\", \"key\": \"Ab-_9xyz\"}");
+        Check(signIn.Result == DiscordSignIn.State.Done && signIn.Login.UserName == "sarah.k" && signIn.Login.Password == "Ab-_9xyz", "Signed in: username and key");
+        signIn = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        // Python's json.dumps writes non-ASCII as \uXXXX.
+        signIn.Apply("{\"status\": \"error\", \"message\": \"sam isn\\u2019t in \\\"JoCo RoBos\\\". Join it.\"}");
+        Check(signIn.Result == DiscordSignIn.State.Failed && signIn.Problem == "sam isn’t in \"JoCo RoBos\". Join it.", "Refusal shown with the server's reason");
+        signIn = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        signIn.Apply("{\"status\": \"unknown\"}");
+        Check(signIn.Result == DiscordSignIn.State.Expired && signIn.Problem.Contains("again"), "Expired sign-in asks to start again");
+        signIn = new DiscordSignIn(new Uri("https://cad.team5919.org/"));
+        signIn.Apply("{\"status\": \"done\", \"username\": \"\"}");
+        Check(signIn.Result == DiscordSignIn.State.Failed, "Incomplete answer isn't a sign-in");
+    }
+
     static void Main()
     {
         // Never the real C:\JOCO-ROBOS: resolving it creates the folder and claims it for this Windows user.
@@ -154,6 +181,7 @@ static class Program
             HealthChecks();
             RecoveryChecks(temp);
             SaveChecks(temp);
+            DiscordChecks();
             Console.WriteLine("PASS: " + assertions + " add-in checks");
         }
 

@@ -79,52 +79,164 @@ namespace JocoRobos.Cad
         }
     }
 
+    /// <summary>
+    /// Sign in: with Discord (everyone in the team's Discord server), or, for the few special accounts that aren't Discord's,
+    /// with a username and password. Discord happens in the browser; this window waits for the team server to say it's done.
+    /// </summary>
     internal sealed class SignInDialog : Form
     {
-        private readonly TextBox username = new TextBox();
-        private readonly TextBox password = new TextBox();
-        internal NetworkCredential Login { get { return new NetworkCredential(username.Text.Trim(), password.Text); } }
+        private static readonly Color Blurple = Color.FromArgb(88, 101, 242);
+        private readonly TextBox username = new TextBox { Dock = DockStyle.Fill };
+        private readonly TextBox password = new TextBox { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
+        private readonly Label status;
+        private readonly LinkLabel again = new LinkLabel { Text = "Open the Discord page again", AutoSize = true, Visible = false, Margin = new Padding(0, 4, 0, 0) };
+        private readonly Button discord;
+        private readonly Timer poll = new Timer { Interval = 2000 };
+        private DiscordSignIn signIn;
+        private DateTime started;
+        private bool checking;
 
-        internal SignInDialog(string currentUser)
+        internal NetworkCredential Login { get; private set; }
+        internal bool ViaDiscord { get; private set; }
+
+        internal SignInDialog(string currentUser, string reason = null)
         {
             Text = "CAD Hub — Sign In";
-            ClientSize = new Size(475, 265);
+            Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 9f);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            Controls.Add(new Label { Text = "Team server: " + WorkspaceInfo.Server.Host, Location = new Point(20, 18), AutoSize = true });
+            MaximizeBox = MinimizeBox = false;
+            ShowInTaskbar = false;
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            BackColor = SystemColors.Window;
+            int width = (int)(400 * DeviceDpi / 96f);
+            var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Padding = new Padding(20, 16, 20, 14) };
+            Func<string, Label> note = text => new Label { Text = text, AutoSize = true, MaximumSize = new Size(width, 0), ForeColor = SystemColors.GrayText, Margin = new Padding(0, 2, 0, 0) };
+
+            layout.Controls.Add(new Label { Text = "Sign in to CAD Hub", AutoSize = true, Font = new Font(Font.FontFamily, 13f, FontStyle.Bold), Margin = new Padding(0, 0, 0, 4) });
+            if (reason != null) layout.Controls.Add(new Label { Text = reason, AutoSize = true, MaximumSize = new Size(width, 0), Margin = new Padding(0, 4, 0, 6) });
+            var server = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 0, 0, 10) };
+            server.Controls.Add(new Label { Text = "Team server: " + WorkspaceInfo.Server.Host, AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(0, 0, 0, 0) });
             // Wrong team server (typo, or another team's): change it here. The caller asks for the new one.
-            var change = new LinkLabel { Text = "Change…", AutoSize = true };
-            change.Location = new Point(Controls[Controls.Count - 1].Right + 8, 18);
+            var change = new LinkLabel { Text = "Change…", AutoSize = true, Margin = new Padding(6, 0, 0, 0) };
             change.LinkClicked += (s, e) => { DialogResult = DialogResult.Retry; Close(); };
-            Controls.Add(change);
-            Controls.Add(new Label { Text = "Username", Location = new Point(20, 78), AutoSize = true });
-            username.SetBounds(125, 75, 325, 25);
-            username.Text = currentUser ?? "";
-            Controls.Add(username);
-            Controls.Add(new Label { Text = "Password", Location = new Point(20, 117), AutoSize = true });
-            password.SetBounds(125, 114, 325, 25);
-            password.UseSystemPasswordChar = true;
-            Controls.Add(password);
-            Controls.Add(new Label { Text = "Saved in Windows Credential Manager after the server accepts your login.",
-                Location = new Point(20, 150), Size = new Size(430, 20) });
-            var firstTime = new LinkLabel { Text = "First time? Set up your account with the code from your mentor", Location = new Point(20, 178), AutoSize = true };
-            firstTime.LinkClicked += (s, e) => { DialogResult = DialogResult.Yes; Close(); };
-            Controls.Add(firstTime);
-            var submit = new Button { Text = "Sign In", Location = new Point(255, 215), Size = new Size(95, 30) };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(355, 215), Size = new Size(95, 30) };
-            submit.Click += (s, e) =>
+            server.Controls.Add(change);
+            layout.Controls.Add(server);
+
+            discord = new Button
             {
-                if (String.IsNullOrWhiteSpace(username.Text) || password.Text.Length == 0)
-                { MessageBox.Show(this, "Enter your CAD username and password."); return; }
+                Text = "Sign in with Discord", FlatStyle = FlatStyle.Flat, BackColor = Blurple, ForeColor = Color.White, Cursor = Cursors.Hand,
+                Font = new Font(Font.FontFamily, 11f, FontStyle.Bold), Size = new Size(width, (int)(42 * DeviceDpi / 96f)), Margin = new Padding(0, 0, 0, 6),
+            };
+            discord.FlatAppearance.BorderSize = 0;
+            discord.Click += (s, e) => StartDiscord();
+            layout.Controls.Add(discord);
+            status = note("Use your Discord account. You need to be in the team's Discord server; your CAD username is your Discord username.");
+            layout.Controls.Add(status);
+            again.LinkClicked += (s, e) => OpenBrowser();
+            layout.Controls.Add(again);
+            layout.Controls.Add(note("Saved in Windows, so you sign in once per computer."));
+
+            // The rare account that isn't Discord's (a mentor's spare account): username and password, hidden until asked for.
+            var other = new LinkLabel { Text = "Use a password account instead", AutoSize = true, Margin = new Padding(0, 14, 0, 0) };
+            var fields = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Width = width, Visible = false, Margin = new Padding(0, 6, 0, 0) };
+            fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            fields.Controls.Add(new Label { Text = "Username", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+            fields.Controls.Add(username, 1, 0);
+            fields.Controls.Add(new Label { Text = "Password", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+            fields.Controls.Add(password, 1, 1);
+            var passwordSignIn = new Button { Text = "Sign In", AutoSize = true, Anchor = AnchorStyles.Right };
+            fields.Controls.Add(passwordSignIn, 1, 2);
+            username.Text = currentUser ?? "";
+            other.LinkClicked += (s, e) => { other.Visible = false; fields.Visible = true; AcceptButton = passwordSignIn; (username.Text.Length > 0 ? (Control)password : username).Focus(); };
+            passwordSignIn.Click += (s, e) =>
+            {
+                if (String.IsNullOrWhiteSpace(username.Text) || password.Text.Length == 0) { MessageBox.Show(this, "Enter the account's username and password."); return; }
+                Login = new NetworkCredential(username.Text.Trim(), password.Text);
+                ViaDiscord = false;
                 DialogResult = DialogResult.OK;
                 Close();
             };
-            Controls.Add(submit);
-            Controls.Add(cancel);
-            AcceptButton = submit;
+            layout.Controls.Add(other);
+            layout.Controls.Add(fields);
+
+            var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, MinimumSize = new Size(width, 0), Margin = new Padding(0, 14, 0, 0) };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+            buttons.Controls.Add(cancel);
+            layout.Controls.Add(buttons);
+            Controls.Add(layout);
             CancelButton = cancel;
+            poll.Tick += (s, e) => CheckDiscord();
+            FormClosed += (s, e) => { poll.Stop(); poll.Dispose(); };
+        }
+
+        private void StartDiscord()
+        {
+            signIn = new DiscordSignIn(WorkspaceInfo.Server);
+            started = DateTime.UtcNow;
+            discord.Text = "Waiting for Discord…";
+            ShowStatus("Your browser opened Discord. Approve CAD Hub there; this window finishes by itself.", SystemColors.GrayText);
+            again.Visible = true;
+            OpenBrowser();
+            poll.Start();
+        }
+
+        private void OpenBrowser()
+        {
+            if (signIn == null) return;
+            try { Process.Start(new ProcessStartInfo(signIn.StartUrl) { UseShellExecute = true }); }
+            catch (Exception)
+            {
+                ShowStatus("Couldn't open your browser. Copied the sign-in link: paste it into a browser's address bar.", Color.DarkOrange);
+                try { Clipboard.SetText(signIn.StartUrl); } catch (Exception) { }
+            }
+        }
+
+        private async void CheckDiscord()
+        {
+            if (checking || signIn == null) return;
+            if (DateTime.UtcNow - started > TimeSpan.FromMinutes(10))
+            {
+                poll.Stop();
+                Reset("That took too long, so it stopped waiting. Click Sign in with Discord to try again.");
+                return;
+            }
+            checking = true;
+            var current = signIn;
+            UiThread.Ensure();
+            DiscordSignIn.State state;
+            try { state = await Task.Run(() => current.Check()); }
+            finally { checking = false; }
+            if (IsDisposed || current != signIn) return;
+            if (state == DiscordSignIn.State.Done)
+            {
+                poll.Stop();
+                Login = current.Login;
+                ViaDiscord = true;
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+            else if (state != DiscordSignIn.State.Pending)
+            {
+                poll.Stop();
+                Reset(current.Problem);
+            }
+        }
+
+        private void Reset(string problem)
+        {
+            signIn = null;
+            discord.Text = "Sign in with Discord";
+            again.Visible = false;
+            ShowStatus(problem, Color.Firebrick);
+        }
+
+        private void ShowStatus(string text, Color color)
+        {
+            status.Text = text;
+            status.ForeColor = color;
         }
     }
 
@@ -266,97 +378,6 @@ namespace JocoRobos.Cad
         }
     }
 
-    /// <summary>
-    /// First sign-in: the student picks a username and password and sends a request (no code needed); a mentor gives them the
-    /// code shown for them, and they finish here with it. A code handed out beforehand works the same way.
-    /// Also used, without the code, for Change Password.
-    /// </summary>
-    internal sealed class SetupAccountDialog : Form
-    {
-        private readonly TextBox username = new TextBox();
-        private readonly TextBox code = new TextBox { CharacterCasing = CharacterCasing.Upper };
-        private readonly TextBox password = new TextBox { UseSystemPasswordChar = true };
-        private readonly TextBox confirm = new TextBox { UseSystemPasswordChar = true };
-        private readonly Label status = new Label { ForeColor = Color.ForestGreen };
-        internal string Username { get { return username.Text.Trim().ToLowerInvariant(); } }
-        internal string Code { get { return code.Text.Trim(); } }
-        internal string Password { get { return password.Text; } }
-
-        internal SetupAccountDialog(string title, string intro, bool askCode, string currentUser, Action<string, string> request = null, string presetCode = null)
-        {
-            Text = "CAD Hub — " + title;
-            ClientSize = new Size(480, askCode ? 400 : 250);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            StartPosition = FormStartPosition.CenterParent;
-            MaximizeBox = false;
-            MinimizeBox = false;
-            Controls.Add(new Label { Text = intro, Location = new Point(20, 15), Size = new Size(440, 55) });
-            int y = 80;
-            Action<string, TextBox> row = (label, box) =>
-            {
-                Controls.Add(new Label { Text = label, Location = new Point(20, y + 3), AutoSize = true });
-                box.SetBounds(170, y, 285, 25);
-                Controls.Add(box);
-                y += 38;
-            };
-            if (askCode) row("Username", username);
-            username.Text = currentUser ?? "";
-            row(askCode ? "Password" : "New password", password);
-            row(askCode ? "Password again" : "New password again", confirm);
-            Controls.Add(new Label { Text = "At least 10 characters. Only you know it; it's saved in Windows Credential Manager.",
-                Location = new Point(20, y), Size = new Size(440, 20), ForeColor = SystemColors.GrayText });
-            y += 30;
-            if (askCode)
-            {
-                row("Code from a mentor", code);
-                code.Text = presetCode ?? "";
-                status.SetBounds(20, y, 440, 36);
-                Controls.Add(status);
-                y += 40;
-            }
-            var ok = new Button { Text = askCode ? "Send request" : "Save", Location = new Point(235, y), Size = new Size(115, 30) };
-            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(360, y), Size = new Size(95, 30) };
-            if (askCode)
-            {
-                // No code yet: ask for an account. With a code: finish.
-                Action label = () => ok.Text = Code.Length == 0 ? "Send request" : "Finish";
-                code.TextChanged += (s, e) => label();
-                label();
-            }
-            ok.Click += (s, e) =>
-            {
-                if (askCode && !System.Text.RegularExpressions.Regex.IsMatch(Username, "^[a-z0-9][a-z0-9._-]{1,31}$"))
-                { MessageBox.Show(this, "Choose a username: 2–32 lowercase letters, numbers, dot, dash, or underscore, starting with a letter or number (like sarah or j.smith)."); return; }
-                if (password.Text.Length < 10) { MessageBox.Show(this, "Use at least 10 characters."); return; }
-                if (password.Text != confirm.Text) { MessageBox.Show(this, "The two passwords don't match."); return; }
-                if (password.Text.Equals(Username, StringComparison.OrdinalIgnoreCase)) { MessageBox.Show(this, "Don't use your username as your password."); return; }
-                if (askCode && Code.Length == 0)
-                {
-                    if (request == null) { MessageBox.Show(this, "Enter the code from your mentor."); return; }
-                    try
-                    {
-                        request(Username, Password);
-                        status.ForeColor = Color.ForestGreen;
-                        status.Text = "✓ Request sent. Ask a mentor for your code (they see it next to " + Username + "), type it above, and click Finish.";
-                        code.Focus();
-                    }
-                    catch (Exception exception)
-                    {
-                        status.ForeColor = Color.Firebrick;
-                        status.Text = exception.Message;
-                    }
-                    return;
-                }
-                DialogResult = DialogResult.OK;
-                Close();
-            };
-            Controls.Add(ok);
-            Controls.Add(cancel);
-            AcceptButton = ok;
-            CancelButton = cancel;
-            Shown += (s, e) => { if (askCode && username.Text.Length > 0) password.Focus(); };
-        }
-    }
     /// <summary>File History: recent submits of one team file, and saving an older version as a separate copy.</summary>
     internal sealed class HistoryDialog : Form
     {

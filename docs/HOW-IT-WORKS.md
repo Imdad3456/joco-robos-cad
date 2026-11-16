@@ -10,8 +10,8 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
   C:\JOCO-ROBOS\Library                                         ├─ /svn/<repo>   Subversion: one repo per season + Library
                                                                 ├─ /catalog.json which season is active, add-in version
                                                                 ├─ /admin        mentor web page (joco.py)
-                                                                ├─ /admin/api/*  add-in APIs (FRCDesignLib, check-ins, password)
-                                                                └─ /account      first-time password setup (no sign-in)
+                                                                ├─ /admin/api/*  add-in APIs (FRCDesignLib, check-ins)
+                                                                └─ /account      Discord sign-in (no sign-in needed to start it)
 ```
 
 - Every student keeps a **complete local copy** of the robot on their SSD. SOLIDWORKS only ever opens local files, so big assemblies stay fast.
@@ -55,10 +55,10 @@ Student PC (SOLIDWORKS + add-in)            Steam Deck (Podman container)
 
 ## Accounts and security
 
-- **Passwords are the student's own.** A new student chooses a username and password in the add-in and clicks **Send request**. The Accounts tab lists them with a one-time code (7 days); a mentor hands it over in person, and the student types it in to activate. Activation needs the code *and* the password they asked with, so nobody can take over a name someone else requested; mentors reject requests they don't recognize. Mentors can still make codes ahead of time (with or without a name, or for a new mentor). The password is saved only in Windows Credential Manager. **New setup code** disables a forgotten password immediately.
+- **Everyone signs in with Discord** (since 1.16; `server/discord_auth.py`). Members of the team's Discord server get a CAD account named after their Discord username the first time they sign in. SVN only takes a username and password, so the add-in gets a 43-character key from the server that works as the SVN password (Apache stores only its bcrypt hash). The browser does Discord's part; the add-in collects its key with a secret that never passes through the browser (like OAuth's PKCE), so nobody else can pick it up. The key is the same on every computer (it's derived from the Discord id), saved only in Windows Credential Manager. **Sign out everywhere** on the Accounts tab changes it, and so does leaving the Discord server (checked daily with Discord's refresh token; Discord being down never removes anyone). The mentor page uses a signed session cookie (7 days) instead of a key. A few special accounts still use passwords: `github-release`, and any made with `joco.py password-account`.
 - **Locks and tokens are per computer.** Taking a lock on another PC with the same account shows "You locked this from another computer".
 - **Shared PCs:** `C:\JOCO-ROBOS` belongs to its first Windows user; other Windows users get a private `%USERPROFILE%\JOCO-ROBOS`. Switching CAD accounts is refused while there's unsubmitted work.
-- **Secrets never enter the repository.** The Cloudflare token, the Onshape API key, and passwords live only on the Deck; the release upload password lives only in a GitHub secret. The `github-release` account can only stage installers and is denied all SVN access.
+- **Secrets never enter the repository.** The Cloudflare token, the Onshape API key, the Discord client secret, and password hashes live only on the Deck; the release upload password lives only in a GitHub secret. The `github-release` account can only stage installers and is denied all SVN access.
 - **Undo a submit** (web page) makes a new revision restoring the previous files, so history is kept. It's refused if a later submit changed those files or someone holds their lock. It's the only way around the lock hook, and only for mentors.
 
 ## Add-in updates and releases

@@ -6,14 +6,43 @@ The server hosts one SVN repository per robot season (`2027-Robot`, `2028-Robot`
 
 ## Mentor web page
 
-Sign in with your CAD account; only accounts marked as mentor get past the first page. Apache checks the password and forwards `/admin` to `joco.py serve`. That service listens only inside the container and trusts only the username Apache sets. Forms require same-origin requests plus a per-user token.
+**Sign in with Discord**; only accounts marked as mentor get past the first page. `joco.py serve` listens only inside the container. It trusts the username Apache sets after checking a username and password (the add-in's key, or a password account), and otherwise its own signed Discord session cookie (7 days, `/admin` only, never accepted by `/admin/api`). Forms require same-origin requests plus a per-user token.
 
 - **Seasons:** create `YYYY-Robot` with the standard folders, lock hooks and backups; choose the active season students open; archive old seasons as read-only (SVN authz), or unarchive them. A season can't be archived while it's active or has locks. An inactive season nobody has submitted to can be deleted; it's moved to a hidden `.deleted-…` folder on the Deck, not erased.
 - **Locks:** list every lock and release abandoned ones (`svnadmin rmlocks`). The previous owner can no longer submit their copy of that file.
 - **Library:** browse, upload new parts (up to 100 MB per request, the Cloudflare limit), or copy a CAD file from any season into the library. Changes to existing library parts go through Edit/Submit like robot files; students can also add parts that way.
-- **Accounts:** adding a student (or "New setup code") creates a one-time setup code, valid 7 days, shown only on this page (never in a URL). Until it's used, the account has a random password nobody knows. The student enters username + code in the add-in and chooses their own password through `POST /account/setup`. That's the only address reachable without signing in; it's rate-limited per address, and 5 wrong codes delete the code. Students change their own password with `POST /admin/api/password` from the add-in. Mentors can also make or remove mentors and delete accounts that hold no locks.
+- **Accounts:** everyone in the team's Discord server signs in with Discord (`discord_auth.py`, see below); there's nothing to create. Mentors make or remove mentors, **Sign out everywhere** (changes that person's key on every computer and ends their mentor-page session), and delete accounts that hold no locks. Password accounts (not Discord) are listed separately.
 
 `state.json` in the config directory is the source of truth for the active season, archived seasons, and mentors. `authz` and `public/catalog.json` are generated from it. From SSH: `podman exec joco-svn runuser -u www-data -- python3 /opt/joco/joco.py mentor add USER`.
+
+## Discord sign-in
+
+Students and mentors sign in with Discord; their CAD username is their Discord username (made once, at the first sign-in; a later
+Discord rename doesn't rename it). The add-in opens `/account/discord/start`, Discord sends the browser back to
+`/account/discord/callback`, and the add-in collects a key with `POST /account/discord/poll`, using a secret that never went through
+the browser. The key is the SVN password (bcrypt in `/etc/joco/users`), derived from `config/discord-secret`, the Discord id and a
+generation number, so every computer gets the same one until **Sign out everywhere** bumps the generation. `config/discord.json`
+(600) holds each Discord id's username, generation and refresh token. Membership is checked at each sign-in and daily; anyone who
+left the server (or disconnected CAD Hub in Discord) is signed out everywhere. An outage never removes anyone.
+
+Existing password accounts with a student's Discord username are taken over at that student's first Discord sign-in (the old password
+stops working; history and locks stay). A mentor's account is only taken over by a Discord id in `DISCORD_MENTOR_IDS`; anyone else
+with that name gets `name-2`. `github-release` is never touched.
+
+Configuration (environment, from `~/server/joco-cad/secrets/discord.env`, mode 600, passed with `--env-file`): `DISCORD_CLIENT_ID`,
+`DISCORD_CLIENT_SECRET`, `DISCORD_GUILD_ID`, `DISCORD_GUILD_NAME`, `DISCORD_MENTOR_IDS`. Team 5919 shares the quote book's Discord
+application, with `https://cad.team5919.org/account/discord/callback` added to its redirects. Without the file the service starts but
+nobody new can sign in (the mentor page says so).
+
+Password accounts, for special cases only (`github-release`, or a spare account if Discord is down):
+
+```sh
+podman exec -it joco-svn runuser -u www-data -- python3 /opt/joco/joco.py password-account NAME
+podman exec joco-svn runuser -u www-data -- python3 /opt/joco/joco.py remove-password-accounts [KEEP ...]
+```
+
+The second removes every password account except `github-release`, Discord accounts, and the names given (accounts holding locks are
+kept and listed). Run it once everyone has signed in with Discord; until then, older sign-ins keep working.
 
 ## Deployment
 
@@ -21,13 +50,7 @@ The Deck runs SteamOS with rootless Podman as `deck`. Files are under `~/server/
 
 The container uses Debian Bookworm packages and persistent bind mounts for repositories and authentication. Its startup creates the canonical subsystem folders only if the repository is absent. It installs hooks on restart. There is no default account/password, anonymous access is denied, and temporary integration-test accounts are removed after testing.
 
-Accounts are normally managed from the web page. For the very first mentor, or if the page is unavailable, run from a terminal with SSH access to the Deck:
-
-```sh
-ssh -t deck@100.97.7.84 'podman exec -it joco-svn htpasswd -B /etc/joco/users imdad'
-```
-
-Enter the new CAD password at the prompt; do not put it in a command, GitHub, or chat. Use unique usernames for each student. All authenticated users can read every repository and write to non-archived ones. Passwords are bcrypt hashes; configuration stays on the Deck, not in Git.
+Accounts come from Discord sign-in (above). If Discord is unavailable, a mentor can make a password account from SSH with `joco.py password-account NAME` (it asks for the password; never put one in a command, GitHub, or chat). All authenticated users can read every repository and write to non-archived ones. Keys and passwords are stored as bcrypt hashes; configuration stays on the Deck, not in Git.
 
 ## FRCDesignLib adapter
 
@@ -48,6 +71,10 @@ The pre-commit hook requires a lock owned by the submitting user for modificatio
 Pre-lock and pre-unlock hooks prevent force-stealing and force-breaking locks. Directory deletion/replacement is blocked so it can't bypass per-file ownership; deleting or renaming CAD is a mentor task done with the SVN command line on the Deck. A lock is per file, not per assembly tree. These hooks are the real enforcement; the add-in's read-only files only prevent accidents.
 
 ## Validation
+
+Discord sign-in: `python3 server/tests/discord_test.py` (no network). Through Apache, in a disposable container on 127.0.0.1:18191
+named `joco-discord-test` with users `mentor1`/`mentorpass123` (mentor) and `sarah`/`sarahpass123` and fake `DISCORD_*` settings
+(`DISCORD_MENTOR_IDS=900`): `python3 server/tests/discord_http_test.py`.
 
 Run the integration test only during setup/maintenance, with no concurrent account administration. It temporarily creates two users in the password file and a disposable repository, then restores the password file and removes the test repository in `finally`:
 

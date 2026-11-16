@@ -37,7 +37,6 @@ namespace JocoRobos.Cad
         [DispId(15)] void InsertExternalPart();
         [DispId(16)] void ImportOutsideReferences();
         [DispId(17)] void RepairMovedReferences();
-        [DispId(18)] void ChangePassword();
         [DispId(19)] void UpgradeRobotFiles();
         [DispId(20)] void ShowLibrary();
         [DispId(21)] void FileHistory();
@@ -68,10 +67,10 @@ namespace JocoRobos.Cad
         // Before 1.4 the add-in was called JOCO ROBOS CAD: its old CommandManager tab is removed on the first start.
         private const string OldTitle = "JOCO ROBOS CAD";
         // A new id whenever commands are added: SOLIDWORKS caches menu text per group id and can show old names otherwise.
-        private const int GroupId = 591914; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
-        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912, 591913 };
+        private const int GroupId = 591915; // New id: a fresh tab, without SOLIDWORKS' saved layout of the old one.
+        private static readonly int[] OldGroupIds = { 591901, 591902, 591903, 591904, 591905, 591906, 591907, 591908, 591909, 591910, 591911, 591912, 591913, 591914 };
         // Bump when toolbar commands change so SOLIDWORKS rebuilds its cached layout.
-        private const int LayoutVersion = 591932;
+        private const int LayoutVersion = 591933;
         private SldWorks application;
         private CommandManager commands;
         private bool busy;
@@ -200,8 +199,7 @@ namespace JocoRobos.Cad
                 int mounting = Add(group, "Mounting Pattern", "Motor face (NEO, Kraken, Falcon, CIM), VersaPlanetary or REV/ThriftyBot 1/2in grid holes, centered where you click", nameof(MountingPattern), 42, both, 35);
                 int lighten = Add(group, "Lighten Plate", "Pockets with ribs between the holes of a flat plate (select its face first), with the weight saved", nameof(LightenPlate), 28, both, 21);
                 group.AddSpacer2(-1, menu);
-                Add(group, "Sign In", "Connect your CAD account", nameof(SignIn), 4, menu, 5);
-                Add(group, "Change Password", "Choose a new password for your CAD account", nameof(ChangePassword), 17, menu, 7);
+                Add(group, "Sign In", "Sign in with Discord (or switch accounts)", nameof(SignIn), 4, menu, 5);
                 Add(group, "Test Connection", "Check your CAD account and connection", nameof(TestConnection), 5, menu, 6);
                 Add(group, "Check This Computer", "Checks the server, versions, the robot folder, your edits and the robot's references; says Healthy unless something needs fixing", nameof(CheckComputer), 24, menu);
                 Add(group, "Copy Diagnostics", "Copy a report (no passwords) to send a mentor when something's wrong", nameof(CopyDiagnostics), 21, menu);
@@ -281,7 +279,7 @@ namespace JocoRobos.Cad
                         "Try another network (home Wi-Fi or a phone hotspot), or ask the network's IT to allow it.\n\nDetails: " + text;
                 bool login = text.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 ||
                     text.IndexOf("authoriz", StringComparison.OrdinalIgnoreCase) >= 0 || text.Contains("401");
-                Message(text + (login ? "\n\nIf your password changed, use Tools → CAD Hub → Sign In." : ""), MessageBoxIcon.Error);
+                Message(text + (login ? "\n\nSign in again: Tools → CAD Hub → Sign In." : ""), MessageBoxIcon.Error);
             }
             finally
             {
@@ -357,12 +355,11 @@ namespace JocoRobos.Cad
             savedTimer.Tick += (s, e) => { savedTimer.Stop(); try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("refresh after save", exception); } };
             flashTimer = new Timer { Interval = 15000 };
             flashTimer.Tick += (s, e) => { flashTimer.Stop(); flash = null; RenderStatus(); };
-            // Just installed and never signed in: welcome the student and let them set up their own password.
+            // Just installed and never signed in: team server, Discord sign-in, then straight on to downloading and opening the robot.
             bool signedIn;
             try { signedIn = CredentialStore.Read() != null; }
             catch (Exception) { signedIn = true; }
-            // First run: team server, account, then straight on to downloading and opening the robot.
-            if (!signedIn) OnUi("first sign-in", () => Execute(() => { if (SetUpAccount(null) != null) OnUi("first Open Robot", OpenRobot); }));
+            if (!signedIn) OnUi("first sign-in", () => Execute(() => { if (GetLogin(true) != null) OnUi("first Open Robot", OpenRobot); }));
             statusTimer = new Timer { Interval = 3 * 60 * 1000 };
             statusTimer.Tick += (s, e) => { try { RefreshStatus(); } catch (Exception exception) { ErrorLog.Write("status timer", exception); } };
             statusTimer.Start();
@@ -1050,31 +1047,52 @@ namespace JocoRobos.Cad
 
         // ---------- sign-in and seasons ----------
 
+        // 1.16: everyone signs in with Discord. A login saved by an older CAD Hub (a password) keeps working until the student
+        // switches; they're asked once per SOLIDWORKS session, and can still use it meanwhile (to Submit work made with it).
+        private bool askedToSwitch;
+
         private NetworkCredential GetLogin(bool force)
         {
             if (!RequireServer(false)) return null;
             NetworkCredential saved = CredentialStore.Read();
-            if (saved != null && !force) return saved;
-            using (var dialog = new SignInDialog(saved?.UserName))
+            if (saved != null && !force)
+            {
+                if (SignInKind != null || askedToSwitch) return saved;
+                askedToSwitch = true;
+                return SignIn(saved, "CAD Hub now signs in with Discord. Sign in once on this computer; your CAD username becomes your Discord username.") ?? saved;
+            }
+            return SignIn(saved, null);
+        }
+
+        private NetworkCredential SignIn(NetworkCredential saved, string reason)
+        {
+            using (var dialog = new SignInDialog(SignInKind == "password" ? saved?.UserName : null, reason))
             {
                 var answer = dialog.ShowDialog(new SolidWorksWindow());
                 if (answer == DialogResult.Retry) return RequireServer(true) ? GetLogin(true) : null;
-                if (answer == DialogResult.Yes) return SetUpAccount(saved);
                 if (answer != DialogResult.OK) return null;
                 NetworkCredential login = dialog.Login;
                 // Lock tokens and unsubmitted edits belong to the account that made them.
                 if (saved != null && !String.Equals(saved.UserName, login.UserName, StringComparison.OrdinalIgnoreCase))
                 {
                     var work = new List<string>();
-                    OperationDialog.Run("Checking this computer's unsubmitted work…", () =>
+                    try
                     {
-                        var catalog = Catalog.Fetch(saved);
-                        foreach (var workspace in catalog.All) work.AddRange(new SvnWorkspace(saved, workspace).LocalWork());
-                        return true;
-                    });
+                        OperationDialog.Run("Checking this computer's unsubmitted work…", () =>
+                        {
+                            var catalog = Catalog.Fetch(saved);
+                            foreach (var workspace in catalog.All) work.AddRange(new SvnWorkspace(saved, workspace).LocalWork());
+                            return true;
+                        });
+                    }
+                    catch (InvalidOperationException) when (dialog.ViaDiscord)
+                    {
+                        // The old login no longer works (passwords were switched off): its locks are gone on the server anyway.
+                        // What's left on disk is checked as the new account below and kept as it is.
+                    }
                     if (work.Count > 0)
-                        throw new InvalidOperationException("This Windows account has unsubmitted work from the CAD account '" + saved.UserName + "':\n\n" +
-                            String.Join("\n", work.Take(8)) + "\n\nSubmit or Set Aside it while signed in as " + saved.UserName + " before switching accounts. " +
+                        throw new InvalidOperationException("This computer has unsubmitted work from the CAD account '" + saved.UserName + "':\n\n" +
+                            String.Join("\n", work.Take(8)) + "\n\nSubmit or Set Aside it first (still as " + saved.UserName + "), then sign in as " + login.UserName + ". " +
                             "Each student should use their own Windows account; on a shared PC each gets a separate robot folder.");
                 }
                 OperationDialog.Run("Checking your CAD account…", () =>
@@ -1084,7 +1102,26 @@ namespace JocoRobos.Cad
                     return true;
                 });
                 CredentialStore.Write(login);
+                SignInKind = dialog.ViaDiscord ? "discord" : "password";
+                paneCatalog = null;
+                if (dialog.ViaDiscord && (saved == null || !String.Equals(saved.UserName, login.UserName, StringComparison.OrdinalIgnoreCase)))
+                    Message("You're signed in as " + login.UserName + ". This computer remembers it, so you won't need to sign in again.");
                 return login;
+            }
+        }
+
+        // How this computer's saved login was made: "discord", "password" (a special account), or null (before 1.16).
+        private static string SignInKind
+        {
+            get
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(@"Software\JOCO ROBOS\CAD"))
+                    return key?.GetValue("SignInKind") as string;
+            }
+            set
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
+                    key.SetValue("SignInKind", value, RegistryValueKind.String);
             }
         }
 
@@ -1125,86 +1162,6 @@ namespace JocoRobos.Cad
             robotOffline = null;
             heartbeatSent = false;
             offeredUpdate = null;
-        }
-
-        // First sign-in with a mentor's one-time setup code: the student chooses their own password.
-        private NetworkCredential SetUpAccount(NetworkCredential saved)
-        {
-            if (!RequireServer(false)) return null;
-            string name = saved?.UserName ?? PendingUsername, presetCode = null;
-            while (true)
-            {
-                SetupAccountDialog dialog;
-                using (dialog = new SetupAccountDialog("Set Up Your Account",
-                    "Welcome! Choose a username (lowercase, like sarah or j.smith) and a password, then click Send request. A mentor gives you a code: " +
-                    "type it in and click Finish. (Got a code already, or a mentor reset your password? Fill everything in and click Finish.)", true, name,
-                    (user, password) =>
-                    {
-                        OperationDialog.Run("Sending your request…", () => { Accounts.Request(user, password); return true; });
-                        PendingUsername = user;
-                    }, presetCode))
-                {
-                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return null;
-                    name = dialog.Username;
-                    presetCode = dialog.Code;
-                    try { OperationDialog.Run("Setting up your account…", () => { Accounts.Setup(dialog.Username, dialog.Code, dialog.Password); return true; }); }
-                    catch (InvalidOperationException problem)
-                    {
-                        // Wrong code or password: show why, then the same form again with what they typed (except the passwords).
-                        Message(problem.Message, MessageBoxIcon.Warning);
-                        continue;
-                    }
-                    PendingUsername = null;
-                    return FinishSetup(new NetworkCredential(dialog.Username, dialog.Password));
-                }
-            }
-        }
-
-        // Remembered between SOLIDWORKS sessions so the form comes back with the name the student asked for.
-        private static string PendingUsername
-        {
-            get
-            {
-                using (var key = Registry.CurrentUser.OpenSubKey(@"Software\JOCO ROBOS\CAD"))
-                    return key?.GetValue("PendingUsername") as string;
-            }
-            set
-            {
-                using (var key = Registry.CurrentUser.CreateSubKey(@"Software\JOCO ROBOS\CAD"))
-                {
-                    if (value == null) key.DeleteValue("PendingUsername", false);
-                    else key.SetValue("PendingUsername", value, RegistryValueKind.String);
-                }
-            }
-        }
-
-        private NetworkCredential FinishSetup(NetworkCredential login)
-        {
-            OperationDialog.Run("Checking your CAD account…", () =>
-            {
-                var catalog = Catalog.Fetch(login);
-                new SvnWorkspace(login, catalog.Robot).TestConnection();
-                return true;
-            });
-            CredentialStore.Write(login);
-            Message("You're set up as " + login.UserName + ". Your password is saved in Windows, so you won't need to type it again.\n\nClick Open Robot to get started.");
-            return login;
-        }
-
-        public void ChangePassword()
-        {
-            Execute(() =>
-            {
-                var login = GetLogin(false);
-                if (login == null) return;
-                using (var dialog = new SetupAccountDialog("Change Password", "Choose a new password for " + login.UserName + ".", false, login.UserName))
-                {
-                    if (dialog.ShowDialog(new SolidWorksWindow()) != DialogResult.OK) return;
-                    OperationDialog.Run("Changing your password…", () => { Accounts.ChangePassword(login, dialog.Password); return true; });
-                    CredentialStore.Write(new NetworkCredential(login.UserName, dialog.Password));
-                }
-                ShowFlash("✓ Password changed");
-            });
         }
 
         private Catalog LoadCatalog(NetworkCredential login)

@@ -18,6 +18,7 @@
     <Compile Include="../../src/JocoRobos.Cad/CredentialStore.cs" Link="CredentialStore.cs" />
     <Compile Include="../../src/JocoRobos.Cad/EditRequests.cs" Link="EditRequests.cs" />
     <Compile Include="../../src/JocoRobos.Cad/Accounts.cs" Link="Accounts.cs" />
+    <Compile Include="../../src/JocoRobos.Cad/DiscordSignIn.cs" Link="DiscordSignIn.cs" />
     <Compile Include="../../src/JocoRobos.Cad/PartsSheet.cs" Link="PartsSheet.cs" />
     <Compile Include="../../src/JocoRobos.Cad/WhereUsed.cs" Link="WhereUsed.cs" />
     <Compile Include="../../src/JocoRobos.Cad/HealthCheck.cs" Link="HealthCheck.cs" />

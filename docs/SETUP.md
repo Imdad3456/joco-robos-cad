@@ -21,14 +21,20 @@ docker compose up -d --build
 
 Check it answers: `curl -s http://127.0.0.1:8091/ | head` shows your team's front page. Your robot repositories live in `server/data` and settings and accounts in `server/config`. **Those two folders are everything; back them up** (step 6).
 
-## 2. Make yourself the first mentor
+## 2. Discord sign-in (and you as the first mentor)
 
-```bash
-docker exec -it -u www-data joco-svn htpasswd -B /etc/joco/users yourname
-docker exec -u www-data joco-svn python3 /opt/joco/joco.py mentor add yourname
-```
+Everyone signs in with Discord: anyone in your team's Discord server can sign in, in SOLIDWORKS and on the mentor page, and
+their CAD username is their Discord username. Nobody has a CAD password, and there are no accounts to make.
 
-Pick a long password. Every other account (students and other mentors) is made from the mentor page.
+1. At https://discord.com/developers/applications, **New Application** (call it CAD Hub). Under **OAuth2**, copy the
+   **Client ID**, **Reset Secret** and copy the secret, and **Add Redirect**: `https://cad.yourteam.org/account/discord/callback`.
+2. In `team.env`, fill in `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_GUILD_ID` (your team's server), `DISCORD_GUILD_NAME`,
+   and `DISCORD_MENTOR_IDS` with your own Discord user id (comments in the file say where to find each).
+3. `docker compose up -d` again, open `https://cad.yourteam.org/admin`, and **Sign in with Discord**. You're the first mentor.
+
+More mentors: they sign in once, then **Accounts → Make mentor** (or add their Discord id to `DISCORD_MENTOR_IDS`).
+For something Discord can't do (an account for a person outside Discord), make a password account from the server:
+`docker exec -it -u www-data joco-svn python3 /opt/joco/joco.py password-account NAME`.
 
 ## 3. Bring in your robot (optional)
 
@@ -56,7 +62,7 @@ Cloudflare provides the HTTPS certificate. Nothing on your network has to be ope
 
 If you already run a web server with HTTPS (Caddy, nginx, Traefik), send `cad.yourteam.org` to `http://127.0.0.1:8091`. With Caddy that's one line: `cad.yourteam.org { reverse_proxy 127.0.0.1:8091 }`. Allow uploads up to 100 MB.
 
-**Then:** `https://cad.yourteam.org` shows your front page, and `https://cad.yourteam.org/admin` asks you to sign in and opens the mentor page.
+**Then:** `https://cad.yourteam.org` shows your front page, and `https://cad.yourteam.org/admin` offers **Sign in with Discord** and opens the mentor page.
 
 **School networks:** some web filters block brand-new or unusual domains (Team 5919 had one block a `.stream` address). A plain `.org`, plus asking the filter companies to categorize your address as Education (Fortinet FortiGuard, Palo Alto, Cisco Talos, Symantec Site Review), avoids most of it.
 
@@ -84,9 +90,8 @@ Backups land in `server/backups`. **Copy them to another computer too.** `server
 
 1. They download and run the installer from [Releases](https://github.com/Imdad3456/joco-robos-cad/releases/latest). Windows warns about an unknown publisher: **More info → Run anyway**.
 2. They start SOLIDWORKS. It asks for the **team server**: they type `cad.yourteam.org`.
-3. They choose a username and password and click **Send request**.
-4. On the mentor page, **Accounts** shows the request. Give them the code; they type it in and click **Finish**.
-5. **Open Robot**. They're in.
+3. They click **Sign in with Discord** and approve it in the browser. (They need to be in your team's Discord server.)
+4. **Open Robot**. They're in. The mentor page's **Accounts** tab lists them.
 
 On school PCs, IT can preset the server for every Windows user: registry value `Server` (string, `https://cad.yourteam.org/`) under `HKEY_LOCAL_MACHINE\Software\JOCO ROBOS\CAD`.
 
